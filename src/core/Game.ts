@@ -11,10 +11,11 @@ import {
 import { DepositFlightAnimator } from '../systems/deposit/DepositFlightAnimator.ts'
 import { DepositZoneFeedback } from '../systems/deposit/DepositZoneFeedback.ts'
 import { Economy } from '../systems/economy/Economy.ts'
+import type { DepositEval } from '../systems/economy/depositEvaluation.ts'
 import {
-  previewCarryPayout,
-  type DepositEval,
-} from '../systems/economy/depositEvaluation.ts'
+  KeyboardMoveInput,
+  mergeMoveInput,
+} from '../systems/input/KeyboardMoveInput.ts'
 import { TouchJoystick } from '../systems/input/TouchJoystick.ts'
 import { ItemWorld } from '../systems/items/ItemWorld.ts'
 import { RoomWispSpawnSystem } from '../systems/wisp/RoomWispSpawnSystem.ts'
@@ -28,7 +29,11 @@ import { createScene } from '../systems/scene/SceneSetup.ts'
 import { subscribeViewportResize } from '../systems/scene/resize.ts'
 import { CarryStack } from '../systems/stack/CarryStack.ts'
 import { StackVisual } from '../systems/stack/StackVisual.ts'
-import { createRelicItem, createWispItem } from '../themes/wisp/itemFactory.ts'
+import {
+  createGemItem,
+  createRelicItem,
+  createWispItem,
+} from '../themes/wisp/itemFactory.ts'
 import type { GameItem } from './types/GameItem.ts'
 import { UpgradeZoneSystem } from '../systems/upgrades/UpgradeZoneSystem.ts'
 import { INITIAL_STACK_CAPACITY } from '../systems/upgrades/upgradeConfig.ts'
@@ -49,7 +54,12 @@ import {
   type PlayerGltfTemplate,
 } from '../systems/player/playerGltfAsset.ts'
 import { disposeGhostSharedGeometry } from '../systems/ghost/createGhostVisual.ts'
+import { gemColorForGhostBodyHex } from '../systems/ghost/ghostGemColor.ts'
 import { GhostSystem } from '../systems/ghost/GhostSystem.ts'
+import {
+  QuestSystem,
+  type QuestHudState,
+} from '../systems/quests/QuestSystem.ts'
 import type { AreaId } from '../systems/world/RoomSystem.ts'
 import { RoomSystem } from '../systems/world/RoomSystem.ts'
 import { WorldCollision } from '../systems/world/WorldCollision.ts'
@@ -75,11 +85,9 @@ import {
   showRelicSpawnedBanner,
   spawnRelicScreenSparkBurst,
 } from '../juice/relicHud.ts'
-import {
-  computeGhostPulsePhase,
-  GHOST_PULSE_SPEED_MULTIPLIER,
-} from '../systems/ghostPulse/ghostPulseConfig.ts'
+import { GHOST_PULSE_SPEED_MULTIPLIER } from '../systems/ghostPulse/ghostPulseConfig.ts'
 import { PerfMonitor } from '../systems/debug/PerfMonitor.ts'
+import { DoorUnlockSystem } from '../systems/doors/DoorUnlockSystem.ts'
 
 const DEPOSIT_TOAST_MS = 2800
 
@@ -91,6 +99,7 @@ export class Game {
   private readonly renderer: WebGLRenderer
   private readonly unsubscribeResize: () => void
   private readonly joystick: TouchJoystick
+  private readonly keyboardMove: KeyboardMoveInput
   private readonly player: PlayerController
   private readonly cameraRig: CameraRig
   private readonly stack: CarryStack
@@ -103,6 +112,8 @@ export class Game {
   private readonly depositFeedback: DepositZoneFeedback
   private readonly playerCharacter: PlayerCharacterVisual
   private readonly upgradeZones: UpgradeZoneSystem
+  private readonly doorUnlock: DoorUnlockSystem
+  private readonly questSystem: QuestSystem
   private readonly roomWispSpawns: RoomWispSpawnSystem
   private readonly specialRelicSpawns: SpecialRelicSpawnSystem
   private readonly relicFootArrow: ReturnType<typeof createSpecialRelicFootArrow>
@@ -129,12 +140,9 @@ export class Game {
   private raf = 0
   private lastTime = performance.now()
   private elapsedSec = 0
-  /**
-   * Ghost pulse cycle time. Paused in deposit / upgrade zones; entering or leaving
-   * those zones resets to `safeDur` (empty idle bar, countdown restarts when you exit).
-   */
-  private ghostPulseClockSec = 0
-  private prevPulsePaused: boolean | null = null
+  /** 0–1 ghost pulse charge; fills outside safe room, drains while holding pulse. */
+  private pulseCharge = 0
+  private pulseHeld = false
   private hudSpawn: HTMLElement | null = null
   private readonly moneyHud: MoneyHud | null
   private readonly gameViewport: HTMLElement
@@ -143,20 +151,14 @@ export class Game {
   private idleSec = 0
   /** GLB “collecting” clip window after any wisp/relic pickup */
   private playerPickupAnimTime = 0
-  private objectiveEl: HTMLElement | null = null
+  private questHudRoot: HTMLElement | null = null
   private idleHintEl: HTMLElement | null = null
-  private hudCarryValueEl: HTMLElement | null = null
-  private readonly hudUpgradeEl: HTMLElement | null
-  private readonly hudUpgradeTitleEl: HTMLElement | null
-  private readonly hudUpgradeBarEl: HTMLElement | null
-  private readonly hudUpgradeBarWrapEl: HTMLElement | null
-  private readonly hudUpgradeBtnEl: HTMLButtonElement | null
-  private readonly hudUpgradeCardEl: HTMLElement | null
-  private lastUpgradeHudKey = ''
-  private lastObjectiveText = ''
   private lastPowerTintOn = false
+  private lastPulseBtnActive = false
+  private lastPulseBtnEmpty = false
   private lastPowerTimerFill = -1
   private lastPowerTimerLabel = ''
+  private readonly pulseBtnEl: HTMLButtonElement | null
   private lastGhostInvuln = false
   private readonly perf = new PerfMonitor()
 
@@ -190,7 +192,6 @@ export class Game {
 
     const hudMoney = host.querySelector<HTMLElement>('#hud-money')
     const hudCarry = host.querySelector<HTMLElement>('#hud-carry')
-    this.hudCarryValueEl = host.querySelector<HTMLElement>('#hud-carry-value')
     const hudDepositToast = host.querySelector<HTMLElement>(
       '#hud-deposit-toast',
     )
@@ -218,6 +219,7 @@ export class Game {
 
     /** Joystick on canvas only so HUD buttons receive taps (viewport capture broke upgrades). */
     this.joystick = new TouchJoystick(this.renderer.domElement)
+    this.keyboardMove = new KeyboardMoveInput()
     this.player = new PlayerController(playerRoot, this.worldCollision)
     this.playerCharacter = playerCharacter
     this.cameraRig = new CameraRig(this.camera, playerRoot, () =>
@@ -236,20 +238,29 @@ export class Game {
       if (hudCarry) {
         hudCarry.textContent = `${this.stack.count} / ${this.stack.maxCapacity}`
       }
-      this.refreshCarryValueHud()
     })
     if (hudCarry) {
       hudCarry.textContent = `0 / ${INITIAL_STACK_CAPACITY}`
     }
-    this.refreshCarryValueHud()
 
     this.itemWorld = new ItemWorld(pickupGroup, scene)
     this.itemWorld.prewarmWispPool(8)
+
+    this.doorUnlock = new DoorUnlockSystem({
+      scene: this.scene,
+      player: this.player,
+      economy: this.economy,
+      worldCollision: this.worldCollision,
+      camera: this.camera,
+      hostEl: this.hostEl,
+    })
+
     this.roomWispSpawns = new RoomWispSpawnSystem({
       itemWorld: this.itemWorld,
       roomSystem: this.roomSystem,
       worldCollision: this.worldCollision,
       createWisp: () => this.createRoomWisp(),
+      canSpawnInRoom: (id) => this.doorUnlock.canAccessRoomForSpawning(id),
     })
     this.specialRelicSpawns = new SpecialRelicSpawnSystem({
       itemWorld: this.itemWorld,
@@ -260,6 +271,7 @@ export class Game {
         showRelicSpawnedBanner(this.gameViewport)
         playJuiceSound('relic_spawn')
       },
+      canSpawnInRoom: (id) => this.doorUnlock.canAccessRoomForSpawning(id),
     })
     this.relicFootArrow = createSpecialRelicFootArrow()
     this.scene.add(this.relicFootArrow.root)
@@ -271,7 +283,7 @@ export class Game {
       ghostGltfTemplate,
     )
     if (this.hudSpawn) {
-      this.hudSpawn.textContent = 'Deposit at the gold circle (center)'
+      this.hudSpawn.textContent = ''
     }
 
     this.hitFlashEl = host.querySelector('#hud-hit-flash')
@@ -279,15 +291,21 @@ export class Game {
     this.powerTimerEl = host.querySelector('#hud-power-timer')
     this.powerTimerFillEl = host.querySelector('#hud-power-timer-fill')
     this.powerTimerTrackEl = host.querySelector('#hud-power-timer-track')
-    this.objectiveEl = host.querySelector('#hud-objective')
     this.idleHintEl = host.querySelector('#hud-idle-hint')
-    this.hudUpgradeEl = host.querySelector('#hud-upgrade')
-    this.hudUpgradeTitleEl = host.querySelector('#hud-upgrade-title')
-    this.hudUpgradeBarEl = host.querySelector('#hud-upgrade-bar')
-    this.hudUpgradeBarWrapEl = host.querySelector('#hud-upgrade-bar-wrap')
-    this.hudUpgradeBtnEl = host.querySelector('#hud-upgrade-btn')
-    this.hudUpgradeCardEl = host.querySelector('.hud-upgrade__card')
-
+    this.questHudRoot = host.querySelector('#hud-quest')
+    this.questSystem = new QuestSystem({
+      initialDelaySec: 2.8,
+      betweenQuestsDelaySec: 2.2,
+      onHud: (s) => this.syncQuestHud(s),
+      onQuestComplete: () => {
+        spawnFloatingHudText(
+          this.gameViewport,
+          'Quest complete!',
+          'float-hud--pickup',
+        )
+      },
+    })
+    this.questSystem.bootstrapFirstQuest(0)
     this.collection = new CollectionSystem()
 
     this.depositFeedback = new DepositZoneFeedback(
@@ -333,6 +351,7 @@ export class Game {
         }
       },
       onDepositPresentationComplete: (items, ev, ol) => {
+        this.questSystem.onDepositItems(items, this.elapsedSec)
         const relicItem = items.find((it) => it.type === 'relic')
         if (relicItem) {
           this.player.getPosition(this.playerPos)
@@ -423,29 +442,42 @@ export class Game {
       economy: this.economy,
       player: this.player,
       stack: this.stack,
+      scene: this.scene,
+      camera: this.camera,
+      hostEl: this.hostEl,
       capacityPad: upgradePads.capacity,
       speedPad: upgradePads.speed,
       pulseFreqPad: upgradePads.pulseFreq,
       pulseDurationPad: upgradePads.pulseDuration,
+      isDoorUnlocked: (doorIndex) =>
+        this.doorUnlock.isDoorUnlocked(doorIndex),
       onSpendVfx: (_kind, cost, padWorld) => {
         spawnUpgradeSpendCoins(this.hostEl, this.camera, cost, padWorld)
       },
     })
 
-    /** Precompile materials so the first walk out of the hub does not hitch on shader link. */
+    this.pulseBtnEl = host.querySelector<HTMLButtonElement>('#hud-pulse-btn')
+    const setPulseHeld = (v: boolean): void => {
+      this.pulseHeld = v
+    }
+    this.pulseBtnEl?.addEventListener('pointerdown', (e) => {
+      e.stopPropagation()
+      setPulseHeld(true)
+    })
+    this.pulseBtnEl?.addEventListener('pointerup', (e) => {
+      e.stopPropagation()
+      setPulseHeld(false)
+    })
+    this.pulseBtnEl?.addEventListener('pointerleave', () => {
+      setPulseHeld(false)
+    })
+    this.pulseBtnEl?.addEventListener('pointercancel', () => {
+      setPulseHeld(false)
+    })
+
+    /** Precompile materials (door shaders + scene). */
     this.scene.updateMatrixWorld(true)
     this.renderer.compile(this.scene, this.camera)
-
-    this.hudUpgradeBtnEl?.addEventListener('click', (e) => {
-      e.stopPropagation()
-      if (this.hudUpgradeBtnEl?.disabled) return
-      this.player.getPosition(this.playerPos)
-      this.upgradeZones.update(1 / 60)
-      if (this.upgradeZones.tryPurchaseActive()) {
-        this.moneyHud?.sync()
-        this.syncUpgradeHud()
-      }
-    })
 
     const tick = (now: number) => {
       this.raf = requestAnimationFrame(tick)
@@ -455,8 +487,11 @@ export class Game {
       this.playerPickupAnimTime = Math.max(0, this.playerPickupAnimTime - dt)
       this.perf.beginFrame(now)
 
-      const j = this.joystick.getVector()
-      this.player.update(dt, j)
+      const move = mergeMoveInput(
+        this.joystick.getVector(),
+        this.keyboardMove.getVector(),
+      )
+      this.player.update(dt, move)
       this.player.getPosition(this.playerPos)
 
       const dr = DEFAULT_DEPOSIT_ZONE_RADIUS
@@ -465,31 +500,28 @@ export class Game {
         dr * dr
 
       this.upgradeZones.update(dt)
-      this.syncUpgradeHud()
+      this.doorUnlock.update(dt, this.elapsedSec)
+      this.questSystem.update(this.elapsedSec)
 
-      const intervalSec = this.upgradeZones.getPulseIntervalSec()
-      const durationSec = this.upgradeZones.getPulseDurationSec()
-      const safeDur = Math.min(durationSec, intervalSec * 0.92)
-
+      const room = this.roomSystem.getRoomAt(this.playerPos.x, this.playerPos.z)
+      const inSafeRoom = room === 'SAFE_CENTER'
       const pulsePaused =
-        inDepositZone || this.upgradeZones.isPlayerInsideAnyPadZone()
-      const wasPaused = this.prevPulsePaused ?? false
-      if (wasPaused && !pulsePaused) {
-        this.ghostPulseClockSec = safeDur
-      } else if (!wasPaused && pulsePaused) {
-        this.ghostPulseClockSec = safeDur
-      } else if (!pulsePaused) {
-        this.ghostPulseClockSec += dt
-      }
-      this.prevPulsePaused = pulsePaused
+        inDepositZone ||
+        this.upgradeZones.isPlayerInsideAnyPadZone() ||
+        this.doorUnlock.isPlayerInsideDoorZone()
 
-      const pulse = computeGhostPulsePhase(
-        this.ghostPulseClockSec,
-        intervalSec,
-        durationSec,
-      )
-      /** Phase time is frozen in hub; pulse combat/tint/speed stay off there too. */
-      const pulseGameplayActive = pulse.active && !pulsePaused
+      const fillPerSec = this.upgradeZones.getChargeFillPerSec()
+      const drainPerSec = this.upgradeZones.getChargeDrainPerSec()
+
+      if (!inSafeRoom && !pulsePaused) {
+        this.pulseCharge = Math.min(1, this.pulseCharge + fillPerSec * dt)
+      }
+      if (this.pulseHeld && this.pulseCharge > 0) {
+        this.pulseCharge = Math.max(0, this.pulseCharge - drainPerSec * dt)
+      }
+
+      const pulseGameplayActive =
+        this.pulseHeld && this.pulseCharge > 0
 
       this.itemWorld.updateVisuals(this.elapsedSec, dt)
 
@@ -500,47 +532,49 @@ export class Game {
         this.powerTintEl?.classList.toggle('hud-power-tint--on', pulseGameplayActive)
         this.lastPowerTintOn = pulseGameplayActive
       }
+      const pulseBtnEmpty =
+        this.pulseCharge < 0.02 && !pulseGameplayActive
+      if (this.pulseBtnEl) {
+        if (this.lastPulseBtnActive !== pulseGameplayActive) {
+          this.pulseBtnEl.classList.toggle(
+            'hud-pulse-btn--active',
+            pulseGameplayActive,
+          )
+          this.lastPulseBtnActive = pulseGameplayActive
+        }
+        if (this.lastPulseBtnEmpty !== pulseBtnEmpty) {
+          this.pulseBtnEl.classList.toggle('hud-pulse-btn--empty', pulseBtnEmpty)
+          this.lastPulseBtnEmpty = pulseBtnEmpty
+        }
+      }
       if (this.powerTimerEl && this.powerTimerFillEl) {
         this.powerTimerEl.hidden = false
-        let fillPct = 0
-        if (pulse.active) {
-          this.powerTimerEl.classList.remove('hud-power-timer--idle')
-          fillPct =
-            safeDur > 1e-6 ? (pulse.remainingSec / safeDur) * 100 : 0
-        } else {
-          this.powerTimerEl.classList.add('hud-power-timer--idle')
-          const idleSpan = Math.max(1e-6, intervalSec - safeDur)
-          const cyclePos = intervalSec - pulse.timeUntilNextPulseSec
-          const intoIdle = Math.max(0, cyclePos - safeDur)
-          fillPct = Math.min(100, (intoIdle / idleSpan) * 100)
-        }
+        this.powerTimerEl.classList.toggle(
+          'hud-power-timer--idle',
+          !pulseGameplayActive,
+        )
+        const fillPct = Math.min(100, this.pulseCharge * 100)
         const rounded = Math.round(fillPct)
         if (rounded !== this.lastPowerTimerFill) {
           this.powerTimerFillEl.style.width = `${fillPct}%`
           this.powerTimerTrackEl?.setAttribute('aria-valuenow', String(rounded))
           this.lastPowerTimerFill = rounded
         }
-        const label = pulse.active
-          ? 'Pulse time remaining'
-          : 'Time until next pulse'
+        const label = 'Ghost pulse charge — hold button to use'
         if (label !== this.lastPowerTimerLabel) {
           this.powerTimerTrackEl?.setAttribute('aria-label', label)
           this.lastPowerTimerLabel = label
         }
       }
 
-      if (
-        pulse.active &&
-        !this.prevGhostPulseActive &&
-        !pulsePaused
-      ) {
+      if (pulseGameplayActive && !this.prevGhostPulseActive) {
         playJuiceSound('ghost_pulse')
       }
-      this.prevGhostPulseActive = pulse.active
+      this.prevGhostPulseActive = pulseGameplayActive
 
       this.ghostSystem.setPowerMode(
         pulseGameplayActive,
-        this.ghostPulseClockSec,
+        this.elapsedSec,
       )
       this.ghostSystem.update(dt, this.playerPos, this.stack.hasRelic())
 
@@ -561,7 +595,8 @@ export class Game {
         this.lastGhostInvuln = invuln
       }
 
-      if (this.ghostSystem.tryEatGhost(this.playerPos, this.player.radius)) {
+      const eat = this.ghostSystem.tryEatGhost(this.playerPos, this.player.radius)
+      if (eat.kind === 'eaten') {
         this.economy.addMoney(GHOST_EAT_MONEY_REWARD)
         spawnFloatingHudText(
           this.gameViewport,
@@ -569,6 +604,8 @@ export class Game {
           'float-hud--coin',
         )
         playJuiceSound('ghost_eat')
+        const gemColor = gemColorForGhostBodyHex(eat.bodyColor)
+        this.itemWorld.spawn(createGemItem(gemColor), eat.x, eat.z)
       }
       const hit = this.ghostSystem.tryHitPlayer(
         this.playerPos,
@@ -625,6 +662,8 @@ export class Game {
         } else if (item.type === 'relic') {
           showRelicPickupHint(this.gameViewport)
           playJuiceSound('pickup')
+        } else if (item.type === 'gem') {
+          playJuiceSound('pickup')
         }
       }
       if (collected.length > 0) {
@@ -672,18 +711,19 @@ export class Game {
     )
   }
 
-  private updateObjectiveAndIdleHints(dt: number): void {
-    if (this.objectiveEl) {
-      const text =
-        this.stack.count === 0
-          ? ''
-          : 'Deposit at the bright gold circle (center)'
-      if (text !== this.lastObjectiveText) {
-        this.objectiveEl.textContent = text
-        this.lastObjectiveText = text
-      }
-    }
+  private syncQuestHud(s: QuestHudState): void {
+    const root = this.questHudRoot
+    if (!root) return
+    root.hidden = !s.visible
+    const a = root.querySelector('#hud-quest-relic')
+    const b = root.querySelector('#hud-quest-red')
+    const c = root.querySelector('#hud-quest-blue')
+    if (a) a.textContent = `Relic: ${s.relic.have} / ${s.relic.need}`
+    if (b) b.textContent = `Red gems: ${s.redGems.have} / ${s.redGems.need}`
+    if (c) c.textContent = `Blue gems: ${s.blueGems.have} / ${s.blueGems.need}`
+  }
 
+  private updateObjectiveAndIdleHints(dt: number): void {
     const speed = this.player.getHorizontalSpeed()
     if (speed < IDLE_SPEED_MAX) {
       this.idleSec += dt
@@ -718,57 +758,6 @@ export class Game {
 
   getRoomSystem(): RoomSystem {
     return this.roomSystem
-  }
-
-  private syncUpgradeHud(): void {
-    const root = this.hudUpgradeEl
-    const titleEl = this.hudUpgradeTitleEl
-    const barEl = this.hudUpgradeBarEl
-    const wrapEl = this.hudUpgradeBarWrapEl
-    const btn = this.hudUpgradeBtnEl
-    const card = this.hudUpgradeCardEl
-    if (!root || !titleEl || !barEl || !btn || !card) return
-
-    const snap = this.upgradeZones.getHudSnapshot()
-    if (!snap.visible) {
-      if (this.lastUpgradeHudKey !== 'hidden') {
-        root.classList.add('hidden')
-        root.setAttribute('aria-hidden', 'true')
-        this.lastUpgradeHudKey = 'hidden'
-      }
-      return
-    }
-    const pct = Math.min(100, Math.round(snap.progress * 100))
-    const key = `${snap.title}|${pct}|${snap.maxed ? 1 : 0}|${snap.cost}|${snap.canAfford ? 1 : 0}|${snap.accent}`
-    if (key === this.lastUpgradeHudKey) return
-    this.lastUpgradeHudKey = key
-
-    root.classList.remove('hidden')
-    root.setAttribute('aria-hidden', 'false')
-    titleEl.textContent = snap.title
-    barEl.style.width = `${pct}%`
-    wrapEl?.setAttribute('aria-valuenow', String(pct))
-    card.style.setProperty('--upgrade-accent', snap.accent)
-    if (snap.maxed) {
-      btn.textContent = 'MAXED'
-      btn.disabled = true
-    } else {
-      btn.textContent = `UPGRADE — $${snap.cost}`
-      btn.disabled = !snap.canAfford
-    }
-  }
-
-  private refreshCarryValueHud(): void {
-    const el = this.hudCarryValueEl
-    if (!el) return
-    const snap = this.stack.getSnapshot()
-    if (snap.length === 0) {
-      el.textContent = '≈ $0'
-      el.hidden = true
-      return
-    }
-    el.hidden = false
-    el.textContent = `≈ $${previewCarryPayout(snap)}`
   }
 
   private fillDepositToastLines(
@@ -843,11 +832,14 @@ export class Game {
     this.gameViewport.classList.remove('game-viewport--ghost-invuln')
     disposeAllGhostHitBursts(this.burstParticles)
     this.burstGroup.removeFromParent()
+    this.doorUnlock.dispose()
+    this.upgradeZones.dispose()
     this.ghostSystem.dispose()
     disposeGhostGltfTemplate(this.ghostGltfTemplate)
     this.playerCharacter.dispose()
     disposePlayerGltfTemplate(this.playerGltfTemplate)
     disposeGhostSharedGeometry()
+    this.keyboardMove.dispose()
     this.joystick.dispose()
     this.unsubscribeResize()
     this.renderer.dispose()

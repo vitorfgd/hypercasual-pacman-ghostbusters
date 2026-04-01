@@ -150,6 +150,10 @@ export class StackVisual {
       else this.disposeMesh(mesh)
       return
     }
+    if (item.type === 'gem') {
+      this.disposeMesh(mesh)
+      return
+    }
     const v = item.relicVariant
     if (this.poolRelic[v].length < StackVisual.MAX_POOL) this.poolRelic[v].push(mesh)
     else this.disposeMesh(mesh)
@@ -187,6 +191,10 @@ export class StackVisual {
           this.poolRelic[v].push(m)
           continue
         }
+      }
+      if (t === 'gem') {
+        this.disposeMesh(m)
+        continue
       }
       this.disposeMesh(m)
     }

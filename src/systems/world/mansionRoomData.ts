@@ -1,6 +1,7 @@
 /**
- * Mansion: safe hub + five north rooms — all same square size; only north exit from safe;
- * each link is a narrow door + short threshold (see `CORRIDOR_BOUNDS`).
+ * Mansion: safe hub + five rooms — all same square size; single exit from safe
+ * toward **−Z** (screen‑"north" with this camera: forward = −Z).
+ * Each link: door + short threshold (`CORRIDOR_BOUNDS`).
  */
 
 import { CORRIDOR_DEPTH, DOOR_HALF, ROOM_HALF } from './mansionGeometry.ts'
@@ -29,14 +30,17 @@ export type RoomDef = {
 const S = ROOM_HALF
 const C = CORRIDOR_DEPTH
 
-/** South Z of ROOM_k interior (after its south door threshold). */
-export function roomSouthZ(roomIndex: number): number {
-  if (roomIndex === 1) return S + C
-  return roomNorthZ(roomIndex - 1) + C
+/**
+ * North edge of ROOM_k (toward safe, larger Z) — first room touches the south threshold.
+ */
+export function roomNorthZ(roomIndex: number): number {
+  if (roomIndex === 1) return -S - C
+  return roomSouthZ(roomIndex - 1) - C
 }
 
-export function roomNorthZ(roomIndex: number): number {
-  return roomSouthZ(roomIndex) + 2 * S
+/** South edge of ROOM_k (deeper into the chain, more negative Z). */
+export function roomSouthZ(roomIndex: number): number {
+  return roomNorthZ(roomIndex) - 2 * S
 }
 
 const xb = { minX: -S, maxX: S }
@@ -103,13 +107,13 @@ export const ROOM_LIST = Object.values(ROOMS)
 
 const D = DOOR_HALF
 
-/** Narrow door thresholds only (walkable X matches door width). */
+/** Narrow door thresholds (walkable X matches door width). */
 export const CORRIDOR_BOUNDS: readonly RoomBounds[] = [
-  { minX: -D, maxX: D, minZ: S, maxZ: S + C },
-  { minX: -D, maxX: D, minZ: roomNorthZ(1), maxZ: roomNorthZ(1) + C },
-  { minX: -D, maxX: D, minZ: roomNorthZ(2), maxZ: roomNorthZ(2) + C },
-  { minX: -D, maxX: D, minZ: roomNorthZ(3), maxZ: roomNorthZ(3) + C },
-  { minX: -D, maxX: D, minZ: roomNorthZ(4), maxZ: roomNorthZ(4) + C },
+  { minX: -D, maxX: D, minZ: -S - C, maxZ: -S },
+  { minX: -D, maxX: D, minZ: roomSouthZ(1) - C, maxZ: roomSouthZ(1) },
+  { minX: -D, maxX: D, minZ: roomSouthZ(2) - C, maxZ: roomSouthZ(2) },
+  { minX: -D, maxX: D, minZ: roomSouthZ(3) - C, maxZ: roomSouthZ(3) },
+  { minX: -D, maxX: D, minZ: roomSouthZ(4) - C, maxZ: roomSouthZ(4) },
 ]
 
 export const ROOM_CONNECTIONS: Record<RoomId, readonly RoomId[]> = {

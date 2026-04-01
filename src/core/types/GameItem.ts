@@ -23,4 +23,13 @@ export type RelicItem = ItemCore & {
   relicVariant: 0 | 1
 }
 
-export type GameItem = WispItem | RelicItem
+/** Dropped when a ghost is eaten; color matches ghost body hue family. */
+export type GemColor = 'red' | 'blue' | 'green'
+
+export type GemItem = ItemCore & {
+  kind: 'collectible'
+  type: 'gem'
+  gemColor: GemColor
+}
+
+export type GameItem = WispItem | RelicItem | GemItem

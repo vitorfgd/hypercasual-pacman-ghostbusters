@@ -3,7 +3,7 @@
  */
 
 import { publicAsset } from '../../core/publicAsset.ts'
-import { roomCenter } from '../world/mansionRoomData.ts'
+import { ROOMS, roomCenter, type RoomId } from '../world/mansionRoomData.ts'
 
 export {
   GHOST_CHASE_SPEED,
@@ -47,22 +47,115 @@ export type GhostSpawnSpec = {
   z: number
   /** Hex body color (bright, readable from top-down) */
   color: number
+  /** Mansion chain room `ROOM_1` … `ROOM_5` — drives size & speed */
+  roomIndex: number
 }
 
-const r1 = roomCenter('ROOM_1')
-const r2 = roomCenter('ROOM_2')
-const r3 = roomCenter('ROOM_3')
-const r4 = roomCenter('ROOM_4')
-const r5 = roomCenter('ROOM_5')
+/** Ghost count per north-chain room (ROOM_1 … ROOM_5). */
+export const GHOSTS_PER_ROOM = [1, 1, 2, 2, 3] as const
 
-/** Five ghosts: one per north-chain room (never `SAFE_CENTER`). */
-export const DEFAULT_GHOST_SPAWNS: readonly GhostSpawnSpec[] = [
-  { x: r1.x - 0.35, z: r1.z + 0.35, color: 0xff3355 },
-  { x: r2.x + 0.35, z: r2.z - 0.25, color: 0xff5eb5 },
-  { x: r3.x - 0.3, z: r3.z + 0.3, color: 0x22e8ff },
-  { x: r4.x + 0.4, z: r4.z - 0.4, color: 0xffaa33 },
-  { x: r5.x - 0.35, z: r5.z + 0.45, color: 0x88ee66 },
+/** Mesh scale multiplier at ROOM_1 vs ROOM_5 (applied on top of `GHOST_VISUAL_SCALE`). */
+const GHOST_ROOM_VISUAL_SCALE_MIN = 0.82
+const GHOST_ROOM_VISUAL_SCALE_MAX = 1.18
+
+/** Speed multiplier at ROOM_1 vs ROOM_5 (wander / chase / fright). */
+const GHOST_ROOM_SPEED_MUL_MIN = 0.88
+const GHOST_ROOM_SPEED_MUL_MAX = 1.28
+
+/** Visual size scales from first room (smallest) to last (largest). */
+export function ghostRoomVisualMul(roomIndex: number): number {
+  const t = (Math.max(1, Math.min(5, roomIndex)) - 1) / 4
+  return (
+    GHOST_ROOM_VISUAL_SCALE_MIN +
+    t * (GHOST_ROOM_VISUAL_SCALE_MAX - GHOST_ROOM_VISUAL_SCALE_MIN)
+  )
+}
+
+/** Movement speeds scale from first room to last (still below player sprint). */
+export function ghostRoomSpeedMul(roomIndex: number): number {
+  const t = (Math.max(1, Math.min(5, roomIndex)) - 1) / 4
+  return (
+    GHOST_ROOM_SPEED_MUL_MIN +
+    t * (GHOST_ROOM_SPEED_MUL_MAX - GHOST_ROOM_SPEED_MUL_MIN)
+  )
+}
+
+const ROOM_CHAIN: readonly RoomId[] = [
+  'ROOM_1',
+  'ROOM_2',
+  'ROOM_3',
+  'ROOM_4',
+  'ROOM_5',
 ]
+
+/** Local XZ offsets from room center — lengths match `GHOSTS_PER_ROOM`. */
+const SPAWN_OFFSETS: readonly (readonly { ox: number; oz: number }[])[] = [
+  [{ ox: -0.35, oz: 0.35 }],
+  [{ ox: 0.38, oz: -0.28 }],
+  [
+    { ox: -0.48, oz: 0.22 },
+    { ox: 0.42, oz: -0.32 },
+  ],
+  [
+    { ox: -0.44, oz: 0.26 },
+    { ox: 0.4, oz: -0.36 },
+  ],
+  [
+    { ox: -0.08, oz: 0.4 },
+    { ox: -0.5, oz: -0.38 },
+    { ox: 0.46, oz: -0.34 },
+  ],
+]
+
+const SPAWN_COLORS: readonly number[][] = [
+  [0xff3355],
+  [0xff5eb5],
+  [0x22e8ff, 0x1ad4ee],
+  [0xffaa33, 0xff8822],
+  [0x88ee66, 0x66dd44, 0x44cc33],
+]
+
+function clampSpawnToRoomBounds(
+  x: number,
+  z: number,
+  bounds: (typeof ROOMS)['ROOM_1']['bounds'],
+  margin: number,
+): { x: number; z: number } {
+  return {
+    x: Math.max(bounds.minX + margin, Math.min(bounds.maxX - margin, x)),
+    z: Math.max(bounds.minZ + margin, Math.min(bounds.maxZ - margin, z)),
+  }
+}
+
+export function buildDefaultGhostSpawns(): GhostSpawnSpec[] {
+  const out: GhostSpawnSpec[] = []
+  const margin = 0.62
+  for (let ri = 0; ri < ROOM_CHAIN.length; ri++) {
+    const roomId = ROOM_CHAIN[ri]!
+    const count = GHOSTS_PER_ROOM[ri]!
+    const offs = SPAWN_OFFSETS[ri]!
+    const colors = SPAWN_COLORS[ri]!
+    const bounds = ROOMS[roomId].bounds
+    const c = roomCenter(roomId)
+    for (let i = 0; i < count; i++) {
+      const o = offs[i]!
+      const rawX = c.x + o.ox
+      const rawZ = c.z + o.oz
+      const p = clampSpawnToRoomBounds(rawX, rawZ, bounds, margin)
+      out.push({
+        x: p.x,
+        z: p.z,
+        color: colors[i]!,
+        roomIndex: ri + 1,
+      })
+    }
+  }
+  return out
+}
+
+/** Spawns across the chain: 1+1+2+2+3 ghosts, larger & faster toward ROOM_5. */
+export const DEFAULT_GHOST_SPAWNS: readonly GhostSpawnSpec[] =
+  buildDefaultGhostSpawns()
 
 /**
  * Uniform mesh scale (same idea as `version3` `ENEMY_GHOST_VISUAL_SCALE` ~0.98).
@@ -81,7 +174,10 @@ export const GHOST_GLB_YAW_OFFSET = 0
 
 // --- Player hit (ghost touch) — tension without full reset ---
 
-/** Ghost body radius for circle–circle test (~max lathe radius × `GHOST_VISUAL_SCALE`) */
+/**
+ * Base ghost body radius for circle tests at `ROOM_1` scale (`ghostRoomVisualMul` 1).
+ * Actual radius is `GHOST_COLLISION_RADIUS * ghostRoomVisualMul(roomIndex)`.
+ */
 export const GHOST_COLLISION_RADIUS = 0.345
 
 /**

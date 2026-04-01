@@ -2,6 +2,7 @@ import type { GameItem } from '../../core/types/GameItem.ts'
 import type { ItemWorld } from '../items/ItemWorld.ts'
 import type { RoomSystem } from '../world/RoomSystem.ts'
 import type { WorldCollision } from '../world/WorldCollision.ts'
+import type { RoomId } from '../world/mansionRoomData.ts'
 import {
   WISP_SPAWN_ATTEMPTS,
   WISP_SPAWN_BODY_RADIUS,
@@ -19,6 +20,8 @@ export type RoomWispSpawnSystemOptions = {
   worldCollision: WorldCollision
   createWisp: () => GameItem
   random?: () => number
+  /** If set, rooms behind locked doors are skipped. */
+  canSpawnInRoom?: (roomId: RoomId) => boolean
 }
 
 /**
@@ -30,6 +33,7 @@ export class RoomWispSpawnSystem {
   private readonly worldCollision: WorldCollision
   private readonly createWisp: () => GameItem
   private readonly random: () => number
+  private readonly canSpawnInRoom?: (roomId: RoomId) => boolean
 
   private nextSpawnIn = 0
 
@@ -39,6 +43,7 @@ export class RoomWispSpawnSystem {
     this.worldCollision = opts.worldCollision
     this.createWisp = opts.createWisp
     this.random = opts.random ?? Math.random
+    this.canSpawnInRoom = opts.canSpawnInRoom
     this.scheduleNextInterval()
   }
 
@@ -67,7 +72,10 @@ export class RoomWispSpawnSystem {
   }
 
   private trySpawnOne(): boolean {
-    const pool = this.roomSystem.getSpawnEligibleRoomIds()
+    let pool = this.roomSystem.getSpawnEligibleRoomIds()
+    if (this.canSpawnInRoom) {
+      pool = pool.filter((id) => this.canSpawnInRoom!(id))
+    }
     if (pool.length === 0) return false
 
     const roomId = pool[Math.floor(this.random() * pool.length)]!

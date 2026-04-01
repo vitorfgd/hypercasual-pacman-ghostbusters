@@ -12,8 +12,8 @@ const C = CORRIDOR_DEPTH
 const D = DOOR_HALF
 const t = MANSION_OUTER_WALL_THICKNESS
 
-/** North interior edge of ROOM_5 (top of last room). */
-const Z_TOP = roomNorthZ(5)
+/** South interior edge of ROOM_5 (deepest room, most negative Z). */
+const Z_BOTTOM = roomSouthZ(5)
 
 function hGap(
   minX: number,
@@ -34,52 +34,50 @@ function hGap(
   return out
 }
 
-/** Left / right of a narrow door threshold (blocks full room width except door lane). */
 function corridorSideBlocks(z0: number, z1: number): AabbXZ[] {
+  const lo = Math.min(z0, z1)
+  const hi = Math.max(z0, z1)
   return [
-    { minX: -S, maxX: -D, minZ: z0, maxZ: z1 },
-    { minX: D, maxX: S, minZ: z0, maxZ: z1 },
+    { minX: -S, maxX: -D, minZ: lo, maxZ: hi },
+    { minX: D, maxX: S, minZ: lo, maxZ: hi },
   ]
 }
 
 export function buildMansionWallColliders(): AabbXZ[] {
   const boxes: AabbXZ[] = []
 
-  // --- Outer shell (continuous east/west; south; north) ---
+  // Outer shell: north cap (safe has no door north), full west/east, south cap
   boxes.push({
     minX: -S - t,
     maxX: S + t,
-    minZ: -S - t,
-    maxZ: -S,
+    minZ: S,
+    maxZ: S + t,
   })
   boxes.push(
-    { minX: -S - t, maxX: -S, minZ: -S, maxZ: Z_TOP + t },
-    { minX: S, maxX: S + t, minZ: -S, maxZ: Z_TOP + t },
+    { minX: -S - t, maxX: -S, minZ: Z_BOTTOM - t, maxZ: S + t },
+    { minX: S, maxX: S + t, minZ: Z_BOTTOM - t, maxZ: S + t },
   )
   boxes.push({
     minX: -S - t,
     maxX: S + t,
-    minZ: Z_TOP,
-    maxZ: Z_TOP + t,
+    minZ: Z_BOTTOM - t,
+    maxZ: Z_BOTTOM,
   })
 
-  // --- Safe: north wall with single door ---
-  boxes.push(...hGap(-S - t, S + t, S, S + t, -D, D))
-  boxes.push(...corridorSideBlocks(S, S + C))
-  // South wall of ROOM_1 (threshold → room) — same door width as safe exit
-  const r1South = roomSouthZ(1)
-  boxes.push(...hGap(-S - t, S + t, r1South - t, r1South, -D, D))
+  // Safe south wall — single door to first threshold
+  boxes.push(...hGap(-S - t, S + t, -S - t, -S, -D, D))
+  boxes.push(...corridorSideBlocks(-S - C, -S))
+  // ROOM_1 north face (into first room from threshold)
+  const r1North = roomNorthZ(1)
+  boxes.push(...hGap(-S - t, S + t, r1North - t, r1North, -D, D))
 
-  // --- Between each pair of rooms: door walls + side blocks in the threshold ---
+  // Between rooms: south face of ROOM_k, threshold, north face of ROOM_{k+1}
   for (let k = 1; k <= 4; k++) {
-    const northZk = roomNorthZ(k)
-    const southNext = roomSouthZ(k + 1)
-    // North face of room k (door)
-    boxes.push(...hGap(-S - t, S + t, northZk, northZk + t, -D, D))
-    // Threshold (narrow walk)
-    boxes.push(...corridorSideBlocks(northZk, southNext))
-    // South face of room k+1 (door)
-    boxes.push(...hGap(-S - t, S + t, southNext - t, southNext, -D, D))
+    const southZk = roomSouthZ(k)
+    const northNext = roomNorthZ(k + 1)
+    boxes.push(...hGap(-S - t, S + t, southZk - t, southZk, -D, D))
+    boxes.push(...corridorSideBlocks(northNext, southZk))
+    boxes.push(...hGap(-S - t, S + t, northNext, northNext + t, -D, D))
   }
 
   return boxes

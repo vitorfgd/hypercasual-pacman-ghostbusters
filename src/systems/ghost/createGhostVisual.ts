@@ -102,7 +102,11 @@ function applyBodyTint(model: Group, bodyColor: number): void {
   })
 }
 
-function createGltfGhostVisual(bodyColor: number, template: GhostGltfTemplate): Group {
+function createGltfGhostVisual(
+  bodyColor: number,
+  template: GhostGltfTemplate,
+  visualScaleMul: number,
+): Group {
   const root = new Group()
   const model = cloneSkinnedHierarchy(template.scenePrototype) as Group
   model.name = 'ghostGltfModel'
@@ -110,7 +114,7 @@ function createGltfGhostVisual(bodyColor: number, template: GhostGltfTemplate): 
   model.rotation.y = GHOST_GLB_YAW_OFFSET
   root.add(model)
 
-  const s = GHOST_VISUAL_SCALE
+  const s = GHOST_VISUAL_SCALE * visualScaleMul
   model.scale.setScalar(s)
 
   cloneMeshMaterialsDeep(model)
@@ -218,7 +222,10 @@ function createGltfGhostVisual(bodyColor: number, template: GhostGltfTemplate): 
 /**
  * Procedural fallback when GLB is unavailable or invalid.
  */
-export function createProceduralGhostVisual(bodyColor: number): Group {
+export function createProceduralGhostVisual(
+  bodyColor: number,
+  visualScaleMul = 1,
+): Group {
   const root = new Group()
   const bobGroup = new Group()
   bobGroup.name = 'ghostBob'
@@ -277,7 +284,7 @@ export function createProceduralGhostVisual(bodyColor: number): Group {
 
   bobGroup.add(eyeWhiteL, eyeWhiteR, pupilL, pupilR)
 
-  const s = GHOST_VISUAL_SCALE
+  const s = GHOST_VISUAL_SCALE * visualScaleMul
   bobGroup.scale.set(s, s, s)
 
   const basePupilL = new Vector3(-0.12, 0.36, 0.34)
@@ -331,9 +338,10 @@ export function createProceduralGhostVisual(bodyColor: number): Group {
 export function createGhostVisual(
   bodyColor: number,
   gltf?: GhostGltfTemplate | null,
+  visualScaleMul = 1,
 ): Group {
   if (gltf) {
-    return createGltfGhostVisual(bodyColor, gltf)
+    return createGltfGhostVisual(bodyColor, gltf, visualScaleMul)
   }
-  return createProceduralGhostVisual(bodyColor)
+  return createProceduralGhostVisual(bodyColor, visualScaleMul)
 }

@@ -7,7 +7,7 @@ import {
   SphereGeometry,
   type Object3D,
 } from 'three'
-import type { GameItem } from '../../core/types/GameItem.ts'
+import type { GameItem, GemColor } from '../../core/types/GameItem.ts'
 import {
   cloneRelicFromGltf,
   getRelicPrototype,
@@ -23,6 +23,8 @@ import {
 
 const SOUL_BODY_R = 0.1
 const SOUL_STACK_R = 0.06
+const GEM_PICKUP_R = 0.11
+const GEM_STACK_R = 0.062
 /** Procedural floor relic — big (matches gltf “floor is large” intent). */
 const RELIC_PICKUP_MESH_SCALE = (1 / 5 / 3) * 4 * 3
 /** Procedural stack relic — ~wisp-like ratio vs floor pickup mesh */
@@ -165,6 +167,69 @@ export function createWispPickupMesh(hue: number): Group {
   return root
 }
 
+function gemPalette(c: GemColor): { core: Color; emissive: Color } {
+  switch (c) {
+    case 'red':
+      return {
+        core: new Color(0xff3355),
+        emissive: new Color(0xff6688),
+      }
+    case 'blue':
+      return {
+        core: new Color(0x3399ff),
+        emissive: new Color(0x88ccff),
+      }
+    default:
+      return {
+        core: new Color(0x55dd77),
+        emissive: new Color(0xaaffcc),
+      }
+  }
+}
+
+/** Faceted gem — distinct from wisps (spheres) and relics (gold). */
+export function createGemPickupMesh(gemColor: GemColor): Group {
+  const root = new Group()
+  root.name = 'gemPickup'
+  const { core, emissive } = gemPalette(gemColor)
+  const gem = new Mesh(
+    new OctahedronGeometry(GEM_PICKUP_R, 0),
+    new MeshStandardMaterial({
+      color: core,
+      emissive,
+      emissiveIntensity: 1.2,
+      roughness: 0.14,
+      metalness: 0.42,
+    }),
+  )
+  gem.position.y = GEM_PICKUP_R * 1.05
+  gem.castShadow = true
+  gem.receiveShadow = false
+  root.add(gem)
+  root.userData.gemBody = gem
+  root.userData.gemColorKey = gemColor
+  return root
+}
+
+function createGemStackMesh(gemColor: GemColor): Mesh {
+  const { core, emissive } = gemPalette(gemColor)
+  const mesh = new Mesh(
+    new OctahedronGeometry(GEM_STACK_R, 0),
+    new MeshStandardMaterial({
+      color: core,
+      emissive,
+      emissiveIntensity: 1.05,
+      roughness: 0.16,
+      metalness: 0.38,
+    }),
+  )
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  mesh.position.y = GEM_STACK_R * 1.05
+  mesh.userData.gemColorKey = gemColor
+  return mesh
+}
+
 function createWispStackMesh(hue: number): Object3D {
   if (getWispPickupPrototype()) {
     return cloneWispPickupFromGltf(hue, {
@@ -226,6 +291,9 @@ function createRelicStackMesh(
 export function createPelletStackMesh(item: GameItem): Object3D {
   if (item.type === 'relic') {
     return createRelicStackMesh(item.hue, item.relicVariant)
+  }
+  if (item.type === 'gem') {
+    return createGemStackMesh(item.gemColor)
   }
   return createWispStackMesh(item.hue)
 }

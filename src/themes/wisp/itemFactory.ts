@@ -1,4 +1,4 @@
-import type { RelicItem, WispItem } from '../../core/types/GameItem.ts'
+import type { GemColor, GemItem, RelicItem, WispItem } from '../../core/types/GameItem.ts'
 import type { ZoneTone } from '../../systems/sources/sourceTypes.ts'
 
 export function createWispItem(hue: number, value: number): WispItem {
@@ -20,6 +20,17 @@ export function createRelicItem(): RelicItem {
     hue: 0.11 + Math.random() * 0.06,
     relicVariant: Math.random() < 0.5 ? 0 : 1,
     value: 72 + Math.floor(Math.random() * 49),
+  }
+}
+
+/** Small credit on deposit; main use is quest turn-in. */
+export function createGemItem(gemColor: GemColor): GemItem {
+  return {
+    id: crypto.randomUUID(),
+    kind: 'collectible',
+    type: 'gem',
+    gemColor,
+    value: 6,
   }
 }
 

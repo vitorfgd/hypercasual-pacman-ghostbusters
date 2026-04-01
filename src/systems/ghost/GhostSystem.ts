@@ -35,6 +35,8 @@ import {
   GHOST_WANDER_SPEED,
   GHOST_WANDER_TURN_MAX,
   GHOST_WANDER_TURN_MIN,
+  ghostRoomSpeedMul,
+  ghostRoomVisualMul,
   type GhostSpawnSpec,
 } from './ghostConfig.ts'
 import { ROOMS } from '../world/mansionRoomData.ts'
@@ -44,6 +46,10 @@ export type GhostBehaviorState = 'wander' | 'chase'
 export type GhostHitResult =
   | { kind: 'none' }
   | { kind: 'hit'; ghostX: number; ghostZ: number }
+
+export type GhostEatResult =
+  | { kind: 'none' }
+  | { kind: 'eaten'; bodyColor: number; x: number; z: number }
 
 export class GhostSystem {
   private readonly ghosts: Ghost[] = []
@@ -99,10 +105,11 @@ export class GhostSystem {
     playerPos: Vector3,
     playerRadius: number,
   ): boolean {
-    const needR = playerRadius + GHOST_COLLISION_RADIUS + GHOST_MELEE_REARM_PADDING
-    const needR2 = needR * needR
     for (const g of this.ghosts) {
       if (g.isEaten()) continue
+      const needR =
+        playerRadius + g.collisionRadius + GHOST_MELEE_REARM_PADDING
+      const needR2 = needR * needR
       const gx = g.root.position.x
       const gz = g.root.position.z
       const dx = playerPos.x - gx
@@ -113,29 +120,29 @@ export class GhostSystem {
   }
 
   /**
-   * First overlapping ghost is eaten; returns true if one was eaten this frame.
-   * Only when `setPowerMode(true, …)` is active.
+   * First overlapping ghost is eaten. Only when `setPowerMode(true, …)` is active.
+   * Returns spawn position and body tint for gem drops.
    */
-  tryEatGhost(playerPos: Vector3, playerRadius: number): boolean {
-    if (!this.powerModeActive) return false
-    const r = playerRadius + GHOST_COLLISION_RADIUS
-    const r2 = r * r
+  tryEatGhost(playerPos: Vector3, playerRadius: number): GhostEatResult {
+    if (!this.powerModeActive) return { kind: 'none' }
     for (const g of this.ghosts) {
       if (g.isEaten()) continue
+      const r = playerRadius + g.collisionRadius
+      const r2 = r * r
       const gx = g.root.position.x
       const gz = g.root.position.z
       const dx = playerPos.x - gx
       const dz = playerPos.z - gz
       if (dx * dx + dz * dz <= r2) {
         g.markEaten()
-        return true
+        return { kind: 'eaten', bodyColor: g.bodyColor, x: gx, z: gz }
       }
     }
-    return false
+    return { kind: 'none' }
   }
 
   /**
-   * Circle–circle overlap on XZ: `playerRadius + GHOST_COLLISION_RADIUS`.
+   * Circle–circle overlap on XZ: `playerRadius + ghost.collisionRadius`.
    * No damage while invulnerable (i-frames) or during power mode (ghosts flee harm).
    */
   tryHitPlayer(
@@ -144,10 +151,10 @@ export class GhostSystem {
     invulnerable: boolean,
   ): GhostHitResult {
     if (invulnerable || this.powerModeActive) return { kind: 'none' }
-    const r = playerRadius + GHOST_COLLISION_RADIUS
-    const r2 = r * r
     for (const g of this.ghosts) {
       if (g.isEaten()) continue
+      const r = playerRadius + g.collisionRadius
+      const r2 = r * r
       const gx = g.root.position.x
       const gz = g.root.position.z
       const dx = playerPos.x - gx
@@ -167,7 +174,7 @@ export class GhostSystem {
     ghostZ: number,
     playerPos: Vector3,
   ): void {
-    const eps2 = 0.2 * 0.2
+    const eps2 = 0.28 * 0.28
     for (const g of this.ghosts) {
       if (g.isEaten()) continue
       const dx = g.root.position.x - ghostX
@@ -188,7 +195,6 @@ export class GhostSystem {
 
   /** Push ghost centers apart so multiple chasers do not stack on the player. */
   private separateOverlappingGhosts(): void {
-    const minD = GHOST_COLLISION_RADIUS * 2.25
     const list = this.ghosts.filter((g) => !g.isEaten())
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
@@ -196,6 +202,7 @@ export class GhostSystem {
         const b = list[j]!
         let dx = b.root.position.x - a.root.position.x
         let dz = b.root.position.z - a.root.position.z
+        const minD = (a.collisionRadius + b.collisionRadius) * 1.125
         let dist = Math.hypot(dx, dz)
         if (dist >= minD || dist < 1e-7) continue
         dx /= dist
@@ -221,7 +228,12 @@ type SkinSnap = {
 
 class Ghost {
   readonly root: Group
+  /** Spawn body tint (hex); used for gem color when eaten. */
+  readonly bodyColor: number
+  /** Hit / wall radius — scales with room tier (larger ghosts in deeper rooms). */
+  readonly collisionRadius: number
   private readonly worldCollision: WorldCollision
+  private readonly speedMul: number
   private readonly velocity = new Vector3()
   private readonly scratch = new Vector3()
   private readonly spawnX: number
@@ -253,7 +265,11 @@ class Ghost {
     this.worldCollision = worldCollision
     this.spawnX = spec.x
     this.spawnZ = spec.z
-    this.root = createGhostVisual(spec.color, ghostGltf)
+    this.bodyColor = spec.color
+    const visualMul = ghostRoomVisualMul(spec.roomIndex)
+    this.speedMul = ghostRoomSpeedMul(spec.roomIndex)
+    this.collisionRadius = GHOST_COLLISION_RADIUS * visualMul
+    this.root = createGhostVisual(spec.color, ghostGltf, visualMul)
     this.root.position.set(spec.x, 0, spec.z)
     ghostGroup.add(this.root)
     this.pickWanderTimer()
@@ -316,10 +332,11 @@ class Ghost {
     this.root.position.x += ax * GHOST_POST_HIT_SEPARATION
     this.root.position.z += az * GHOST_POST_HIT_SEPARATION
     this.resolveWallCollision()
-    this.velocity.x += ax * GHOST_POST_HIT_DISENGAGE_SPEED
-    this.velocity.z += az * GHOST_POST_HIT_DISENGAGE_SPEED
+    const disengage = GHOST_POST_HIT_DISENGAGE_SPEED * this.speedMul
+    this.velocity.x += ax * disengage
+    this.velocity.z += az * disengage
     const hs = Math.hypot(this.velocity.x, this.velocity.z)
-    const maxSp = 12.5
+    const maxSp = 12.5 * this.speedMul
     if (hs > maxSp) {
       const inv = maxSp / hs
       this.velocity.x *= inv
@@ -414,7 +431,7 @@ class Ghost {
 
     let tx = 0
     let tz = 0
-    let targetSpeed = GHOST_WANDER_SPEED
+    let targetSpeed = 0
 
     if (frightened) {
       let ax = px - playerPos.x
@@ -496,6 +513,8 @@ class Ghost {
         targetSpeed = GHOST_WANDER_SPEED
       }
     }
+
+    targetSpeed *= this.speedMul
 
     const rawLen = Math.hypot(tx, tz)
     if (rawLen > 1e-5) {
@@ -582,7 +601,7 @@ class Ghost {
    */
   private excludeFromSafeCenterRoom(): void {
     const { minX, maxX, minZ, maxZ } = ROOMS.SAFE_CENTER.bounds
-    const r = GHOST_COLLISION_RADIUS + GHOST_DEPOSIT_EXCLUSION_PADDING
+    const r = this.collisionRadius + GHOST_DEPOSIT_EXCLUSION_PADDING
     let px = this.root.position.x
     let pz = this.root.position.z
 
@@ -650,7 +669,7 @@ class Ghost {
     const r = this.worldCollision.resolveCircleXZ(
       this.root.position.x,
       this.root.position.z,
-      GHOST_COLLISION_RADIUS,
+      this.collisionRadius,
     )
     this.root.position.x = r.x
     this.root.position.z = r.z

@@ -143,11 +143,11 @@ export function createScene(
   speedPad.root.position.set(hc, 0.02, hc)
   upgradeAreaRoot.add(speedPad.root)
 
-  const pulseFreqPad = createUpgradePad('PULSE RATE', 0x382a44, 0x7a6488)
+  const pulseFreqPad = createUpgradePad('FILL', 0x382a44, 0x7a6488)
   pulseFreqPad.root.position.set(-hc, 0.02, -hc)
   upgradeAreaRoot.add(pulseFreqPad.root)
 
-  const pulseDurationPad = createUpgradePad('PULSE TIME', 0x362632, 0xa07058)
+  const pulseDurationPad = createUpgradePad('DRAIN', 0x362632, 0xa07058)
   pulseDurationPad.root.position.set(hc, 0.02, -hc)
   upgradeAreaRoot.add(pulseDurationPad.root)
 

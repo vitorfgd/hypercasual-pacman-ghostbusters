@@ -1,6 +1,7 @@
 import type { ItemWorld } from '../items/ItemWorld.ts'
 import type { RoomSystem } from '../world/RoomSystem.ts'
 import type { WorldCollision } from '../world/WorldCollision.ts'
+import type { RoomId } from '../world/mansionRoomData.ts'
 import type { RelicItem } from '../../core/types/GameItem.ts'
 import {
   SPECIAL_RELIC_INTERVAL_SEC,
@@ -18,6 +19,7 @@ export type SpecialRelicSpawnSystemOptions = {
   random?: () => number
   /** Fired after a relic is successfully placed in the world. */
   onSpawn?: () => void
+  canSpawnInRoom?: (roomId: RoomId) => boolean
 }
 
 /**
@@ -31,6 +33,7 @@ export class SpecialRelicSpawnSystem {
   private readonly createRelic: () => RelicItem
   private readonly random: () => number
   private readonly onSpawn?: () => void
+  private readonly canSpawnInRoom?: (roomId: RoomId) => boolean
 
   private timer = SPECIAL_RELIC_INTERVAL_SEC
   private activeRelicId: string | null = null
@@ -42,6 +45,7 @@ export class SpecialRelicSpawnSystem {
     this.createRelic = opts.createRelic
     this.random = opts.random ?? Math.random
     this.onSpawn = opts.onSpawn
+    this.canSpawnInRoom = opts.canSpawnInRoom
   }
 
   update(dt: number): void {
@@ -63,7 +67,10 @@ export class SpecialRelicSpawnSystem {
     }
     this.activeRelicId = null
 
-    const pool = this.roomSystem.getSpawnEligibleRoomIds()
+    let pool = this.roomSystem.getSpawnEligibleRoomIds()
+    if (this.canSpawnInRoom) {
+      pool = pool.filter((id) => this.canSpawnInRoom!(id))
+    }
     if (pool.length === 0) return
 
     const roomId = pool[Math.floor(this.random() * pool.length)]!

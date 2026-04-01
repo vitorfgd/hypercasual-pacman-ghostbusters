@@ -65,7 +65,10 @@ export class ItemWorld {
     const y = mesh.position.y
     mesh.position.set(x, y, z)
     mesh.visible = true
-    attachPickupIdleMotion(mesh, item.type === 'wisp' ? 'wisp' : 'pellet')
+    attachPickupIdleMotion(
+      mesh,
+      item.type === 'wisp' ? 'wisp' : 'pellet',
+    )
     this.pickupGroup.add(mesh)
     this.byId.set(item.id, { mesh, item })
   }
@@ -200,6 +203,15 @@ export class ItemWorld {
           if (hm && !Array.isArray(hm) && 'emissiveIntensity' in hm) {
             hm.emissiveIntensity = 0.42 + 0.22 * (0.5 + 0.5 * Math.sin(timeSec * 4.9))
           }
+        }
+      } else if (item.type === 'gem') {
+        const gem = mesh.userData.gemBody as Mesh | undefined
+        if (gem) {
+          gem.rotation.y += dt * 1.15
+          const phase =
+            item.gemColor === 'red' ? 0.2 : item.gemColor === 'blue' ? 1.1 : 2.4
+          const pulse = 0.93 + 0.07 * Math.sin(timeSec * 4.2 + phase)
+          gem.scale.setScalar(pulse)
         }
       } else if (item.type === 'relic') {
         if (mesh.userData.relicGltf === true) {
