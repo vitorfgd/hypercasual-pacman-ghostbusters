@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0c0c10" />
+    <title>Hypercasual — prototype</title>
+  </head>
+  <body>
+    <div id="app">
+      <div id="game-viewport" aria-label="Game view">
+        <div id="hud-hit-flash" class="hud-hit-flash" aria-hidden="true"></div>
+        <div id="hud-power-tint" class="hud-power-tint" aria-hidden="true"></div>
+        <div
+          id="hud-power-timer"
+          class="hud-power-timer hud-power-timer--idle"
+          aria-hidden="true"
+        >
+          <div
+            id="hud-power-timer-track"
+            class="hud-power-timer__track"
+            role="progressbar"
+            aria-valuemin="0"
+            aria-valuemax="100"
+            aria-valuenow="0"
+            aria-label="Ghost pulse"
+          >
+            <div class="hud-power-timer__fill" id="hud-power-timer-fill"></div>
+          </div>
+        </div>
+        <div id="hud-objective" class="hud-objective" aria-live="polite"></div>
+        <div id="hud-idle-hint" class="hud-idle-hint hidden" aria-live="polite">
+          Drag to move
+        </div>
+        <div id="hud-upgrade" class="hud-upgrade hidden" aria-hidden="true">
+          <div class="hud-upgrade__card">
+            <h2 class="hud-upgrade__title" id="hud-upgrade-title">PULSE TIME</h2>
+            <div
+              class="hud-upgrade__bar-wrap"
+              id="hud-upgrade-bar-wrap"
+              role="progressbar"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+            >
+              <div class="hud-upgrade__bar" id="hud-upgrade-bar"></div>
+            </div>
+            <button type="button" class="hud-upgrade__btn" id="hud-upgrade-btn">
+              UPGRADE — $42
+            </button>
+          </div>
+        </div>
+        <div id="hud-bottom" class="hud-bottom" aria-live="polite">
+          <div id="hud-row">
+            <span id="hud-carry">0 / 10</span>
+            <span id="hud-carry-value" class="hud-carry-value" hidden title="Estimated payout if you deposit now">≈ $0</span>
+            <span id="hud-money">$0</span>
+          </div>
+          <div id="hud-spawn" class="hud-spawn"></div>
+        </div>
+        <div id="hud-overload" class="hud-overload hidden" aria-live="polite">
+          <div class="hud-overload-label">OVERLOAD</div>
+          <div class="hud-overload-amount"></div>
+        </div>
+        <div id="hud-deposit-toast" class="deposit-toast hidden" aria-live="polite">
+          <div class="deposit-amount"></div>
+          <div class="deposit-hint"></div>
+        </div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
