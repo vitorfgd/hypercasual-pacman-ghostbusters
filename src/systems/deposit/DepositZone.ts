@@ -6,5 +6,5 @@ export type DepositZone = {
   radius: number
 }
 
-/** Must match overlap test in DepositSystem and ring scale in SceneSetup */
+/** Must match overlap test in `DepositController` / `Game` (centered deposit disc). */
 export const DEFAULT_DEPOSIT_ZONE_RADIUS = 1.28

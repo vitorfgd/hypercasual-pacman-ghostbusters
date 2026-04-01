@@ -6,10 +6,8 @@ import {
   PlaneGeometry,
 } from 'three'
 import { MANSION_WALL_COLLIDERS } from '../world/mansionWalls.ts'
-import { addWallSconces } from './mansionSconces.ts'
 import { MANSION_WORLD_HALF } from '../world/mansionGeometry.ts'
 import { CORRIDOR_BOUNDS, ROOMS, type RoomId } from '../world/mansionRoomData.ts'
-import { addMansionFloorRocks } from './mansionFloorRocks.ts'
 
 const WALL_HEIGHT = 2.35
 const WALL_Y = WALL_HEIGHT * 0.5
@@ -56,7 +54,6 @@ function addCorridorFloors(parent: Group, mat: MeshStandardMaterial, y: number):
     const mesh = new Mesh(new PlaneGeometry(w, d), mat)
     mesh.rotation.x = -Math.PI / 2
     mesh.position.set(cx, y, cz)
-    mesh.receiveShadow = true
     mesh.name = 'floor_corridor'
     parent.add(mesh)
   }
@@ -73,7 +70,6 @@ function addRoomFloor(parent: Group, id: RoomId, y: number): void {
   const mesh = new Mesh(new PlaneGeometry(w, d), mat)
   mesh.rotation.x = -Math.PI / 2
   mesh.position.set(cx, y, cz)
-  mesh.receiveShadow = true
   mesh.name = `floor_${id}`
   parent.add(mesh)
 }
@@ -87,8 +83,6 @@ function addWallMeshes(parent: Group): void {
     const cz = (b.minZ + b.maxZ) * 0.5
     const mesh = new Mesh(new BoxGeometry(w, WALL_HEIGHT, d), wallMat)
     mesh.position.set(cx, WALL_Y, cz)
-    mesh.castShadow = true
-    mesh.receiveShadow = true
     mesh.name = 'mansionWall'
     parent.add(mesh)
   }
@@ -115,38 +109,31 @@ function addEdgeVignette(parent: Group): void {
   const n = new Mesh(new PlaneGeometry(span, band), edge.clone())
   n.rotation.x = -Math.PI / 2
   n.position.set(0, y, z0)
-  n.receiveShadow = true
   parent.add(n)
 
   const s = new Mesh(new PlaneGeometry(span, band), edge.clone())
   s.rotation.x = -Math.PI / 2
   s.position.set(0, y, -z0)
-  s.receiveShadow = true
   parent.add(s)
 
   const e = new Mesh(new PlaneGeometry(band, span), edge.clone())
   e.rotation.x = -Math.PI / 2
   e.position.set(x0, y, 0)
-  e.receiveShadow = true
   parent.add(e)
 
   const w = new Mesh(new PlaneGeometry(band, span), edge.clone())
   w.rotation.x = -Math.PI / 2
   w.position.set(-x0, y, 0)
-  w.receiveShadow = true
   parent.add(w)
 }
 
 const ROOM_ORDER: RoomId[] = [
   'SAFE_CENTER',
-  'NORTH',
-  'SOUTH',
-  'EAST',
-  'WEST',
-  'NORTHWEST',
-  'NORTHEAST',
-  'SOUTHWEST',
-  'SOUTHEAST',
+  'ROOM_1',
+  'ROOM_2',
+  'ROOM_3',
+  'ROOM_4',
+  'ROOM_5',
 ]
 
 /**
@@ -165,8 +152,6 @@ export function createMansionGround(): Group {
   }
 
   addWallMeshes(root)
-  addWallSconces(root)
-  addMansionFloorRocks(root)
   addEdgeVignette(root)
 
   return root

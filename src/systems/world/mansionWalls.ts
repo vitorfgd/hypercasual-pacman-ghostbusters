@@ -1,10 +1,19 @@
 import type { AabbXZ } from './collisionXZ.ts'
 import {
+  CORRIDOR_DEPTH,
   DOOR_HALF,
   MANSION_OUTER_WALL_THICKNESS,
+  ROOM_HALF,
 } from './mansionGeometry.ts'
+import { roomNorthZ, roomSouthZ } from './mansionRoomData.ts'
 
+const S = ROOM_HALF
+const C = CORRIDOR_DEPTH
 const D = DOOR_HALF
+const t = MANSION_OUTER_WALL_THICKNESS
+
+/** North interior edge of ROOM_5 (top of last room). */
+const Z_TOP = roomNorthZ(5)
 
 function hGap(
   minX: number,
@@ -25,71 +34,53 @@ function hGap(
   return out
 }
 
-function vGap(
-  minX: number,
-  maxX: number,
-  minZ: number,
-  maxZ: number,
-  doorMinZ: number,
-  doorMaxZ: number,
-): AabbXZ[] {
-  const g: AabbXZ = { minX, maxX, minZ, maxZ }
-  const out: AabbXZ[] = []
-  if (doorMinZ > g.minZ) {
-    out.push({ minX: g.minX, maxX: g.maxX, minZ: g.minZ, maxZ: doorMinZ })
-  }
-  if (doorMaxZ < g.maxZ) {
-    out.push({ minX: g.minX, maxX: g.maxX, minZ: doorMaxZ, maxZ: g.maxZ })
-  }
-  return out
+/** Left / right of a narrow door threshold (blocks full room width except door lane). */
+function corridorSideBlocks(z0: number, z1: number): AabbXZ[] {
+  return [
+    { minX: -S, maxX: -D, minZ: z0, maxZ: z1 },
+    { minX: D, maxX: S, minZ: z0, maxZ: z1 },
+  ]
 }
 
-/**
- * Axis-aligned wall colliders (XZ) — door pillars + outer perimeter.
- * Hub slabs use the full corridor depth (z or x from ±5 to ±7) so N/E/S/W
- * segments share edges at (±5,±5) with no inset gap.
- */
 export function buildMansionWallColliders(): AabbXZ[] {
   const boxes: AabbXZ[] = []
 
-  const hubN = hGap(-6, 6, 5, 7, -D, D)
-  const hubS = hGap(-6, 6, -7, -5, -D, D)
-  const hubE = vGap(5, 7, -6, 6, -D, D)
-  const hubW = vGap(-7, -5, -6, 6, -D, D)
-
-  boxes.push(...hubN, ...hubS, ...hubE, ...hubW)
-
-  /** Small corner glue at hub rim (±5,±5) — closes visible seams between N/E/S/W slabs. */
-  const g = 0.2
+  // --- Outer shell (continuous east/west; south; north) ---
+  boxes.push({
+    minX: -S - t,
+    maxX: S + t,
+    minZ: -S - t,
+    maxZ: -S,
+  })
   boxes.push(
-    { minX: 5, maxX: 5 + g, minZ: 5, maxZ: 5 + g },
-    { minX: -5 - g, maxX: -5, minZ: 5, maxZ: 5 + g },
-    { minX: -5 - g, maxX: -5, minZ: -5 - g, maxZ: -5 },
-    { minX: 5, maxX: 5 + g, minZ: -5 - g, maxZ: -5 },
+    { minX: -S - t, maxX: -S, minZ: -S, maxZ: Z_TOP + t },
+    { minX: S, maxX: S + t, minZ: -S, maxZ: Z_TOP + t },
   )
+  boxes.push({
+    minX: -S - t,
+    maxX: S + t,
+    minZ: Z_TOP,
+    maxZ: Z_TOP + t,
+  })
 
-  boxes.push(
-    ...vGap(-7, -5, 6, 17, 10.5, 13.5),
-    ...vGap(5, 7, 6, 17, 10.5, 13.5),
-    ...vGap(-7, -5, -17, -6, -13.5, -10.5),
-    ...vGap(5, 7, -17, -6, -13.5, -10.5),
-  )
+  // --- Safe: north wall with single door ---
+  boxes.push(...hGap(-S - t, S + t, S, S + t, -D, D))
+  boxes.push(...corridorSideBlocks(S, S + C))
+  // South wall of ROOM_1 (threshold → room) — same door width as safe exit
+  const r1South = roomSouthZ(1)
+  boxes.push(...hGap(-S - t, S + t, r1South - t, r1South, -D, D))
 
-  boxes.push(
-    ...hGap(-17, -7, 5, 7, -13.5, -10.5),
-    ...hGap(-17, -7, -7, -5, -13.5, -10.5),
-    ...hGap(7, 17, 5, 7, 10.5, 13.5),
-    ...hGap(7, 17, -7, -5, 10.5, 13.5),
-  )
-
-  const t = MANSION_OUTER_WALL_THICKNESS
-  const e = t * 0.55
-  boxes.push(
-    { minX: -17.5 - e, maxX: 17.5 + e, minZ: 17, maxZ: 17 + t },
-    { minX: -17.5 - e, maxX: 17.5 + e, minZ: -17 - t, maxZ: -17 },
-    { minX: 17, maxX: 17 + t, minZ: -17.5 - e, maxZ: 17.5 + e },
-    { minX: -17.5 - t, maxX: -17, minZ: -17.5 - e, maxZ: 17.5 + e },
-  )
+  // --- Between each pair of rooms: door walls + side blocks in the threshold ---
+  for (let k = 1; k <= 4; k++) {
+    const northZk = roomNorthZ(k)
+    const southNext = roomSouthZ(k + 1)
+    // North face of room k (door)
+    boxes.push(...hGap(-S - t, S + t, northZk, northZk + t, -D, D))
+    // Threshold (narrow walk)
+    boxes.push(...corridorSideBlocks(northZk, southNext))
+    // South face of room k+1 (door)
+    boxes.push(...hGap(-S - t, S + t, southNext - t, southNext, -D, D))
+  }
 
   return boxes
 }

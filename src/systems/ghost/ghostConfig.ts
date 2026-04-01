@@ -49,19 +49,19 @@ export type GhostSpawnSpec = {
   color: number
 }
 
-const nw = roomCenter('NORTHWEST')
-const ne = roomCenter('NORTHEAST')
-const se = roomCenter('SOUTHEAST')
-const n = roomCenter('NORTH')
-const s = roomCenter('SOUTH')
+const r1 = roomCenter('ROOM_1')
+const r2 = roomCenter('ROOM_2')
+const r3 = roomCenter('ROOM_3')
+const r4 = roomCenter('ROOM_4')
+const r5 = roomCenter('ROOM_5')
 
-/** Five ghosts: normal rooms only (never `SAFE_CENTER`). */
+/** Five ghosts: one per north-chain room (never `SAFE_CENTER`). */
 export const DEFAULT_GHOST_SPAWNS: readonly GhostSpawnSpec[] = [
-  { x: nw.x - 0.35, z: nw.z + 0.35, color: 0xff3355 },
-  { x: ne.x + 0.35, z: ne.z + 0.35, color: 0xff5eb5 },
-  { x: se.x + 0.35, z: se.z - 0.35, color: 0x22e8ff },
-  { x: n.x + 0.4, z: n.z - 0.5, color: 0xffaa33 },
-  { x: s.x - 0.35, z: s.z + 0.45, color: 0x88ee66 },
+  { x: r1.x - 0.35, z: r1.z + 0.35, color: 0xff3355 },
+  { x: r2.x + 0.35, z: r2.z - 0.25, color: 0xff5eb5 },
+  { x: r3.x - 0.3, z: r3.z + 0.3, color: 0x22e8ff },
+  { x: r4.x + 0.4, z: r4.z - 0.4, color: 0xffaa33 },
+  { x: r5.x - 0.35, z: r5.z + 0.45, color: 0x88ee66 },
 ]
 
 /**

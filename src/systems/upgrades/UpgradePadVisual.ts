@@ -79,7 +79,6 @@ export function createUpgradePad(
   const inner = new Mesh(new CircleGeometry(UPGRADE_PAD_RADIUS * 0.78, 40), innerMat)
   inner.rotation.x = -Math.PI / 2
   inner.position.y = 0.018
-  inner.receiveShadow = true
   root.add(inner)
 
   const ringMat = new MeshStandardMaterial({
@@ -98,7 +97,6 @@ export function createUpgradePad(
   )
   ring.rotation.x = -Math.PI / 2
   ring.position.y = 0.022
-  ring.receiveShadow = true
   root.add(ring)
 
   const fadeTex = createPadFadeCylinderTexture()

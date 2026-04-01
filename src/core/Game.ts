@@ -178,7 +178,6 @@ export class Game {
       depositRoot,
       depositZoneMesh,
       depositUnderglowMesh,
-      depositRingMesh,
       playerCharacter,
       upgradePads,
     } = createScene(playerGltfTemplate)
@@ -293,7 +292,7 @@ export class Game {
 
     this.depositFeedback = new DepositZoneFeedback(
       depositZoneMesh,
-      depositRingMesh,
+      null,
       depositRoot,
       depositUnderglowMesh,
     )

@@ -1,9 +1,4 @@
-import {
-  ACESFilmicToneMapping,
-  PCFShadowMap,
-  SRGBColorSpace,
-  WebGLRenderer,
-} from 'three'
+import { ACESFilmicToneMapping, SRGBColorSpace, WebGLRenderer } from 'three'
 
 export function createRenderer(host: HTMLElement): WebGLRenderer {
   const renderer = new WebGLRenderer({
@@ -15,8 +10,7 @@ export function createRenderer(host: HTMLElement): WebGLRenderer {
   renderer.outputColorSpace = SRGBColorSpace
   renderer.toneMapping = ACESFilmicToneMapping
   renderer.toneMappingExposure = 1.12
-  renderer.shadowMap.enabled = true
-  renderer.shadowMap.type = PCFShadowMap
+  renderer.shadowMap.enabled = false
 
   renderer.domElement.style.display = 'block'
   /** Prepend so later HUD siblings paint above the canvas (appendChild hid HTML UI). */

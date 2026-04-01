@@ -1,15 +1,12 @@
 import {
+  AmbientLight,
   CircleGeometry,
   Color,
-  Fog,
   Group,
   Mesh,
   MeshStandardMaterial,
   Object3D,
   Scene,
-  AmbientLight,
-  HemisphereLight,
-  DirectionalLight,
 } from 'three'
 import type { Mesh as MeshType } from 'three'
 import { DEFAULT_DEPOSIT_ZONE_RADIUS } from '../deposit/DepositZone.ts'
@@ -37,8 +34,6 @@ export type SceneContents = {
   depositZoneMesh: MeshType
   /** Wide underglow under deposit disc — reacts with zone feedback */
   depositUnderglowMesh: MeshType
-  /** Optional rim (unused — single disc deposit for one clear zone read) */
-  depositRingMesh: MeshType | null
   /** Character (GLB or procedural + stack anchor) */
   playerCharacter: PlayerCharacterVisual
   /** Hub-corner upgrade pads */
@@ -72,39 +67,9 @@ export function createScene(
   playerGltfTemplate: PlayerGltfTemplate | null = null,
 ): SceneContents {
   const scene = new Scene()
-  /** Match floor family so door gaps never read as a different hue. */
   scene.background = new Color(0x2a2e44)
-  scene.fog = new Fog(0x323a50, 58, 118)
-
-  /** Base fill so floors/walls never fall to black. */
-  scene.add(new AmbientLight(0x96a6bc, 0.46))
-
-  scene.add(
-    new HemisphereLight(0xaab8d0, 0x40485c, 0.58),
-  )
-
-  /** Primary moon key — cool, soft, readable shadows. */
-  const moon = new DirectionalLight(0xd8e8f5, 1.05)
-  moon.position.set(-8, 24, 12)
-  moon.castShadow = true
-  moon.shadow.mapSize.setScalar(1024)
-  moon.shadow.camera.near = 0.5
-  moon.shadow.camera.far = 72
-  moon.shadow.camera.left = -36
-  moon.shadow.camera.right = 36
-  moon.shadow.camera.top = 36
-  moon.shadow.camera.bottom = -36
-  scene.add(moon)
-
-  /** Rim / bounce — lifts north-facing reads on portrait top-down. */
-  const fill = new DirectionalLight(0x788ca0, 0.4)
-  fill.position.set(14, 16, -16)
-  scene.add(fill)
-
-  /** Soft top-down fill: evens door gaps & wall bases without harsh pools. */
-  const top = new DirectionalLight(0xb4c4d4, 0.28)
-  top.position.set(0, 28, 2)
-  scene.add(top)
+  /** Single flat fill — no directional/point lights or shadows (see `createRenderer`). */
+  scene.add(new AmbientLight(0xffffff, 1.0))
 
   const ground = createMansionGround()
   scene.add(ground)
@@ -146,7 +111,6 @@ export function createScene(
   depositUnderglow.name = 'depositUnderglow'
   depositUnderglow.rotation.x = -Math.PI / 2
   depositUnderglow.position.y = 0.018
-  depositUnderglow.receiveShadow = true
   depositRoot.add(depositUnderglow)
 
   const depositZoneMesh = new Mesh(
@@ -164,10 +128,7 @@ export function createScene(
   depositZoneMesh.name = 'depositZone'
   depositZoneMesh.rotation.x = -Math.PI / 2
   depositZoneMesh.position.y = 0.022
-  depositZoneMesh.receiveShadow = true
   depositRoot.add(depositZoneMesh)
-
-  const depositRingMesh: MeshType | null = null
 
   /** Four pads around hub center (between deposit and room walls). */
   const upgradeAreaRoot = new Group()
@@ -202,7 +163,6 @@ export function createScene(
     depositRoot,
     depositZoneMesh,
     depositUnderglowMesh: depositUnderglow,
-    depositRingMesh,
     playerCharacter: character,
     upgradeAreaRoot,
     upgradePads: {

@@ -7,7 +7,6 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "preview:gh-v7": "vite preview --host --base /scrabble-collector/version7-simplified/",
     "preview:gh": "vite preview --host --base /hypercasual-pacman-ghostbusters/"
   },
   "devDependencies": {
