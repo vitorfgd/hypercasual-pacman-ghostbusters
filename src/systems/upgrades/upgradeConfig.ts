@@ -6,7 +6,7 @@ export const INITIAL_STACK_CAPACITY = 10
 /**
  * Hub upgrade pad offset from origin on XZ (meters). Must match `SceneSetup` pad placement.
  */
-export const UPGRADE_PAD_HUB_OFFSET = 3.72
+export const UPGRADE_PAD_HUB_OFFSET = 4.95
 
 /**
  * Rectangular upgrade pad half-extents (XZ), same idea as door pay zones.

@@ -30,7 +30,7 @@
                 aria-valuemin="0"
                 aria-valuemax="100"
                 aria-valuenow="0"
-                aria-label="Ghost pulse charge"
+                aria-label="Hunt charge"
               >
                 <div class="hud-power-timer__fill" id="hud-power-timer-fill"></div>
               </div>
@@ -44,9 +44,13 @@
           <div id="hud-quest-red" class="hud-quest__line">Red gems: 0 / 2</div>
           <div id="hud-quest-blue" class="hud-quest__line">Blue gems: 0 / 1</div>
         </div>
-        <div id="hud-idle-hint" class="hud-idle-hint hidden" aria-live="polite">
-          Drag to move
-        </div>
+        <div
+          id="hud-room-objective"
+          class="hud-room-objective hidden"
+          aria-live="polite"
+        ></div>
+        <div id="hud-stack-vignette" class="hud-stack-vignette" aria-hidden="true"></div>
+        <div id="hud-stack-hum" class="hud-stack-hum" aria-hidden="true"></div>
         <div id="hud-bottom" class="hud-bottom" aria-live="polite">
           <div id="hud-spawn" class="hud-spawn"></div>
           <div class="hud-bottom-pulse">
@@ -54,12 +58,12 @@
               type="button"
               id="hud-pulse-btn"
               class="hud-pulse-btn"
-              aria-label="Hold for ghost pulse power"
+              aria-label="Hold to hunt ghosts"
             >
               <span class="hud-pulse-btn__sheen" aria-hidden="true"></span>
               <span class="hud-pulse-btn__inner">
                 <span class="hud-pulse-btn__icon" aria-hidden="true">⚡</span>
-                <span class="hud-pulse-btn__label">Pulse</span>
+                <span class="hud-pulse-btn__label">Hunt</span>
               </span>
             </button>
           </div>

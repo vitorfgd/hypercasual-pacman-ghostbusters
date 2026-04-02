@@ -374,9 +374,15 @@ export class PlayerCharacterVisual {
         mat.emissive.copy(snap.emissive).lerp(new Color(0xc9a020), 0.55)
         mat.emissiveIntensity = snap.emissiveIntensity + 0.4
       } else {
+        const carryT = state.maxCarry > 0 ? state.itemsCarried / state.maxCarry : 0
+        const ember = carryT >= 0.5 ? (carryT - 0.5) / 0.5 : 0
+        const fullPulse =
+          carryT >= 1
+            ? 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(state.timeSec * 9.2))
+            : 1
         mat.color.copy(snap.color)
-        mat.emissive.copy(snap.emissive)
-        mat.emissiveIntensity = snap.emissiveIntensity
+        mat.emissive.copy(snap.emissive).lerp(new Color(0xff5522), ember * 0.4)
+        mat.emissiveIntensity = (snap.emissiveIntensity + ember * 0.5) * fullPulse
       }
     }
 
@@ -414,6 +420,7 @@ export class PlayerCharacterVisual {
     const shirtColorSnap = this.shirtColorSnap
     const skinMat = this.skinMat
     const skinColorSnap = this.skinColorSnap
+    const carryT = maxCarry > 0 ? itemsCarried / maxCarry : 0
 
     if (invuln) {
       const blink = 0.5 + 0.5 * Math.sin(timeSec * 14)
@@ -435,14 +442,16 @@ export class PlayerCharacterVisual {
       skinMat.emissiveIntensity = 0.26
     } else {
       shirtMat.color.copy(shirtColorSnap)
+      const ember = carryT >= 0.5 ? (carryT - 0.5) / 0.5 : 0
+      const fullPulse = carryT >= 1 ? 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(timeSec * 9.2)) : 1
       shirtMat.emissive.setHex(0x1a4060)
-      shirtMat.emissiveIntensity = 0.12
+      shirtMat.emissive.lerp(new Color(0xff5522), ember * 0.75)
+      shirtMat.emissiveIntensity = (0.12 + ember * 0.75) * fullPulse
       skinMat.color.copy(skinColorSnap)
       skinMat.emissive.setHex(0x000000)
       skinMat.emissiveIntensity = 0
     }
     const moving = speed > MOVE_SPEED_THRESH
-    const carryT = maxCarry > 0 ? itemsCarried / maxCarry : 0
 
     let bob =
       Math.sin(timeSec * 2.2) * 0.018 +

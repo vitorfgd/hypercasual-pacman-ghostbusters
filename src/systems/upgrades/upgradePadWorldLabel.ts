@@ -13,8 +13,11 @@ export type UpgradePadWorldLabel = {
   dispose: () => void
 }
 
+/** Fill overlay alpha for the progress layer (entire pad). */
+const FILL_ALPHA = 0.4
+
 /**
- * Door-style floor label: progress bar, upgrade name, huge $ remaining.
+ * Door-style floor label: full-pad progress fill (bottom → up), upgrade name, huge $ remaining.
  */
 export function createUpgradePadWorldLabel(
   innerW: number,
@@ -42,49 +45,46 @@ export function createUpgradePadWorldLabel(
     const h = canvas.height
     const remaining = maxed ? 0 : Math.max(0, cost - paid)
     const t = maxed || cost <= 0 ? 1 : Math.min(1, paid / cost)
+    const fillH = h * t
 
     ctx.clearRect(0, 0, w, h)
 
-    ctx.fillStyle = 'rgba(18, 32, 42, 0.92)'
+    ctx.fillStyle = 'rgba(14, 24, 34, 0.94)'
     ctx.fillRect(0, 0, w, h)
 
-    ctx.strokeStyle = 'rgba(200, 170, 120, 0.4)'
+    if (fillH > 1) {
+      if (maxed) {
+        const g = ctx.createLinearGradient(0, h - fillH, 0, h)
+        g.addColorStop(0, `rgba(90, 160, 120, ${FILL_ALPHA})`)
+        g.addColorStop(1, `rgba(130, 210, 170, ${FILL_ALPHA})`)
+        ctx.fillStyle = g
+      } else {
+        const g = ctx.createLinearGradient(0, h - fillH, 0, h)
+        g.addColorStop(0, `rgba(120, 100, 72, ${FILL_ALPHA})`)
+        g.addColorStop(1, `rgba(200, 176, 140, ${FILL_ALPHA})`)
+        ctx.fillStyle = g
+      }
+      ctx.fillRect(0, h - fillH, w, fillH)
+    }
+
+    ctx.strokeStyle = 'rgba(200, 170, 120, 0.45)'
     ctx.lineWidth = 3
     ctx.strokeRect(2, 2, w - 4, h - 4)
-
-    const barPad = Math.round(h * 0.06)
-    const barH = Math.round(h * 0.082)
-    const barY = barPad
-    const barX = barPad
-    const barW = w - barPad * 2
-
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)'
-    ctx.fillRect(barX, barY, barW, barH)
-
-    const fillW = Math.max(0, barW * t)
-    if (fillW > 2) {
-      const g = ctx.createLinearGradient(barX, 0, barX + fillW, 0)
-      g.addColorStop(0, '#8a7a58')
-      g.addColorStop(1, '#c9b090')
-      ctx.fillStyle = g
-      ctx.fillRect(barX, barY, fillW, barH)
-    }
 
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
 
-    const titleY = barY + barH + Math.floor(h * 0.055)
-    const titleSize = Math.floor(h * 0.15)
-    ctx.fillStyle = 'rgba(220, 210, 200, 0.95)'
+    const titleY = h * 0.2
+    const titleSize = Math.floor(h * 0.14)
+    ctx.fillStyle = 'rgba(235, 225, 215, 0.98)'
     ctx.font = `800 ${titleSize}px system-ui, Segoe UI, sans-serif`
-    ctx.shadowColor = 'rgba(0,0,0,0.5)'
-    ctx.shadowBlur = 6
+    ctx.shadowColor = 'rgba(0,0,0,0.65)'
+    ctx.shadowBlur = 8
     ctx.fillText(upgradeTitle, w / 2, titleY)
     ctx.shadowBlur = 0
 
-    /** Space below title bar so name + price both read huge without overlap. */
-    const numY = titleY + h * 0.318
-    const numSize = Math.floor(h * 0.44)
+    const numY = h * 0.62
+    const numSize = Math.floor(h * 0.38)
 
     if (maxed) {
       ctx.fillStyle = '#b8f0c8'

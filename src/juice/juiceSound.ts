@@ -11,6 +11,9 @@ export type JuiceSoundId =
   | 'relic_spawn'
   | 'relic_collect'
 
-export function playJuiceSound(_id: JuiceSoundId): void {
+export function playJuiceSound(
+  _id: JuiceSoundId,
+  _opts?: { pitch?: number },
+): void {
   // Intentionally empty — swap for AudioBufferSource or asset pipeline.
 }

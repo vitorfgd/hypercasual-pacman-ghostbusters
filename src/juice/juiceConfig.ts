@@ -12,8 +12,8 @@ export const MAGNET_PULL_SPEED = 5.5
 /** World pickup collect pop duration (ItemWorld) */
 export const COLLECT_POP_SEC = 0.22
 
-/** Deposit flight — keep short for snappy feel */
-export const DEPOSIT_FLIGHT_DURATION_SEC = 0.1
+/** Deposit flight — per item (wisp / relic / pellet); lower = snappier */
+export const DEPOSIT_FLIGHT_DURATION_SEC = 0.068
 export const DEPOSIT_ARC_HEIGHT = 0.72
 export const DEPOSIT_ARC_EASE = 2.15
 
@@ -25,15 +25,24 @@ export const STACK_BOUNCE_DECAY = 14
 export const CAMERA_OFFSET_BASE = { x: 0, y: 18, z: 12 }
 export const CAMERA_STACK_ZOOM_Y = 0.08
 export const CAMERA_STACK_ZOOM_Z = 0.055
+/** Extra pull when fill ≥ this (e.g. 0.7 = heavy stack juice). */
+export const CAMERA_HEAVY_STACK_FILL = 0.7
+export const CAMERA_EXTRA_ZOOM_HEAVY = 1.15
 export const CAMERA_STACK_ZOOM_MAX = 2.6
 export const CAMERA_SMOOTH = 6.2
 
+/** Delay between each deposit item flight (seconds). */
+export const DEPOSIT_INTER_ITEM_DELAY_SEC = 0.022
+
+/** Ghost hit optional slow-motion (real-time seconds). */
+export const GHOST_HIT_SLOW_MO_SEC = 0.14
+export const GHOST_HIT_SLOW_MO_SCALE = 0.38
+
+/** Dropped stack items (ghost / traps) vanish after this if not picked up. */
+export const STACK_DROP_RECOVERY_TTL_SEC = 3.6
+export const STACK_DROP_SCATTER_RADIUS = 2.1
 /** Money HUD count-up speed (higher = snappier) */
 export const MONEY_DISPLAY_LERP = 10
-
-/** Idle hint (seconds still, outside sources) */
-export const IDLE_HINT_AFTER_SEC = 2.75
-export const IDLE_SPEED_MAX = 0.18
 
 /** Floating +1 / money pop */
 export const FLOAT_TEXT_SEC = 0.85

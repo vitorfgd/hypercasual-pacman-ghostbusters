@@ -122,6 +122,12 @@ export class UpgradeZoneSystem {
 
   private activeKind: UpgradeSpendKind | null = null
 
+  /** After a level completes, must step off the pad before paying toward the next level. */
+  private blockUntilLeaveCapacity = false
+  private blockUntilLeaveSpeed = false
+  private blockUntilLeavePulseFill = false
+  private blockUntilLeavePulseDrain = false
+
   private occCapacity = 0
   private occSpeed = 0
   private occPulseFreq = 0
@@ -154,13 +160,13 @@ export class UpgradeZoneSystem {
       pulseDuration: new Vector3(h, y, -h),
     }
 
-    const innerW = UPGRADE_PAD_HALF_WIDTH * 2 * 0.88
-    const innerD = UPGRADE_PAD_HALF_DEPTH * 2 * 0.88
+    const fullW = UPGRADE_PAD_HALF_WIDTH * 2
+    const fullD = UPGRADE_PAD_HALF_DEPTH * 2
     this.floorLabels = [
-      createUpgradePadWorldLabel(innerW, innerD, 'CAPACITY'),
-      createUpgradePadWorldLabel(innerW, innerD, 'SPEED'),
-      createUpgradePadWorldLabel(innerW, innerD, 'FILL'),
-      createUpgradePadWorldLabel(innerW, innerD, 'DRAIN'),
+      createUpgradePadWorldLabel(fullW, fullD, 'CAPACITY'),
+      createUpgradePadWorldLabel(fullW, fullD, 'SPEED'),
+      createUpgradePadWorldLabel(fullW, fullD, 'FILL'),
+      createUpgradePadWorldLabel(fullW, fullD, 'DRAIN'),
     ]
     this.capacityPad.root.add(this.floorLabels[0]!.mesh)
     this.speedPad.root.add(this.floorLabels[1]!.mesh)
@@ -225,6 +231,30 @@ export class UpgradeZoneSystem {
     this.upgradeFlight.update(dt)
     this.syncPadRootVisibility()
     this.player.getPosition(p)
+
+    if (
+      !this.inPadRect(p.x, p.z, this.padWorld.capacity.x, this.padWorld.capacity.z)
+    ) {
+      this.blockUntilLeaveCapacity = false
+    }
+    if (!this.inPadRect(p.x, p.z, this.padWorld.speed.x, this.padWorld.speed.z)) {
+      this.blockUntilLeaveSpeed = false
+    }
+    if (
+      !this.inPadRect(p.x, p.z, this.padWorld.pulseFreq.x, this.padWorld.pulseFreq.z)
+    ) {
+      this.blockUntilLeavePulseFill = false
+    }
+    if (
+      !this.inPadRect(
+        p.x,
+        p.z,
+        this.padWorld.pulseDuration.x,
+        this.padWorld.pulseDuration.z,
+      )
+    ) {
+      this.blockUntilLeavePulseDrain = false
+    }
 
     const occK = 1 - Math.exp(-8 * dt)
     if (this.kindUnlocked('capacity')) {
@@ -397,6 +427,7 @@ export class UpgradeZoneSystem {
   }
 
   private payCapacity(): void {
+    if (this.blockUntilLeaveCapacity) return
     if (this.capacityUpgradeLevel >= MAX_CAPACITY_UPGRADE_LEVELS) return
     const cost = capacityUpgradeCost(this.capacityUpgradeLevel)
     const need = cost - this.paidCapacity
@@ -412,11 +443,13 @@ export class UpgradeZoneSystem {
         INITIAL_STACK_CAPACITY + this.capacityUpgradeLevel,
       )
       this.paidCapacity = 0
+      this.blockUntilLeaveCapacity = true
       this.onSpendVfx?.('capacity', cost, this.padWorld.capacity.clone())
     }
   }
 
   private paySpeed(): void {
+    if (this.blockUntilLeaveSpeed) return
     if (this.speedUpgradeLevel >= MAX_SPEED_UPGRADE_LEVELS) return
     const cost = speedUpgradeCost(this.speedUpgradeLevel)
     const need = cost - this.paidSpeed
@@ -430,11 +463,13 @@ export class UpgradeZoneSystem {
       this.speedUpgradeLevel += 1
       this.player.setMaxSpeed(speedForLevel(this.speedUpgradeLevel))
       this.paidSpeed = 0
+      this.blockUntilLeaveSpeed = true
       this.onSpendVfx?.('speed', cost, this.padWorld.speed.clone())
     }
   }
 
   private payPulseFill(): void {
+    if (this.blockUntilLeavePulseFill) return
     if (this.pulseFillLevel >= MAX_PULSE_FILL_UPGRADE_LEVELS) return
     const cost = pulseFillUpgradeCost(this.pulseFillLevel)
     const need = cost - this.paidPulseFill
@@ -447,11 +482,13 @@ export class UpgradeZoneSystem {
     if (this.paidPulseFill >= cost) {
       this.pulseFillLevel += 1
       this.paidPulseFill = 0
+      this.blockUntilLeavePulseFill = true
       this.onSpendVfx?.('pulseFreq', cost, this.padWorld.pulseFreq.clone())
     }
   }
 
   private payPulseDrain(): void {
+    if (this.blockUntilLeavePulseDrain) return
     if (this.pulseDrainLevel >= MAX_PULSE_DRAIN_UPGRADE_LEVELS) return
     const cost = pulseDrainUpgradeCost(this.pulseDrainLevel)
     const need = cost - this.paidPulseDrain
@@ -464,6 +501,7 @@ export class UpgradeZoneSystem {
     if (this.paidPulseDrain >= cost) {
       this.pulseDrainLevel += 1
       this.paidPulseDrain = 0
+      this.blockUntilLeavePulseDrain = true
       this.onSpendVfx?.('pulseDuration', cost, this.padWorld.pulseDuration.clone())
     }
   }

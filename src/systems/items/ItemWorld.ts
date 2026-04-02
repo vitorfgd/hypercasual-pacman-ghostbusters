@@ -18,7 +18,15 @@ import {
 } from './PickupMotion.ts'
 import { COLLECT_POP_SEC } from '../../juice/juiceConfig.ts'
 
-type Entry = { mesh: Object3D; item: GameItem }
+type RecoverState = {
+  ttlRemain: number
+  vx: number
+  vy: number
+  vz: number
+  landed: boolean
+}
+
+type Entry = { mesh: Object3D; item: GameItem; recover?: RecoverState }
 
 type CollectAnim = { mesh: Object3D; t: number }
 
@@ -73,6 +81,34 @@ export class ItemWorld {
     this.byId.set(item.id, { mesh, item })
   }
 
+  /**
+   * Dropped items (ghost hit / traps): short TTL, pop + bounce, then behave as normal pickups.
+   */
+  spawnRecoverable(
+    item: GameItem,
+    x: number,
+    z: number,
+    ttlSec: number,
+    opts?: { horizontalKick?: number; popVy?: number },
+  ): void {
+    if (this.byId.has(item.id)) return
+    const mesh = this.obtainMesh(item)
+    mesh.position.set(x, mesh.position.y, z)
+    mesh.userData.recoverGroundY = mesh.position.y
+    const ang = Math.random() * Math.PI * 2
+    const hk = opts?.horizontalKick ?? 2.2 + Math.random() * 2.8
+    const recover: RecoverState = {
+      ttlRemain: ttlSec,
+      vx: Math.cos(ang) * hk,
+      vy: opts?.popVy ?? 4.2 + Math.random() * 2.4,
+      vz: Math.sin(ang) * hk,
+      landed: false,
+    }
+    mesh.visible = true
+    this.pickupGroup.add(mesh)
+    this.byId.set(item.id, { mesh, item, recover })
+  }
+
   remove(id: string): void {
     const e = this.byId.get(id)
     if (!e) return
@@ -92,7 +128,8 @@ export class ItemWorld {
     const outerR = collectRadius + magnetExtra
     const outerR2 = outerR * outerR
     const innerR2 = innerR * innerR
-    for (const [, { mesh }] of this.byId) {
+    for (const [, { mesh, recover }] of this.byId) {
+      if (recover && !recover.landed) continue
       const dx = playerXZ.x - mesh.position.x
       const dz = playerXZ.z - mesh.position.z
       const d2 = dx * dx + dz * dz
@@ -168,7 +205,41 @@ export class ItemWorld {
   }
 
   updateVisuals(timeSec: number, dt: number): void {
-    for (const [, { mesh, item }] of this.byId) {
+    const g = 24
+    const expired: string[] = []
+    for (const [id, e] of this.byId) {
+      const r = e.recover
+      if (!r) continue
+      r.ttlRemain -= dt
+      if (r.ttlRemain <= 0) {
+        expired.push(id)
+        continue
+      }
+      r.vy -= g * dt
+      e.mesh.position.x += r.vx * dt
+      e.mesh.position.z += r.vz * dt
+      e.mesh.position.y += r.vy * dt
+      const gy = (e.mesh.userData.recoverGroundY as number | undefined) ?? 0
+      if (e.mesh.position.y < gy) {
+        e.mesh.position.y = gy
+        r.vy *= -0.36
+        r.vx *= 0.87
+        r.vz *= 0.87
+        if (!r.landed) {
+          r.landed = true
+          attachPickupIdleMotion(
+            e.mesh,
+            e.item.type === 'wisp' ? 'wisp' : 'pellet',
+          )
+        }
+      }
+    }
+    for (const id of expired) {
+      this.remove(id)
+    }
+
+    for (const [, { mesh, item, recover }] of this.byId) {
+      if (recover && !recover.landed) continue
       const wispMixer = mesh.userData.wispMixer as AnimationMixer | undefined
       if (wispMixer) wispMixer.update(dt)
       const relicMixer = mesh.userData.relicMixer as AnimationMixer | undefined

@@ -22,6 +22,8 @@ export class PlayerController {
   private knockZ = 0
   /** Applied on top of upgrade max speed (power mode). */
   private powerSpeedMul = 1
+  /** Stack weight × trap slow (and other movement penalties). Clamped to (0,1]. */
+  private movementSlowMul = 1
   /** Horizontal radius for overlap tests (XZ) */
   readonly radius = 0.55
   private readonly playerRoot: Group
@@ -63,6 +65,15 @@ export class PlayerController {
     this.powerSpeedMul = Math.max(1, m)
   }
 
+  /** Stack encumbrance, slow traps, etc. Multiplied into horizontal cap. */
+  setMovementSlowMultiplier(m: number): void {
+    this.movementSlowMul = Math.max(0.12, Math.min(1, m))
+  }
+
+  getMovementSlowMultiplier(): number {
+    return this.movementSlowMul
+  }
+
   getPosition(out: Vector3): Vector3 {
     return out.copy(this.playerRoot.position)
   }
@@ -78,7 +89,13 @@ export class PlayerController {
   }
 
   /** Push away from ghost; direction is from ghost center toward player. */
-  applyGhostKnockback(ghostX: number, ghostZ: number, playerX: number, playerZ: number): void {
+  applyGhostKnockback(
+    ghostX: number,
+    ghostZ: number,
+    playerX: number,
+    playerZ: number,
+    strengthScale = 1,
+  ): void {
     let dx = playerX - ghostX
     let dz = playerZ - ghostZ
     const len = Math.hypot(dx, dz)
@@ -89,8 +106,9 @@ export class PlayerController {
       dx /= len
       dz /= len
     }
-    this.knockX = dx * GHOST_HIT_KNOCKBACK_SPEED
-    this.knockZ = dz * GHOST_HIT_KNOCKBACK_SPEED
+    const s = Math.max(0, Math.min(1.5, strengthScale))
+    this.knockX = dx * GHOST_HIT_KNOCKBACK_SPEED * s
+    this.knockZ = dz * GHOST_HIT_KNOCKBACK_SPEED * s
   }
 
   /**
@@ -119,7 +137,11 @@ export class PlayerController {
         this.startBoostRemaining -= dt
       }
 
-      const cap = this.maxSpeed * this.powerSpeedMul * startBoost
+      const cap =
+        this.maxSpeed *
+        this.powerSpeedMul *
+        this.movementSlowMul *
+        startBoost
       const targetVx = nx * cap
       const targetVz = nz * cap
 

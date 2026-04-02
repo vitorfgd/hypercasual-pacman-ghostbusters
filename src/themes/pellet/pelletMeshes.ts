@@ -23,8 +23,10 @@ import {
 
 const SOUL_BODY_R = 0.1
 const SOUL_STACK_R = 0.06
-const GEM_PICKUP_R = 0.11
-const GEM_STACK_R = 0.062
+/** Floor gem from ghost kills (pickup mesh) — large so it reads clearly on the ground. */
+const GEM_PICKUP_R = 0.11 * 5
+/** Stack gem octahedron — enlarged vs pickup so gems read clearly on the carry stack. */
+const GEM_STACK_R = 0.062 * 5
 /** Procedural floor relic — big (matches gltf “floor is large” intent). */
 const RELIC_PICKUP_MESH_SCALE = (1 / 5 / 3) * 4 * 3
 /** Procedural stack relic — ~wisp-like ratio vs floor pickup mesh */

@@ -1,15 +1,3 @@
-import { spawnFloatingHudText } from './floatingHud.ts'
-
-/** Banner when a new relic lands in a room. */
-export function showRelicSpawnedBanner(viewport: HTMLElement): void {
-  spawnFloatingHudText(
-    viewport,
-    'Rare relic appeared — follow the arrow!',
-    'float-hud--relic-spawn',
-    { durationSec: 2.85, leftPct: 50, topPct: 18 },
-  )
-}
-
 const RELIC_BANKED_SEC = 3.4
 
 /**
@@ -34,23 +22,14 @@ export function showRelicBankedCelebration(
   wrap.appendChild(title)
   wrap.appendChild(sub)
   wrap.style.left = '50%'
-  wrap.style.top = 'clamp(26%, 30vh, 36%)'
+  /** Below top HUD row; clear of stack floats. */
+  wrap.style.top = 'clamp(16%, 22vh, 30%)'
   viewport.appendChild(wrap)
   requestAnimationFrame(() => wrap.classList.add('float-hud--show'))
   window.setTimeout(() => {
     wrap.classList.add('float-hud--out')
     window.setTimeout(() => wrap.remove(), 220)
   }, RELIC_BANKED_SEC * 1000)
-}
-
-/** Short hint when the relic is picked up (carry to deposit). */
-export function showRelicPickupHint(viewport: HTMLElement): void {
-  spawnFloatingHudText(
-    viewport,
-    'Relic acquired — deposit at the gold circle',
-    'float-hud--relic-pickup-hint',
-    { durationSec: 2.2, leftPct: 50, topPct: 34 },
-  )
 }
 
 /** Brief gold sparkles at screen center (DOM). */

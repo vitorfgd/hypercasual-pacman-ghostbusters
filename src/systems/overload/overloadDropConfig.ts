@@ -11,8 +11,8 @@ export const OVERLOAD_BONUS_MULT = 1.35
 /** Applied to overload bonus portion when Perfect */
 export const PERFECT_OVERLOAD_BONUS_MULT = 1.55
 
-/** Flight duration multiplier during overload (longer than normal deposit flight) */
-export const OVERLOAD_FLIGHT_DURATION_MULT = 1.2
+/** Flight duration multiplier during overload (≥1 = vs normal deposit flight) */
+export const OVERLOAD_FLIGHT_DURATION_MULT = 1.05
 
 export const OVERLOAD_SPIRAL_AMPLITUDE = 0.55
 export const OVERLOAD_SPIRAL_AMPLITUDE_PERFECT = 0.82

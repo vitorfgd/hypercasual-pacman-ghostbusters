@@ -16,6 +16,10 @@ import { createUpgradePad } from '../upgrades/UpgradePadVisual.ts'
 import type { PadLabelPayload } from '../upgrades/UpgradePadVisual.ts'
 import { UPGRADE_PAD_HUB_OFFSET } from '../upgrades/upgradeConfig.ts'
 import { createMansionGround } from './mansionEnvironment.ts'
+import {
+  createHubTitleFloorLabel,
+  type HubTitleFloorLabelHandle,
+} from './hubTitleFloorLabel.ts'
 
 export type SceneContents = {
   scene: Scene
@@ -61,6 +65,7 @@ export type SceneContents = {
       setOccupancy: (t: number) => void
     }
   }
+  hubTitleFloorLabel: HubTitleFloorLabelHandle
 }
 
 export function createScene(
@@ -153,6 +158,9 @@ export function createScene(
 
   scene.add(upgradeAreaRoot)
 
+  const hubTitleFloorLabel = createHubTitleFloorLabel()
+  scene.add(hubTitleFloorLabel.root)
+
   return {
     scene,
     ground,
@@ -171,5 +179,6 @@ export function createScene(
       pulseFreq: pulseFreqPad,
       pulseDuration: pulseDurationPad,
     },
+    hubTitleFloorLabel,
   }
 }

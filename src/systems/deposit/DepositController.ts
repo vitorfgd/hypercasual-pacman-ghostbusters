@@ -15,6 +15,7 @@ import type { PlayerController } from '../player/PlayerController.ts'
 import type { CarryStack } from '../stack/CarryStack.ts'
 import type { StackVisual } from '../stack/StackVisual.ts'
 import { DEFAULT_DEPOSIT_ZONE_RADIUS } from './DepositZone.ts'
+import { DEPOSIT_INTER_ITEM_DELAY_SEC } from '../../juice/juiceConfig.ts'
 import {
   DEPOSIT_FLIGHT_DURATION_SEC,
   type DepositFlightAnimator,
@@ -43,7 +44,7 @@ export type DepositControllerOptions = {
   economy: Economy
   flight: DepositFlightAnimator
   evaluateOverload?: (snapshot: readonly GameItem[]) => OverloadEvalResult
-  onItemDepositLanded?: (item: GameItem) => void
+  onItemDepositLanded?: (item: GameItem, flightIndex: number) => void
   onDepositSessionStart?: (meta: {
     overload: boolean
     perfect: boolean
@@ -67,7 +68,10 @@ export class DepositController {
   private readonly flight: DepositFlightAnimator
   private readonly evaluateOverload?: (snapshot: readonly GameItem[]) => OverloadEvalResult
   private readonly onDepositPresentationComplete: DepositControllerOptions['onDepositPresentationComplete']
-  private readonly onItemDepositLanded?: (item: GameItem) => void
+  private readonly onItemDepositLanded?: (
+    item: GameItem,
+    flightIndex: number,
+  ) => void
   private readonly onDepositSessionStart?: DepositControllerOptions['onDepositSessionStart']
   private readonly onDepositSessionEnd?: () => void
 
@@ -77,6 +81,8 @@ export class DepositController {
   private sessionOverload: { active: boolean; perfect: boolean; total: number } | null =
     null
   private peelIndex = 0
+  /** Stagger between item flights (after each lands, before next peel). */
+  private depositDelayRemain = 0
 
   constructor(opts: DepositControllerOptions) {
     this.scene = opts.scene
@@ -106,6 +112,15 @@ export class DepositController {
     }
 
     this.flight.update(dt)
+
+    if (!this.flight.busy && this.depositDelayRemain > 0) {
+      this.depositDelayRemain -= dt
+      if (this.depositDelayRemain <= 0) {
+        this.depositDelayRemain = 0
+        this.tryPeelNext()
+      }
+    }
+
     if (this.flight.busy) {
       this.wasInside = inside
       return
@@ -191,8 +206,13 @@ export class DepositController {
     const onFlightDone = (flightMesh: import('three').Object3D): void => {
       this.stackVisual.recycleDepositedMesh(item, flightMesh)
       this.depositedIds.add(item.id)
-      this.onItemDepositLanded?.(item)
-      this.tryPeelNext()
+      this.onItemDepositLanded?.(item, spiralIndex)
+      if (this.stack.count === 0) {
+        this.depositDelayRemain = 0
+        this.tryPeelNext()
+      } else {
+        this.depositDelayRemain = DEPOSIT_INTER_ITEM_DELAY_SEC
+      }
     }
     const ov = this.sessionOverload
     const overloadStyle =
@@ -219,6 +239,7 @@ export class DepositController {
   private abortDepositSession(): void {
     if (this.sessionSnapshot === null) return
 
+    this.depositDelayRemain = 0
     this.flight.cancel()
 
     const snapshot = this.sessionSnapshot

@@ -2,6 +2,8 @@ import type { Group, PerspectiveCamera } from 'three'
 import { Vector3 } from 'three'
 import {
   CAMERA_OFFSET_BASE,
+  CAMERA_EXTRA_ZOOM_HEAVY,
+  CAMERA_HEAVY_STACK_FILL,
   CAMERA_SMOOTH,
   CAMERA_STACK_ZOOM_MAX,
   CAMERA_STACK_ZOOM_Y,
@@ -17,24 +19,29 @@ export class CameraRig {
   private readonly camera: PerspectiveCamera
   private readonly target: Group
   private readonly smooth: number
-  private readonly getStackCount: () => number
+  /** Returns stack fill 0…1 (count / maxCapacity). */
+  private readonly getStackFillRatio: () => number
 
   constructor(
     camera: PerspectiveCamera,
     target: Group,
-    getStackCount: () => number,
+    getStackFillRatio: () => number,
     smooth = CAMERA_SMOOTH,
   ) {
     this.camera = camera
     this.target = target
-    this.getStackCount = getStackCount
+    this.getStackFillRatio = getStackFillRatio
     this.smooth = smooth
   }
 
   update(dt: number): void {
     this.target.getWorldPosition(playerPos)
-    const n = this.getStackCount()
-    const zoom = Math.min(CAMERA_STACK_ZOOM_MAX, n * 1)
+    const fill = Math.max(0, Math.min(1, this.getStackFillRatio()))
+    let zoom = fill * CAMERA_STACK_ZOOM_MAX
+    if (fill >= CAMERA_HEAVY_STACK_FILL) {
+      zoom += CAMERA_EXTRA_ZOOM_HEAVY * (fill - CAMERA_HEAVY_STACK_FILL)
+    }
+    zoom = Math.min(CAMERA_STACK_ZOOM_MAX + CAMERA_EXTRA_ZOOM_HEAVY * 0.5, zoom)
     offsetWithZoom.set(
       CAMERA_OFFSET_BASE.x,
       CAMERA_OFFSET_BASE.y + zoom * CAMERA_STACK_ZOOM_Y,
