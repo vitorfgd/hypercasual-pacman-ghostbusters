@@ -7,10 +7,12 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "preview:gh": "vite preview --host --base /hypercasual-pacman-ghostbusters/"
+    "preview:gh": "vite preview --host --base /hypercasual-pacman-ghostbusters/",
+    "knip": "knip"
   },
   "devDependencies": {
     "@types/three": "^0.183.1",
+    "knip": "^6.2.0",
     "typescript": "~5.9.3",
     "vite": "^8.0.1"
   },

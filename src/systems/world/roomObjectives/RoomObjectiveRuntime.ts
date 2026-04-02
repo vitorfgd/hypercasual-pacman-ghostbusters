@@ -3,9 +3,7 @@ import type { RoomId } from '../mansionRoomData.ts'
 import { createRelicItem, createWispItem } from '../../../themes/wisp/itemFactory.ts'
 import type { ItemWorld } from '../../items/ItemWorld.ts'
 
-export type RoomObjectiveType = 'COLLECT' | 'SURVIVE' | 'ACTIVATE'
-
-type Zone = { x: number; z: number; r: number; hit: boolean }
+export type RoomObjectiveType = 'COLLECT' | 'SURVIVE'
 
 export type RoomObjectiveState = {
   roomId: RoomId
@@ -13,7 +11,6 @@ export type RoomObjectiveState = {
   progress: number
   target: number
   isCompleted: boolean
-  zones?: Zone[]
   surviveAccum?: number
 }
 
@@ -46,10 +43,8 @@ export class RoomObjectiveRuntime {
 
   private rollObjective(roomId: RoomId): RoomObjectiveState {
     const r = this.random()
-    let objectiveType: RoomObjectiveType
-    if (r < 0.36) objectiveType = 'COLLECT'
-    else if (r < 0.68) objectiveType = 'SURVIVE'
-    else objectiveType = 'ACTIVATE'
+    const objectiveType: RoomObjectiveType =
+      r < 0.5 ? 'COLLECT' : 'SURVIVE'
 
     if (objectiveType === 'COLLECT') {
       return {
@@ -60,35 +55,13 @@ export class RoomObjectiveRuntime {
         isCompleted: false,
       }
     }
-    if (objectiveType === 'SURVIVE') {
-      return {
-        roomId,
-        objectiveType,
-        progress: 0,
-        target: 5 + Math.floor(this.random() * 4),
-        isCompleted: false,
-        surviveAccum: 0,
-      }
-    }
-    const nZones = 2 + Math.floor(this.random() * 2)
-    const b = this.roomSystem.getBounds(roomId)
-    const pad = 1.0
-    const zones: Zone[] = []
-    for (let i = 0; i < nZones; i++) {
-      zones.push({
-        x: b.minX + pad + this.random() * (b.maxX - b.minX - pad * 2),
-        z: b.minZ + pad + this.random() * (b.maxZ - b.minZ - pad * 2),
-        r: 0.65 + this.random() * 0.35,
-        hit: false,
-      })
-    }
     return {
       roomId,
       objectiveType,
       progress: 0,
-      target: nZones,
+      target: 5 + Math.floor(this.random() * 4),
       isCompleted: false,
-      zones,
+      surviveAccum: 0,
     }
   }
 
@@ -101,8 +74,7 @@ export class RoomObjectiveRuntime {
 
   private hudLine(s: RoomObjectiveState): string {
     if (s.objectiveType === 'COLLECT') return `Collect ${s.target} wisps`
-    if (s.objectiveType === 'SURVIVE') return `Survive ${s.target}s`
-    return `Activate ${s.target} zones`
+    return `Survive ${s.target}s`
   }
 
   /**
@@ -146,17 +118,6 @@ export class RoomObjectiveRuntime {
       }
     }
 
-    if (st.objectiveType === 'ACTIVATE' && st.zones) {
-      let hits = 0
-      for (const z of st.zones) {
-        const dx = playerX - z.x
-        const dz = playerZ - z.z
-        if (dx * dx + dz * dz <= z.r * z.r) z.hit = true
-        if (z.hit) hits++
-      }
-      st.progress = hits
-      if (hits >= st.target) this.finish(st, onComplete)
-    }
   }
 
   /** When a wisp is picked up, if player is in a COLLECT room, add progress. */
@@ -192,7 +153,7 @@ export class RoomObjectiveRuntime {
     random: () => number,
   ): void {
     const c = this.roomSystem.roomCenter(roomId)
-    const relicRoll = random() < 0.12
+    const relicRoll = random() < 0.12 && !itemWorld.hasRelicOnGround()
     if (relicRoll) {
       itemWorld.spawn(createRelicItem(), c.x + (random() - 0.5) * 1.2, c.z + (random() - 0.5) * 1.2)
       return

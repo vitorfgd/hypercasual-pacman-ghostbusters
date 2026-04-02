@@ -89,6 +89,8 @@ export type UpgradeZoneSystemOptions = {
   ) => void
   /** Pad is interactable only when this door index is unlocked (see `UPGRADE_VISIBLE_AFTER_DOOR`). */
   isDoorUnlocked: (doorIndex: number) => boolean
+  /** Called when a full upgrade level completes (after paying the last chunk). */
+  onUpgradeLevelUp?: (kind: UpgradeSpendKind, newLevel: number) => void
 }
 
 /**
@@ -106,6 +108,7 @@ export class UpgradeZoneSystem {
   private readonly pulseFreqPad: UpgradeZoneSystemOptions['pulseFreqPad']
   private readonly pulseDurationPad: UpgradeZoneSystemOptions['pulseDurationPad']
   private readonly onSpendVfx?: UpgradeZoneSystemOptions['onSpendVfx']
+  private readonly onUpgradeLevelUp?: UpgradeZoneSystemOptions['onUpgradeLevelUp']
   private readonly isDoorUnlocked: (doorIndex: number) => boolean
 
   private readonly upgradeFlight = new DepositFlightAnimator()
@@ -150,6 +153,7 @@ export class UpgradeZoneSystem {
     this.pulseFreqPad = opts.pulseFreqPad
     this.pulseDurationPad = opts.pulseDurationPad
     this.onSpendVfx = opts.onSpendVfx
+    this.onUpgradeLevelUp = opts.onUpgradeLevelUp
     this.isDoorUnlocked = opts.isDoorUnlocked
     const h = UPGRADE_PAD_HUB_OFFSET
     const y = 0.02
@@ -445,6 +449,7 @@ export class UpgradeZoneSystem {
       this.paidCapacity = 0
       this.blockUntilLeaveCapacity = true
       this.onSpendVfx?.('capacity', cost, this.padWorld.capacity.clone())
+      this.onUpgradeLevelUp?.('capacity', this.capacityUpgradeLevel)
     }
   }
 
@@ -465,6 +470,7 @@ export class UpgradeZoneSystem {
       this.paidSpeed = 0
       this.blockUntilLeaveSpeed = true
       this.onSpendVfx?.('speed', cost, this.padWorld.speed.clone())
+      this.onUpgradeLevelUp?.('speed', this.speedUpgradeLevel)
     }
   }
 
@@ -484,6 +490,7 @@ export class UpgradeZoneSystem {
       this.paidPulseFill = 0
       this.blockUntilLeavePulseFill = true
       this.onSpendVfx?.('pulseFreq', cost, this.padWorld.pulseFreq.clone())
+      this.onUpgradeLevelUp?.('pulseFreq', this.pulseFillLevel)
     }
   }
 
@@ -503,6 +510,7 @@ export class UpgradeZoneSystem {
       this.paidPulseDrain = 0
       this.blockUntilLeavePulseDrain = true
       this.onSpendVfx?.('pulseDuration', cost, this.padWorld.pulseDuration.clone())
+      this.onUpgradeLevelUp?.('pulseDuration', this.pulseDrainLevel)
     }
   }
 

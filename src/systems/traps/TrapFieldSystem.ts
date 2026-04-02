@@ -163,7 +163,6 @@ export class TrapFieldSystem {
       }
       t.wasInside = inside
     }
-    void timeSec
     return slowMul
   }
 

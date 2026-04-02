@@ -117,6 +117,14 @@ export class ItemWorld {
     this.byId.delete(id)
   }
 
+  /** True if any relic pickup is still on the ground (not carried). */
+  hasRelicOnGround(): boolean {
+    for (const { item } of this.byId.values()) {
+      if (item.type === 'relic') return true
+    }
+    return false
+  }
+
   applyMagnetPull(
     playerXZ: Vector3,
     collectRadius: number,

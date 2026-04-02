@@ -5,7 +5,7 @@ const RELIC_BANKED_SEC = 3.4
  */
 export function showRelicBankedCelebration(
   viewport: HTMLElement,
-  value: number,
+  _value: number,
 ): void {
   const wrap = document.createElement('div')
   wrap.className = 'float-hud float-hud--relic-banked-wrap'
@@ -15,12 +15,7 @@ export function showRelicBankedCelebration(
   title.className = 'float-hud--relic-banked-title'
   title.textContent = 'RELIC SECURED!'
 
-  const sub = document.createElement('div')
-  sub.className = 'float-hud--relic-banked-sub'
-  sub.textContent = `+$${value} credited · Safe in the vault`
-
   wrap.appendChild(title)
-  wrap.appendChild(sub)
   wrap.style.left = '50%'
   /** Below top HUD row; clear of stack floats. */
   wrap.style.top = 'clamp(16%, 22vh, 30%)'

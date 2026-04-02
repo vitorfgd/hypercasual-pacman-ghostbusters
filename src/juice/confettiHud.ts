@@ -16,7 +16,7 @@ const CONFETTI_COLORS = [
   '#38bdf8',
 ]
 
-export function spawnConfettiBurst(viewport: HTMLElement): void {
+function spawnConfettiBurst(viewport: HTMLElement): void {
   const layer = document.createElement('div')
   layer.className = 'juice-confetti-layer'
   layer.setAttribute('aria-hidden', 'true')
@@ -53,7 +53,7 @@ const CELEBRATION_SHOW_MS = 3200
 function showCelebrationBlock(
   viewport: HTMLElement,
   title: string,
-  subtitle: string,
+  subtitle: string | null,
 ): void {
   const wrap = document.createElement('div')
   wrap.className = 'float-hud float-hud--celebration-wrap'
@@ -63,12 +63,13 @@ function showCelebrationBlock(
   t.className = 'float-hud--celebration-title'
   t.textContent = title
 
-  const s = document.createElement('div')
-  s.className = 'float-hud--celebration-sub'
-  s.textContent = subtitle
-
   wrap.appendChild(t)
-  wrap.appendChild(s)
+  if (subtitle) {
+    const s = document.createElement('div')
+    s.className = 'float-hud--celebration-sub'
+    s.textContent = subtitle
+    wrap.appendChild(s)
+  }
   wrap.style.left = '50%'
   wrap.style.top = 'clamp(22%, 28vh, 34%)'
   viewport.appendChild(wrap)
@@ -89,15 +90,11 @@ export function celebrateHubQuestComplete(viewport: HTMLElement): void {
   )
 }
 
-/** Room objective (wisps / local goal) finished. */
+/** Room objective (wisps / survive) finished. */
 export function celebrateRoomObjectiveComplete(
   viewport: HTMLElement,
   objectiveSummary: string,
 ): void {
   spawnConfettiBurst(viewport)
-  showCelebrationBlock(
-    viewport,
-    'Room cleared!',
-    `${objectiveSummary} — rewards are dropping in!`,
-  )
+  showCelebrationBlock(viewport, 'Goal complete!', objectiveSummary)
 }

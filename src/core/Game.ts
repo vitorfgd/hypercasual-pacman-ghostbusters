@@ -36,7 +36,10 @@ import {
   createWispItem,
 } from '../themes/wisp/itemFactory.ts'
 import type { GameItem } from './types/GameItem.ts'
-import { UpgradeZoneSystem } from '../systems/upgrades/UpgradeZoneSystem.ts'
+import {
+  UpgradeZoneSystem,
+  type UpgradeSpendKind,
+} from '../systems/upgrades/UpgradeZoneSystem.ts'
 import { INITIAL_STACK_CAPACITY } from '../systems/upgrades/upgradeConfig.ts'
 import { spawnUpgradeSpendCoins } from '../systems/upgrades/upgradeSpendVfx.ts'
 import {
@@ -99,6 +102,19 @@ import { TrapFieldSystem } from '../systems/traps/TrapFieldSystem.ts'
 import { RoomObjectiveRuntime } from '../systems/world/roomObjectives/RoomObjectiveRuntime.ts'
 
 const DEPOSIT_TOAST_MS = 2800
+
+function upgradeLevelUpBanner(kind: UpgradeSpendKind, newLevel: number): string {
+  switch (kind) {
+    case 'capacity':
+      return `Stack capacity — level ${newLevel}!`
+    case 'speed':
+      return `Speed — level ${newLevel}!`
+    case 'pulseFreq':
+      return `Hunt charge fill — level ${newLevel}!`
+    case 'pulseDuration':
+      return `Hunt charge drain — level ${newLevel}!`
+  }
+}
 
 export class Game {
   private readonly roomSystem = new RoomSystem()
@@ -416,21 +432,6 @@ export class Game {
           hudMoney.classList.add(heavy ? 'money-bump-big' : 'money-bump')
         }
         if (
-          !ol.overloadActive &&
-          items.length >= 6 &&
-          totalPayout >= 40
-        ) {
-          spawnFloatingHudText(
-            this.gameViewport,
-            `+$${totalPayout} BANKED!`,
-            'float-hud--bank-big',
-            {
-              topPct: relicItem ? 72 : 38 + Math.random() * 10,
-              leftPct: 50,
-            },
-          )
-        }
-        if (
           hudOverload &&
           hudOverloadAmount &&
           ol.overloadActive
@@ -487,6 +488,14 @@ export class Game {
         this.doorUnlock.isDoorUnlocked(doorIndex),
       onSpendVfx: (_kind, cost, padWorld) => {
         spawnUpgradeSpendCoins(this.hostEl, this.camera, cost, padWorld)
+      },
+      onUpgradeLevelUp: (kind, newLevel) => {
+        spawnFloatingHudText(
+          this.gameViewport,
+          upgradeLevelUpBanner(kind, newLevel),
+          'float-hud--level-up',
+          { topPct: 26, leftPct: 50, durationSec: 2.4 },
+        )
       },
     })
 
@@ -758,15 +767,17 @@ export class Game {
       for (const { item } of collected) {
         if (item.type === 'wisp') {
           spawnFloatingHudText(this.gameViewport, '+1', 'float-hud--pickup')
-          playJuiceSound('pickup')
           this.roomObjectives.onWispCollected(
             this.playerPos.x,
             this.playerPos.z,
             (rid, line) => this.completeRoomObjective(rid, line),
           )
-        } else if (item.type === 'relic') {
-          playJuiceSound('pickup')
-        } else if (item.type === 'gem') {
+        }
+        if (
+          item.type === 'wisp' ||
+          item.type === 'relic' ||
+          item.type === 'gem'
+        ) {
           playJuiceSound('pickup')
         }
       }

@@ -1,0 +1,22 @@
+Manual regression checklist (ghost-busters)
+
+Deposit
+- Enter hub deposit zone with items; items peel and fly to center; credits apply on last item.
+- Start deposit, walk out of zone before finish: partial credit for deposited items, remaining items return to stack (abort).
+
+Hub welcome banner
+- First time: enter deposit zone then leave — north welcome banner should hide.
+- Optional: never step in deposit — confirm whether persistent banner is acceptable for your design.
+
+Traps
+- Slow field: movement slows while inside.
+- Damage field: lose stack fraction on first entry per visit; leave and re-enter — damage can fire again.
+
+Upgrade pads (hub)
+- After each door unlock (1–4), stand on the matching pad and pay chunks until level advances; labels and occupancy update.
+
+Quest / doors
+- Pay doors in order; quest HUD matches spec; blue-gem line when relevant.
+
+Ghost / hunt
+- Hunt charge drains while holding; ghosts flee when active; eat and hit behaviors feel correct.

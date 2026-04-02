@@ -62,6 +62,8 @@ export class SpecialRelicSpawnSystem {
   }
 
   private spawnRelic(): void {
+    if (this.itemWorld.hasRelicOnGround()) return
+
     if (this.activeRelicId !== null && this.itemWorld.hasPickup(this.activeRelicId)) {
       this.itemWorld.remove(this.activeRelicId)
     }
