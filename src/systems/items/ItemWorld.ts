@@ -9,6 +9,7 @@ import {
 } from 'three'
 import type { DoorUnlockSystem } from '../doors/DoorUnlockSystem.ts'
 import type { RoomSystem } from '../world/RoomSystem.ts'
+import type { RoomId } from '../world/mansionRoomData.ts'
 import { computeClutterRevealOpacity } from '../clutter/clutterRevealOpacity.ts'
 import type { GameItem } from '../../core/types/GameItem.ts'
 import { isWorldPickupInteractable } from './pickupWorldState.ts'
@@ -143,6 +144,8 @@ export class ItemWorld {
     { length: 7 },
     () => [],
   )
+  private readonly clutterMeshesByRoom = new Map<RoomId, Set<Object3D>>()
+  private readonly clutterRevealAlphaByRoom = new Map<RoomId, number>()
 
   constructor(pickupGroup: Group, scene: Scene) {
     this.pickupGroup = pickupGroup
@@ -197,6 +200,14 @@ export class ItemWorld {
       const base = (mesh.userData.clutterBaseScale as number | undefined) ?? 1
       const mul = 0.8 + Math.random() * 0.4
       mesh.scale.setScalar(base * mul)
+      if (item.spawnRoomId) {
+        this.registerClutterMesh(item.spawnRoomId, mesh)
+        const alpha = this.clutterRevealAlphaByRoom.get(item.spawnRoomId)
+        if (alpha !== undefined) {
+          applyClutterRevealOpacity(mesh, alpha)
+          mesh.userData.clutterWorldInteractable = alpha >= 1 - CLUTTER_FADE_EPS
+        }
+      }
     }
     mesh.visible = show
     attachPickupIdleMotion(
@@ -238,6 +249,7 @@ export class ItemWorld {
   remove(id: string): void {
     const e = this.byId.get(id)
     if (!e) return
+    this.unregisterRoomTrackedMesh(e.item, e.mesh)
     this.pickupGroup.remove(e.mesh)
     this.disposeMesh(e.mesh)
     this.byId.delete(id)
@@ -310,11 +322,18 @@ export class ItemWorld {
    * without respawning — only visibility, materials, and `clutterWorldInteractable`.
    */
   updateClutterGateReveal(doorUnlock: DoorUnlockSystem): void {
-    for (const [, { mesh, item }] of this.byId) {
-      if (item.type !== 'clutter') continue
-      const alpha = computeClutterRevealOpacity(item.spawnRoomId, doorUnlock)
-      applyClutterRevealOpacity(mesh, alpha)
-      mesh.userData.clutterWorldInteractable = alpha >= 1 - CLUTTER_FADE_EPS
+    for (const [roomId, meshes] of this.clutterMeshesByRoom) {
+      const alpha = computeClutterRevealOpacity(roomId, doorUnlock)
+      const prevAlpha = this.clutterRevealAlphaByRoom.get(roomId)
+      if (prevAlpha !== undefined && Math.abs(prevAlpha - alpha) <= 1e-4) {
+        continue
+      }
+      this.clutterRevealAlphaByRoom.set(roomId, alpha)
+      const interactable = alpha >= 1 - CLUTTER_FADE_EPS
+      for (const mesh of meshes) {
+        applyClutterRevealOpacity(mesh, alpha)
+        mesh.userData.clutterWorldInteractable = interactable
+      }
     }
   }
 
@@ -613,5 +632,24 @@ export class ItemWorld {
       const mesh = this.pendingDisposals.pop()
       if (mesh) this.disposeMesh(mesh)
     }
+  }
+
+  private registerClutterMesh(roomId: RoomId, mesh: Object3D): void {
+    let meshes = this.clutterMeshesByRoom.get(roomId)
+    if (!meshes) {
+      meshes = new Set<Object3D>()
+      this.clutterMeshesByRoom.set(roomId, meshes)
+    }
+    meshes.add(mesh)
+  }
+
+  private unregisterRoomTrackedMesh(item: GameItem, mesh: Object3D): void {
+    if (item.type !== 'clutter' || !item.spawnRoomId) return
+    const meshes = this.clutterMeshesByRoom.get(item.spawnRoomId)
+    if (!meshes) return
+    meshes.delete(mesh)
+    if (meshes.size > 0) return
+    this.clutterMeshesByRoom.delete(item.spawnRoomId)
+    this.clutterRevealAlphaByRoom.delete(item.spawnRoomId)
   }
 }

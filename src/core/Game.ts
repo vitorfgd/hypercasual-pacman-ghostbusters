@@ -5,13 +5,6 @@ import { Group, Vector3 } from 'three'
 import { CameraRig } from '../systems/camera/CameraRig.ts'
 import { CollectionSystem } from '../systems/collection/CollectionSystem.ts'
 import {
-  DepositController,
-  type DepositPresentationOverload,
-} from '../systems/deposit/DepositController.ts'
-import { DepositFlightAnimator } from '../systems/deposit/DepositFlightAnimator.ts'
-import { DepositZoneFeedback } from '../systems/deposit/DepositZoneFeedback.ts'
-import type { DepositEval } from '../systems/economy/depositEvaluation.ts'
-import {
   KeyboardMoveInput,
   mergeMoveInput,
 } from '../systems/input/KeyboardMoveInput.ts'
@@ -113,14 +106,9 @@ import {
   disposeAllGhostHitBursts,
   spawnGhostHitEctoplasmBurst,
   spawnGhostHitPelletBurst,
-  spawnRelicCollectBurst,
   updateGhostHitBursts,
   type GhostHitBurstParticle,
 } from '../juice/ghostHitPelletBurst.ts'
-import {
-  showRelicBankedCelebration,
-  spawnRelicScreenSparkBurst,
-} from '../juice/relicHud.ts'
 import { PerfMonitor } from '../systems/debug/PerfMonitor.ts'
 import {
   DoorUnlockSystem,
@@ -152,8 +140,6 @@ import {
   getBossSpawnXZ,
 } from '../systems/boss/bossRoomConfig.ts'
 
-const DEPOSIT_TOAST_MS = 2800
-
 function roomCleanHudLabel(roomId: RoomId): string {
   if (roomId === 'SAFE_CENTER') return 'Safe'
   const m = /^ROOM_(\d+)$/.exec(roomId)
@@ -181,9 +167,6 @@ export class Game {
   private readonly stackVisual: StackVisual
   private readonly itemWorld: ItemWorld
   private readonly collection: CollectionSystem
-  private readonly depositController: DepositController
-  private readonly depositFlight: DepositFlightAnimator
-  private readonly depositFeedback: DepositZoneFeedback
   private readonly playerCharacter: PlayerCharacterVisual
   private readonly doorUnlock: DoorUnlockSystem
   private readonly roomLockCovers: RoomLockCoverSystem
@@ -211,7 +194,6 @@ export class Game {
   private powerModeRemain = 0
   private hitFlashEl: HTMLElement | null = null
   private hitFlashTimer: ReturnType<typeof setTimeout> | null = null
-  private depositToastTimer: ReturnType<typeof setTimeout> | null = null
   private raf = 0
   private lastTime = performance.now()
   private elapsedSec = 0
@@ -227,9 +209,6 @@ export class Game {
   private readonly hudRoomCleanFill: HTMLElement | null
   private readonly hudRoomCleanPct: HTMLElement | null
   private readonly hudRoomCleanTitle: HTMLElement | null
-  private readonly hudDepositToastEl: HTMLElement | null
-  private readonly depositToastAmountEl: HTMLElement | null
-  private readonly depositToastHintEl: HTMLElement | null
   private readonly hudCarryEl: HTMLElement | null
   private readonly hudCameraHintEl: HTMLElement | null
   private readonly hudLivesWrap: HTMLElement | null
@@ -241,7 +220,7 @@ export class Game {
   private runStatRoomsCleared = 0
   private runStatWispsCollected = 0
   private readonly runStatUpgradesPicked: { id: string; title: string }[] = []
-  /** Room reached 100% — waiting for player to pick an upgrade. */
+  /** Room reached 100% â€” waiting for player to pick an upgrade. */
   private roomUpgradePaused = false
   private roomUpgradePendingReveal: (() => void) | null = null
   private readonly roomUpgradePicker: ReturnType<
@@ -258,13 +237,16 @@ export class Game {
   /** Hide north welcome banner after first exit from the safe hub room. */
   private hubWelcomeHidden = false
   private wasInSafeRoom = true
+  private gameStartCountdownRemain = 3
+  private gameStartCountdownStep = -1
+  private readonly gameStartCountdownEl: HTMLElement
   private readonly navDebugHudEl: HTMLElement | null
   private lastNavIdleWarnSec = -999
 
   /** Room clear: zoom out + slow-mo while ghosts fade; then upgrade picker. */
   private roomClearIntroCinematicRunning = false
   private roomClearIntroCinematicElapsed = 0
-  /** After upgrade: short door hero shot + “Unlocked” feedback, then return. */
+  /** After upgrade: short door hero shot + â€œUnlockedâ€ feedback, then return. */
   private roomClearDoorCinematicRunning = false
   private roomClearDoorCinematicElapsed = 0
   private roomClearDoorCinematicDoorIndex = 0
@@ -331,9 +313,6 @@ export class Game {
       stackAnchor,
       pickupGroup,
       ghostGroup,
-      depositRoot,
-      depositZoneMesh,
-      depositUnderglowMesh,
       playerCharacter,
       hubTitleFloorLabel,
     } = createScene(playerGltfTemplate)
@@ -348,28 +327,24 @@ export class Game {
     this.scene.add(this.burstGroup)
 
     this.hudCarryEl = host.querySelector<HTMLElement>('#hud-carry')
-    const hudDepositToast = host.querySelector<HTMLElement>(
-      '#hud-deposit-toast',
-    )
-    const depositAmountEl =
-      hudDepositToast?.querySelector<HTMLElement>('.deposit-amount') ?? null
-    const depositHintEl =
-      hudDepositToast?.querySelector<HTMLElement>('.deposit-hint') ?? null
     this.hudSpawn = host.querySelector('#hud-spawn')
     this.hudRoomCleanWrap = host.querySelector('#hud-room-clean')
     this.hudRoomCleanFill = host.querySelector('#hud-room-clean-fill')
     this.hudRoomCleanPct = host.querySelector('#hud-room-clean-pct')
     this.hudRoomCleanTitle = host.querySelector('#hud-room-clean-title')
-    this.hudDepositToastEl = hudDepositToast
-    this.depositToastAmountEl = depositAmountEl
-    this.depositToastHintEl = depositHintEl
     this.hudCameraHintEl = host.querySelector<HTMLElement>('#hud-camera-hint')
     this.hudLivesWrap = host.querySelector<HTMLElement>('#hud-lives')
     this.hudStackHum = host.querySelector('#hud-stack-hum')
+    this.gameStartCountdownEl = document.createElement('div')
+    this.gameStartCountdownEl.className = 'game-start-countdown'
+    this.gameStartCountdownEl.setAttribute('aria-live', 'polite')
+    this.gameStartCountdownEl.setAttribute('aria-atomic', 'true')
+    this.gameViewport.appendChild(this.gameStartCountdownEl)
     this.navDebugHudEl = host.querySelector('#nav-debug-hud')
     if (!SHOW_PLAYER_NAV_DEBUG_HUD && this.navDebugHudEl) {
       this.navDebugHudEl.style.display = 'none'
     }
+    this.syncGameStartCountdown()
 
     this.camera = createCamera(
       host.clientWidth / Math.max(host.clientHeight, 1),
@@ -578,42 +553,6 @@ export class Game {
     this.hitFlashEl = host.querySelector('#hud-hit-flash')
     this.collection = new CollectionSystem()
 
-    this.depositFeedback = new DepositZoneFeedback(
-      depositZoneMesh,
-      null,
-      depositRoot,
-      depositUnderglowMesh,
-    )
-
-    this.depositFlight = new DepositFlightAnimator()
-    this.depositController = new DepositController({
-      scene: this.scene,
-      player: this.player,
-      stack: this.stack,
-      stackVisual: this.stackVisual,
-      flight: this.depositFlight,
-      resolveDepositZone: () => null,
-      evaluateOverload: () => ({ overload: false, perfect: false }),
-      onItemDepositLanded: (item, flightIndex) => {
-        void flightIndex
-        this.depositFeedback.triggerItem()
-        spawnFloatingHudText(
-          this.gameViewport,
-          `+${item.value}`,
-          'float-hud--pickup',
-          {
-            topPct: 58 + this.runRandom() * 16,
-            leftPct: 40 + this.runRandom() * 20,
-          },
-        )
-        playJuiceSound('deposit_item', { pitch: 1 + flightIndex * 0.045 })
-        this.triggerDepositScreenShake(false)
-      },
-      onDepositPresentationComplete: (items, ev, ol) => {
-        this.runDepositPresentationUi(items, ev, ol)
-      },
-    })
-
     /** Precompile materials (scene). */
     this.scene.updateMatrixWorld(true)
     this.renderer.compile(this.scene, this.camera)
@@ -634,8 +573,15 @@ export class Game {
       }
       const dt = Math.min(0.05, (now - this.lastTime) / 1000)
       this.lastTime = now
-      this.elapsedSec += dt
       this.perf.beginFrame(now)
+      if (this.gameStartCountdownRemain > 0) {
+        this.updateGameStartCountdown(dt)
+        this.ghostSystem.prewarmFutureGhosts(4)
+        this.renderer.render(this.scene, this.camera)
+        this.perf.endFrame(this.renderer.info.render.calls, 0)
+        return
+      }
+      this.elapsedSec += dt
 
       let pickupsThisFrame = 0
 
@@ -727,7 +673,7 @@ export class Game {
           this.elapsedSec - this.lastNavIdleWarnSec >= 0.85
         ) {
           this.lastNavIdleWarnSec = this.elapsedSec
-          console.warn('[player nav] IDLE BLOCKED — finger down but no segment', {
+          console.warn('[player nav] IDLE BLOCKED â€” finger down but no segment', {
             ...snap,
           })
         }
@@ -945,7 +891,7 @@ export class Game {
         this.triggerDepositScreenShake(false)
         this.ghostHitPickupLockRemain = GHOST_HIT_PICKUP_LOCK_SEC
 
-        /** Ghost hits cost a life only — stack is preserved (no dropped pickups). */
+        /** Ghost hits cost a life only â€” stack is preserved (no dropped pickups). */
         this.stackVisual.triggerGhostHitReaction()
         this.ghostHitSlowMoRemain = GHOST_HIT_SLOW_MO_SEC
 
@@ -1023,9 +969,6 @@ export class Game {
       }
       this.itemWorld.updateCollectEffects(dt)
       this.stackVisual.update(dt)
-      this.depositController.update(dt)
-      this.depositFeedback.setPlayerInside(false)
-      this.depositFeedback.update(dt)
       this.specialRelicSpawns.update(dt)
       this.relicFootArrow.setTarget(
         this.playerPos,
@@ -1063,6 +1006,36 @@ export class Game {
     )
   }
 
+  private updateGameStartCountdown(dt: number): void {
+    this.gameStartCountdownRemain = Math.max(
+      0,
+      this.gameStartCountdownRemain - dt,
+    )
+    this.syncGameStartCountdown()
+  }
+
+  private syncGameStartCountdown(): void {
+    const el = this.gameStartCountdownEl
+    const step =
+      this.gameStartCountdownRemain > 0
+        ? Math.max(1, Math.ceil(this.gameStartCountdownRemain))
+        : 0
+    if (step <= 0) {
+      el.classList.remove('game-start-countdown--show')
+      el.classList.add('game-start-countdown--out')
+      el.textContent = ''
+      return
+    }
+    if (step !== this.gameStartCountdownStep) {
+      this.gameStartCountdownStep = step
+      el.textContent = String(step)
+      el.classList.remove('game-start-countdown--tick', 'game-start-countdown--out')
+      el.classList.add('game-start-countdown--show')
+      void el.offsetWidth
+      el.classList.add('game-start-countdown--tick')
+    }
+  }
+
   private syncRoomPickupAccessibilityFromDoors(): void {
     this.itemWorld.updateClutterGateReveal(this.doorUnlock)
     this.itemWorld.updateGridWispRoomVisibility(this.roomSystem)
@@ -1072,7 +1045,7 @@ export class Game {
     const el = this.hudCameraHintEl
     if (!el) return
     const mode = this.cameraRig.getMode()
-    el.textContent = mode === 'over_shoulder' ? 'C · near' : 'C · far'
+    el.textContent = mode === 'over_shoulder' ? 'C Â· near' : 'C Â· far'
     el.setAttribute(
       'aria-label',
       mode === 'over_shoulder' ? 'Camera: near view. Press C for far view.' : 'Camera: far view. Press C for near view.',
@@ -1217,7 +1190,7 @@ export class Game {
     }
   }
 
-  /** Boss intro or post-boss outro — block movement and pickups. */
+  /** Boss intro or post-boss outro â€” block movement and pickups. */
   private isInteractionCinematicBlocking(): boolean {
     return (
       this.roomClearIntroCinematicRunning ||
@@ -1459,7 +1432,7 @@ export class Game {
       wrap.classList.add('hud-room-clean--inactive')
       titleEl.textContent =
         roomId === 'SAFE_CENTER' ? 'Safe zone' : 'Room'
-      pctEl.textContent = '—'
+      pctEl.textContent = 'â€”'
       fill.style.transform = 'scaleX(0)'
       return
     }
@@ -1589,7 +1562,7 @@ export class Game {
     }, 280)
   }
 
-  /** Spike trap: always −1 life (no stack loss); mesh has no physics collider — overlap only. */
+  /** Spike trap: always âˆ’1 life (no stack loss); mesh has no physics collider â€” overlap only. */
   private applyTrapLifeLoss(): void {
     this.lives = Math.max(0, this.lives - 1)
     spawnLifeLostImpact(this.gameViewport)
@@ -1645,77 +1618,6 @@ export class Game {
     return this.roomSystem
   }
 
-  private runDepositPresentationUi(
-    items: GameItem[],
-    ev: DepositEval,
-    _ol: DepositPresentationOverload,
-  ): void {
-    const relicItem = items.find((it) => it.type === 'relic')
-    if (relicItem) {
-      this.player.getPosition(this.playerPos)
-      this.burstSpawnScratch.copy(this.playerPos)
-      this.burstSpawnScratch.y += 0.42
-      this.burstParticles.push(
-        ...spawnRelicCollectBurst(this.burstGroup, this.burstSpawnScratch),
-      )
-      showRelicBankedCelebration(this.gameViewport, relicItem.value)
-      spawnRelicScreenSparkBurst(this.gameViewport)
-      playJuiceSound('relic_collect')
-    }
-
-    this.depositFeedback.triggerDepositComplete(items.length, ev.batchTotal)
-    const hudDepositToast = this.hudDepositToastEl
-    const depositAmountEl = this.depositToastAmountEl
-    const depositHintEl = this.depositToastHintEl
-    if (hudDepositToast && depositAmountEl && depositHintEl) {
-      const showDepositToast = (): void => {
-        if (this.depositToastTimer) clearTimeout(this.depositToastTimer)
-        this.fillDepositToastLines(depositAmountEl, depositHintEl, ev)
-        hudDepositToast.classList.remove('hidden')
-        hudDepositToast.classList.add('visible')
-        this.depositToastTimer = setTimeout(() => {
-          hudDepositToast.classList.remove('visible')
-          hudDepositToast.classList.add('hidden')
-          this.depositToastTimer = null
-        }, DEPOSIT_TOAST_MS)
-      }
-      if (relicItem) {
-        window.setTimeout(showDepositToast, 920)
-      } else {
-        showDepositToast()
-      }
-    }
-  }
-
-  private fillDepositToastLines(
-    amountEl: HTMLElement,
-    hintEl: HTMLElement,
-    ev: DepositEval,
-  ): void {
-    const stackJackpot =
-      ev.itemCount >= 2 && ev.batchMultiplier >= 1.18
-    amountEl.classList.remove(
-      'deposit-amount--overload',
-      'deposit-amount--overload-perfect',
-      'deposit-amount--stack-jackpot',
-    )
-    amountEl.textContent = ev.batchTotal > 0 ? `+${ev.batchTotal}` : '0'
-    if (stackJackpot) amountEl.classList.add('deposit-amount--stack-jackpot')
-
-    const riskLine =
-      ev.batchMultiplier > 1.02
-        ? `Stack bonus ×${ev.batchMultiplier.toFixed(2)} (base ${ev.baseSum})`
-        : ''
-
-    if (riskLine) {
-      hintEl.style.display = 'block'
-      hintEl.textContent = `${riskLine} — bigger stacks clear harder`
-      return
-    }
-    hintEl.textContent = ''
-    hintEl.style.display = 'none'
-  }
-
   private triggerGhostHitFlash(durationMs = 88, ghostImpact = false): void {
     const el = this.hitFlashEl
     if (!el) return
@@ -1731,12 +1633,12 @@ export class Game {
     }, durationMs)
   }
 
-  /** Encumbrance ∈ [0, 1] — scales with items carried (no hard cap). */
+  /** Encumbrance in [0, 1] and scales with items carried. */
   getStackWeight(): number {
     return computeCarryEncumbranceWeight(this.stack.count)
   }
 
-  /** Double door swing progress 0…1 (for UI / debugging). */
+  /** Double door swing progress 0..1 (for UI / debugging). */
   getDoorOpenProgress(doorIndex: number): number {
     return this.doorUnlock.getDoorOpenProgress(doorIndex)
   }
@@ -1751,7 +1653,6 @@ export class Game {
       clearTimeout(this.depositShakeTimer)
       this.depositShakeTimer = null
     }
-    if (this.depositToastTimer) clearTimeout(this.depositToastTimer)
     if (this.hitFlashTimer) {
       clearTimeout(this.hitFlashTimer)
       this.hitFlashTimer = null
@@ -1786,6 +1687,7 @@ export class Game {
     window.removeEventListener('keydown', this.onCameraModeKey)
     this.keyboardMove.dispose()
     this.joystick.dispose()
+    this.gameStartCountdownEl.remove()
     this.unsubscribeResize()
     this.renderer.dispose()
     this.renderer.domElement.remove()

@@ -78,49 +78,6 @@ function createBurstFleckMesh(item: GameItem): Mesh {
   return mesh
 }
 
-function createRelicAccentFleckMesh(): Mesh {
-  const r = 0.15 + Math.random() * 0.11
-  const mesh = new Mesh(
-    new SphereGeometry(r, 10, 8),
-    new MeshStandardMaterial({
-      color: new Color(0xffe8a8),
-      emissive: new Color(0xffb020),
-      emissiveIntensity: 1.7,
-      roughness: 0.2,
-      metalness: 0.14,
-    }),
-  )
-  mesh.castShadow = false
-  mesh.receiveShadow = false
-  mesh.renderOrder = 12
-  return mesh
-}
-
-/** Celebratory burst when the relic is picked up (reuses `updateGhostHitBursts`). */
-export function spawnRelicCollectBurst(
-  parent: Group,
-  origin: Vector3,
-): GhostHitBurstParticle[] {
-  const n = 16
-  const out: GhostHitBurstParticle[] = []
-  for (let i = 0; i < n; i++) {
-    const mesh = createRelicAccentFleckMesh()
-    mesh.position.copy(origin)
-    mesh.position.y += 0.45 + Math.random() * 0.35
-    const ang = Math.random() * Math.PI * 2
-    const sp = 5.2 + Math.random() * 6.5
-    parent.add(mesh)
-    out.push({
-      mesh,
-      vx: Math.cos(ang) * sp,
-      vz: Math.sin(ang) * sp,
-      vy: 4.2 + Math.random() * 3.4,
-      t: 0,
-    })
-  }
-  return out
-}
-
 /** Green ectoplasm flecks at the hit point (paired with stack pellet burst). */
 export function spawnGhostHitEctoplasmBurst(
   parent: Group,

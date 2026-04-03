@@ -9,10 +9,6 @@ import {
 } from 'three'
 import type { GameItem } from '../../core/types/GameItem.ts'
 import {
-  createDepositFlightProxy,
-  disposeDepositFlightProxy,
-} from '../deposit/depositFlightProxy.ts'
-import {
   cloneCarryBagMesh,
   disposeCarryBagClone,
   isCarryBagReady,
@@ -46,7 +42,6 @@ export class StackVisual {
   private prevCleaning01 = -1
   private readonly curMul = new Vector3(1, 1, 1)
   private readonly tgtMul = new Vector3(1, 1, 1)
-  private readonly worldPos = new Vector3()
 
   constructor(anchor: Object3D) {
     this.anchor = anchor
@@ -132,24 +127,6 @@ export class StackVisual {
     this.curMul.z += (this.tgtMul.z * bounceMul - this.curMul.z) * k
 
     this.applyBagScale()
-  }
-
-  extractTopMeshForDeposit(item: GameItem): Object3D {
-    const mesh = createDepositFlightProxy(item)
-    if (this.bag) {
-      this.bag.getWorldPosition(this.worldPos)
-      this.worldPos.y += 0.42
-    } else {
-      this.anchor.getWorldPosition(this.worldPos)
-      this.worldPos.y += 0.42
-    }
-    mesh.userData.depositWorldStart = this.worldPos.clone()
-    return mesh
-  }
-
-  recycleDepositedMesh(_item: GameItem, mesh: Object3D): void {
-    mesh.removeFromParent()
-    disposeDepositFlightProxy(mesh)
   }
 
   private mountFreshBag(): void {

@@ -147,6 +147,7 @@ export type GhostEatResult =
 
 /** When a door opens, instantiate map ghosts over several frames to avoid a single-frame hitch. */
 const MAP_GHOST_SPAWN_BUDGET_PER_FRAME = 5
+const DORMANT_GHOST_PREWARM_BUDGET_PER_FRAME = 2
 
 export class GhostSystem {
   private readonly ghosts: Ghost[] = []
@@ -162,6 +163,9 @@ export class GhostSystem {
   private readonly spawnedRoomIndices = new Set<number>()
   /** Deferred `Ghost` construction for rooms unlocked via doors (not room 1 at init). */
   private readonly pendingMapSpawnSpecs: GhostSpawnSpec[] = []
+  /** Future-room ghosts prepared off the critical path, then activated when the room opens. */
+  private readonly pendingDormantSpawnSpecs: GhostSpawnSpec[] = []
+  private readonly dormantGhostsByRoom = new Map<number, Ghost[]>()
 
   constructor(
     ghostGroup: Group,
@@ -176,6 +180,13 @@ export class GhostSystem {
     this.doorUnlock = doorUnlock
     this.spawnsByRoom = spawnsByRoom
     this.spawnGhostsForRoom(1)
+    for (let roomIndex = 2; roomIndex <= this.spawnsByRoom.length; roomIndex++) {
+      const specs = this.spawnsByRoom[roomIndex - 1]
+      if (!specs?.length) continue
+      for (const spec of specs) {
+        this.pendingDormantSpawnSpecs.push(spec)
+      }
+    }
   }
 
   /**
@@ -191,6 +202,16 @@ export class GhostSystem {
       return
     }
     this.spawnedRoomIndices.add(roomIndex)
+    const dormant = this.dormantGhostsByRoom.get(roomIndex) ?? []
+    for (const ghost of dormant) {
+      ghost.activate()
+    }
+    this.dormantGhostsByRoom.delete(roomIndex)
+    for (let i = this.pendingDormantSpawnSpecs.length - 1; i >= 0; i--) {
+      if (this.pendingDormantSpawnSpecs[i]?.roomIndex === roomIndex) {
+        this.pendingDormantSpawnSpecs.splice(i, 1)
+      }
+    }
     if (roomIndex === 1) {
       for (const s of specs) {
         this.ghosts.push(
@@ -199,8 +220,30 @@ export class GhostSystem {
       }
       return
     }
-    for (const s of specs) {
-      this.pendingMapSpawnSpecs.push(s)
+    for (let i = dormant.length; i < specs.length; i++) {
+      this.pendingMapSpawnSpecs.push(specs[i]!)
+    }
+  }
+
+  prewarmFutureGhosts(
+    maxPerFrame = DORMANT_GHOST_PREWARM_BUDGET_PER_FRAME,
+  ): void {
+    let n = 0
+    while (n < maxPerFrame && this.pendingDormantSpawnSpecs.length > 0) {
+      const spec = this.pendingDormantSpawnSpecs.shift()!
+      if (this.spawnedRoomIndices.has(spec.roomIndex)) continue
+      const ghost = new Ghost(
+        this.ghostGroup,
+        this.worldCollision,
+        spec,
+        this.ghostGltf,
+        { active: false },
+      )
+      this.ghosts.push(ghost)
+      const roomGhosts = this.dormantGhostsByRoom.get(spec.roomIndex) ?? []
+      roomGhosts.push(ghost)
+      this.dormantGhostsByRoom.set(spec.roomIndex, roomGhosts)
+      n++
     }
   }
 
@@ -237,6 +280,7 @@ export class GhostSystem {
   /** Boss ghost position for knockback pulses; null if absent or fading. */
   getBossGhostXZ(): { x: number; z: number } | null {
     for (const g of this.ghosts) {
+      if (!g.isActive()) continue
       if (!g.isBossGhost()) continue
       if (g.isEaten() || g.isRoomClearPurging() || g.isGateClearFading())
         continue
@@ -249,6 +293,7 @@ export class GhostSystem {
   countMinionGhostsInRoom(roomIndex: number): number {
     let n = 0
     for (const g of this.ghosts) {
+      if (!g.isActive()) continue
       if (!g.isMinionGhost()) continue
       if (g.getRoomIndex() !== roomIndex) continue
       if (g.isEaten() || g.isRoomClearPurging() || g.isGateClearFading()) continue
@@ -261,6 +306,7 @@ export class GhostSystem {
   getActiveGhostCount(): number {
     let n = 0
     for (const g of this.ghosts) {
+      if (!g.isActive()) continue
       if (!g.isEaten() && !g.isRoomClearPurging() && !g.isGateClearFading()) n++
     }
     return n
@@ -269,6 +315,7 @@ export class GhostSystem {
   /** Cleared room: fade ghosts out during the early cinematic (replaces immediate purge). */
   beginGateClearFadeForRoom(roomIndex: number, durationSec: number): void {
     for (const g of this.ghosts) {
+      if (!g.isActive()) continue
       if (g.getRoomIndex() === roomIndex && !g.isEaten()) {
         g.beginGateClearFade(durationSec)
       }
@@ -278,6 +325,7 @@ export class GhostSystem {
   /** Shrink away and remove all ghosts tied to `ROOM_{roomIndex}` (1…5). */
   purgeGhostsForRoom(roomIndex: number): void {
     for (const g of this.ghosts) {
+      if (!g.isActive()) continue
       if (g.getRoomIndex() === roomIndex) {
         g.beginRoomClearPurge()
       }
@@ -292,6 +340,7 @@ export class GhostSystem {
     gateCinematicRoamOnly = false,
     powerModeActive = false,
   ): void {
+    this.prewarmFutureGhosts()
     this.flushPendingMapSpawns()
     this.ghostAnimTime += dt
     const hub = ROOMS.SAFE_CENTER.bounds
@@ -301,6 +350,7 @@ export class GhostSystem {
       playerPos.z >= hub.minZ &&
       playerPos.z <= hub.maxZ
     for (const g of this.ghosts) {
+      if (!g.isActive()) continue
       const doorIdx = g.getRoomIndex() - 1
       const visionConeEntranceDoorOpen =
         doorIdx >= 0 &&
@@ -347,6 +397,7 @@ export class GhostSystem {
     playerRadius: number,
   ): boolean {
     for (const g of this.ghosts) {
+      if (!g.isActive()) continue
       if (g.isEaten() || g.isRoomClearPurging() || g.isGateClearFading()) continue
       const needR =
         playerRadius + g.collisionRadius + GHOST_MELEE_REARM_PADDING
@@ -371,6 +422,7 @@ export class GhostSystem {
   ): GhostHitResult {
     if (invulnerable) return { kind: 'none' }
     for (const g of this.ghosts) {
+      if (!g.isActive()) continue
       if (g.isEaten() || g.isRoomClearPurging() || g.isGateClearFading()) continue
       if (!g.canDealContactDamage()) continue
       const r = playerRadius + g.collisionRadius
@@ -396,6 +448,7 @@ export class GhostSystem {
   ): GhostEatResult {
     if (!powerModeActive) return { kind: 'none' }
     for (const g of this.ghosts) {
+      if (!g.isActive()) continue
       if (g.isBossGhost()) continue
       if (g.isEaten() || g.isRoomClearPurging() || g.isGateClearFading()) continue
       const r = playerRadius + g.collisionRadius
@@ -422,6 +475,7 @@ export class GhostSystem {
   ): void {
     const eps2 = 0.28 * 0.28
     for (const g of this.ghosts) {
+      if (!g.isActive()) continue
       if (g.isEaten() || g.isRoomClearPurging() || g.isGateClearFading()) continue
       const dx = g.root.position.x - ghostX
       const dz = g.root.position.z - ghostZ
@@ -468,6 +522,7 @@ class Ghost {
   private readonly materials: MeshStandardMaterial[]
   private readonly skinSnap: SkinSnap[]
   private prevPowerMode = false
+  private active = true
 
   private state: GhostBehaviorState = 'wander'
   private wanderAngle = Math.random() * Math.PI * 2
@@ -515,6 +570,7 @@ class Ghost {
     worldCollision: WorldCollision,
     spec: GhostSpawnSpec,
     ghostGltf: GhostGltfTemplate | null,
+    opts?: { active?: boolean },
   ) {
     this.worldCollision = worldCollision
     this.role = spec.role ?? 'normal'
@@ -538,7 +594,8 @@ class Ghost {
     this.root.position.set(spec.x, 0, spec.z)
     ghostGroup.add(this.root)
     this.pickWanderTimer()
-    this.spawnChaseGraceRemain = randomSpawnChaseGraceSec()
+    this.active = opts?.active !== false
+    this.spawnChaseGraceRemain = this.active ? randomSpawnChaseGraceSec() : 0
 
     this.materials = []
     this.skinSnap = []
@@ -582,6 +639,41 @@ class Ghost {
       this.visionConeMesh = createGhostVisionConeMesh()
       this.root.add(this.visionConeMesh)
     }
+    if (!this.active) {
+      this.root.visible = false
+    }
+  }
+
+  isActive(): boolean {
+    return this.active
+  }
+
+  activate(): void {
+    if (this.active) return
+    this.active = true
+    this.root.visible = true
+    this.root.scale.setScalar(1)
+    this.root.position.set(this.spawnX, 0, this.spawnZ)
+    this.velocity.set(0, 0, 0)
+    this.state = 'wander'
+    this.eaten = false
+    this.roomClearPurgeRemain = 0
+    this.gateClearFadeRemain = 0
+    this.destroyAfterPurgePending = false
+    this.eatShrinkRemaining = 0
+    this.respawnRemaining = 0
+    this.chaseLockout = 0
+    this.chaseWindupRemain = 0
+    this.chaseThrottle = 0
+    this.huntBurstRemain = 0
+    this.huntConeLostAccum = 0
+    this.visionCooldownRemain = 0
+    this.smoothedTx = 0
+    this.smoothedTz = 1
+    this.pickWanderTimer()
+    this.spawnChaseGraceRemain = 0.75
+    resetGhostGridNavState(this.gridNav)
+    this.resetSkin()
   }
 
   isEaten(): boolean {
@@ -639,6 +731,7 @@ class Ghost {
 
   /** False during spawn / respawn grace — no stack-loss contact yet (still roams). */
   canDealContactDamage(): boolean {
+    if (!this.active) return false
     if (this.eaten) return false
     return this.spawnChaseGraceRemain <= 0
   }
@@ -867,6 +960,7 @@ class Ghost {
     visionConeEntranceDoorOpen: boolean,
     globalSpeedMul = 1,
   ): void {
+    if (!this.active) return
     if (this.gateClearFadeRemain > 0) {
       this.gateClearFadeRemain -= realDt
       const u = Math.max(
@@ -967,8 +1061,7 @@ class Ghost {
     if (this.state === 'chase' && this.chaseWindupRemain > 0) {
       this.chaseWindupRemain = Math.max(0, this.chaseWindupRemain - realDt)
     }
-    const canHuntPlayer = this.spawnChaseGraceRemain <= 0
-    const allowChase = canHuntPlayer && !cinematicRoamOnly
+    const allowChase = !cinematicRoamOnly
     if (cinematicRoamOnly && this.state === 'chase') {
       this.state = 'wander'
       this.chaseWindupRemain = 0
@@ -1094,7 +1187,7 @@ class Ghost {
           this.visionCooldownRemain <= 0 &&
           sawPlayer
         ) {
-          this.chaseWindupRemain = GHOST_CHASE_WINDUP_SEC
+          this.chaseWindupRemain = 0
           this.state = 'chase'
           this.huntBurstRemain =
             GHOST_HUNT_DURATION_MIN +

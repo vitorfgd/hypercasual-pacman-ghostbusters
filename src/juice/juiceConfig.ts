@@ -9,12 +9,8 @@ export const PICKUP_EXTRA_RADIUS = 0.42
 export const COLLECT_POP_SEC = 0.22
 
 /** Deposit flight — per item (wisp / relic / pellet); lower = snappier */
-export const DEPOSIT_FLIGHT_DURATION_SEC = 0.068
-export const DEPOSIT_ARC_HEIGHT = 0.72
-export const DEPOSIT_ARC_EASE = 2.15
 
 /** Stack: new item bounce overshoot (relative to step height) */
-export const STACK_ADD_BOUNCE = 0.14
 export const STACK_BOUNCE_DECAY = 14
 
 /** Camera: follow offset + stack-based pull-back */
@@ -81,14 +77,11 @@ export function saveCameraMode(mode: CameraMode): void {
 }
 
 /** Delay between each deposit item flight (seconds). */
-export const DEPOSIT_INTER_ITEM_DELAY_SEC = 0.022
 
 /** Ghost hit optional slow-motion (real-time seconds). */
 export const GHOST_HIT_SLOW_MO_SEC = 0.14
 export const GHOST_HIT_SLOW_MO_SCALE = 0.38
 
 /** Dropped stack items (ghost / traps) vanish after this if not picked up. */
-export const STACK_DROP_RECOVERY_TTL_SEC = 3.6
-export const STACK_DROP_SCATTER_RADIUS = 2.1
 /** Floating pickup / banner text duration */
 export const FLOAT_TEXT_SEC = 0.85

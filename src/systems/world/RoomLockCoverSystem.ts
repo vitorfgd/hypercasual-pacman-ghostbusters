@@ -16,6 +16,7 @@ import {
 
 /** Every normal room stays blacked out until the previous double door swings open. */
 const COVER_ROOMS: RoomId[] = [...NORMAL_ROOM_IDS]
+const COVER_OPACITY_EPS = 1e-4
 
 /** Ease-in cubic: slow at first — room stays dark longer, then brightens for a gradual reveal. */
 function easeInCubic(t: number): number {
@@ -39,6 +40,7 @@ function coverOpacityFromRevealProgress(reveal01: number): number {
 export class RoomLockCoverSystem {
   private readonly root = new Group()
   private readonly meshes = new Map<RoomId, Mesh>()
+  private readonly lastOpacity = new Map<RoomId, number>()
   private readonly doorUnlock: DoorUnlockSystem
 
   constructor(scene: Scene, doorUnlock: DoorUnlockSystem) {
@@ -61,7 +63,7 @@ export class RoomLockCoverSystem {
       // opacity, so the fade would snap from solid black the first frame opacity < 1 applies.
       const mat = new MeshBasicMaterial({
         // Dark purple (temporary — was 0x000000 black) for fade testing visibility
-        color: 0x1a0a22,
+        color: 0x000000,
         transparent: true,
         opacity: 1,
         depthWrite: true,
@@ -85,9 +87,14 @@ export class RoomLockCoverSystem {
 
       const doorIndex = idx - 1
       const reveal = this.doorUnlock.getDoorRevealProgress01(doorIndex)
-      const mat = mesh.material as MeshBasicMaterial
 
       const op = coverOpacityFromRevealProgress(reveal)
+      const prevOp = this.lastOpacity.get(roomId)
+      if (prevOp !== undefined && Math.abs(prevOp - op) <= COVER_OPACITY_EPS) {
+        continue
+      }
+      this.lastOpacity.set(roomId, op)
+      const mat = mesh.material as MeshBasicMaterial
       mat.opacity = op
       mat.depthWrite = op > 0.02
       mesh.visible = op > 1e-6
@@ -101,5 +108,6 @@ export class RoomLockCoverSystem {
       ;(mesh.material as MeshBasicMaterial).dispose()
     }
     this.meshes.clear()
+    this.lastOpacity.clear()
   }
 }
