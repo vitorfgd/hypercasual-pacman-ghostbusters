@@ -69,14 +69,13 @@ function makeFloorDecal(
 export function spawnRoomClearedFloorLabel(
   scene: Scene,
   roomId: RoomId,
-  kind: 'capacity' | 'speed',
+  subtitle: string,
 ): () => void {
   if (roomId === 'SAFE_CENTER' || !roomId.startsWith('ROOM_')) {
     return (): void => {}
   }
 
-  const sub =
-    kind === 'capacity' ? 'MORE BAG SPACE' : 'YOU FEEL FASTER'
+  const sub = subtitle
   const b = ROOMS[roomId].bounds
   const cx = (b.minX + b.maxX) * 0.5
   const cz = (b.minZ + b.maxZ) * 0.5

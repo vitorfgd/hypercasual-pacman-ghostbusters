@@ -240,7 +240,9 @@ export class ItemWorld {
     magnetExtra: number,
     pullSpeed: number,
     dt: number,
+    opts?: { recoverPullMul?: number },
   ): void {
+    const recoverMul = opts?.recoverPullMul ?? 1
     const innerR = collectRadius
     const outerR = collectRadius + magnetExtra
     const outerR2 = outerR * outerR
@@ -256,7 +258,8 @@ export class ItemWorld {
       const nx = dx / d
       const nz = dz / d
       const t = Math.min(1, (Math.sqrt(d2) - innerR) / magnetExtra)
-      const step = pullSpeed * dt * (0.35 + 0.65 * t * t)
+      const mul = recover && recover.landed ? recoverMul : 1
+      const step = pullSpeed * dt * (0.35 + 0.65 * t * t) * mul
       mesh.position.x += nx * step
       mesh.position.z += nz * step
     }

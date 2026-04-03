@@ -78,9 +78,11 @@ export type TrapCallbacks = {
 export class TrapFieldSystem {
   private readonly traps: TrapDef[] = []
   private readonly scene: Scene
+  private readonly random: () => number
 
   constructor(scene: Scene, roomSystem: RoomSystem, random: () => number) {
     this.scene = scene
+    this.random = random
     const rooms = roomSystem.getSpawnEligibleRoomIds()
     const kinds: TrapKind[] = ['damage', 'slow']
     const pad = 1.05
@@ -261,7 +263,8 @@ export class TrapFieldSystem {
 
       if (t.kind === 'damage' && inside && !t.wasInside) {
         const frac =
-          DAMAGE_LOSS_MIN + Math.random() * (DAMAGE_LOSS_MAX - DAMAGE_LOSS_MIN)
+          DAMAGE_LOSS_MIN +
+          this.random() * (DAMAGE_LOSS_MAX - DAMAGE_LOSS_MIN)
         cb.onDamage(frac)
       }
       t.wasInside = inside

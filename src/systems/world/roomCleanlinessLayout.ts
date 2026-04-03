@@ -2,8 +2,8 @@ import { DOOR_COUNT, roomIndexFromId } from '../doors/doorLayout.ts'
 import type { RoomId } from './mansionRoomData.ts'
 
 /**
- * When `ROOM_k` reaches 100% cleanliness, this door index becomes passable
- * (`ROOM_1` → door `1`, …, `ROOM_4` → door `4`). `ROOM_5` has no further door.
+ * When `ROOM_k` reaches 100% cleanliness, door `k` opens (passage toward `ROOM_{k+1}`).
+ * Deepest room has no further gate.
  */
 export function doorIndexToOpenWhenRoomCleared(roomId: RoomId): number | null {
   if (roomId === 'SAFE_CENTER') return null

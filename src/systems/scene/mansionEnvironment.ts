@@ -7,7 +7,12 @@ import {
 } from 'three'
 import { MANSION_WALL_COLLIDERS } from '../world/mansionWalls.ts'
 import { MANSION_WORLD_HALF } from '../world/mansionGeometry.ts'
-import { CORRIDOR_BOUNDS, ROOMS, type RoomId } from '../world/mansionRoomData.ts'
+import {
+  CORRIDOR_BOUNDS,
+  NORMAL_ROOM_IDS,
+  ROOMS,
+  type RoomId,
+} from '../world/mansionRoomData.ts'
 import { addCemeteryGroundDecor } from './groundDecor.ts'
 
 const WALL_HEIGHT = 2.35
@@ -128,19 +133,13 @@ function addEdgeVignette(parent: Group): void {
   parent.add(w)
 }
 
-const ROOM_ORDER: RoomId[] = [
-  'SAFE_CENTER',
-  'ROOM_1',
-  'ROOM_2',
-  'ROOM_3',
-  'ROOM_4',
-  'ROOM_5',
-]
+const ROOM_ORDER: RoomId[] = ['SAFE_CENTER', ...NORMAL_ROOM_IDS]
 
 /**
  * Mansion floor (one mesh per room; unified floor material) + wall meshes aligned with `MANSION_WALL_COLLIDERS`.
+ * @param runSeed XOR-mixed into procedural ground decor (rocks) per session.
  */
-export function createMansionGround(): Group {
+export function createMansionGround(runSeed = 0): Group {
   const root = new Group()
   root.name = 'mansionGround'
 
@@ -154,7 +153,7 @@ export function createMansionGround(): Group {
 
   addWallMeshes(root)
   addEdgeVignette(root)
-  addCemeteryGroundDecor(root)
+  addCemeteryGroundDecor(root, runSeed)
 
   return root
 }

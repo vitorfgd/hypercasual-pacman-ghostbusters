@@ -13,8 +13,16 @@ loading?.setAttribute('aria-hidden', 'false')
 
 startBackgroundMusic()
 let game: Awaited<ReturnType<typeof mountGame>> | undefined
+
+async function mountGameWithRetry(): Promise<void> {
+  game?.dispose()
+  game = await mountGame(host as HTMLElement, {
+    onRunFailedRetry: mountGameWithRetry,
+  })
+}
+
 try {
-  game = await mountGame(host)
+  await mountGameWithRetry()
 } finally {
   loading?.classList.remove('game-loading--on')
   loading?.setAttribute('aria-hidden', 'true')

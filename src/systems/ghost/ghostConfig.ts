@@ -3,7 +3,12 @@
  */
 
 import { publicAsset } from '../../core/publicAsset.ts'
-import { ROOMS, roomCenter, type RoomId } from '../world/mansionRoomData.ts'
+import {
+  NORMAL_ROOM_COUNT,
+  NORMAL_ROOM_IDS,
+  ROOMS,
+  roomCenter,
+} from '../world/mansionRoomData.ts'
 
 export {
   GHOST_CHASE_SPEED,
@@ -82,20 +87,30 @@ export const GHOST_FACING_TURN_FRIGHT = 10
 export const GHOST_WANDER_TURN_MIN = 1.05
 export const GHOST_WANDER_TURN_MAX = 2.85
 
+export type GhostSpawnRole = 'normal' | 'boss' | 'minion'
+
 export type GhostSpawnSpec = {
   x: number
   z: number
   /** Hex body color (bright, readable from top-down) */
   color: number
-  /** Mansion chain room `ROOM_1` … `ROOM_5` — drives size & speed */
+  /** Mansion chain room index (1…N) — drives size & speed */
   roomIndex: number
+  /** Boss room: large slow seeker; minions use normal AI at smaller scale. */
+  role?: GhostSpawnRole
 }
 
-/**
- * Ghost count per north-chain room (ROOM_1 … ROOM_5).
- * Ramps up with depth so later areas feel more dangerous.
- */
-export const GHOSTS_PER_ROOM = [1, 1, 2, 2, 3] as const
+/** Per-room ghost counts (ROOM_1 … ROOM_N). Last room is boss (0). Max tier = 3. */
+export const GHOSTS_PER_ROOM: readonly number[] = (() => {
+  const pattern = [1, 1, 2, 2, 2, 2, 3, 3, 3, 0]
+  if (pattern.length !== NORMAL_ROOM_COUNT) {
+    throw new Error('GHOSTS_PER_ROOM length must match NORMAL_ROOM_COUNT')
+  }
+  return pattern
+})()
+
+/** Seconds of celebration / camera settle before the room-upgrade picker appears. */
+export const ROOM_CLEAR_UPGRADE_INTRO_SEC = 0.72
 
 /** When a room is cleared, ghosts for that room shrink away and are removed (no respawn). */
 export const GHOST_ROOM_PURGE_SHRINK_SEC = 0.55
@@ -124,17 +139,20 @@ export const HAUNTED_PICKUP_GHOST_CHANCE = 0.52
 /** Stop spawning new ghosts from haunted pickups once this many are active (chase/wander). */
 export const MAX_ACTIVE_GHOSTS = 14
 
-/** Mesh scale multiplier at ROOM_1 vs ROOM_5 (applied on top of `GHOST_VISUAL_SCALE`). */
+/** Mesh scale multiplier at first vs last chain room (applied on top of `GHOST_VISUAL_SCALE`). */
 const GHOST_ROOM_VISUAL_SCALE_MIN = 0.82
 const GHOST_ROOM_VISUAL_SCALE_MAX = 1.18
 
-/** Speed multiplier at ROOM_1 vs ROOM_5 (wander / chase / fright). */
+/** Speed multiplier at first vs last chain room (wander / chase / fright). */
 const GHOST_ROOM_SPEED_MUL_MIN = 0.88
 const GHOST_ROOM_SPEED_MUL_MAX = 1.28
 
+const ROOM_CHAIN_DEPTH = Math.max(1, NORMAL_ROOM_COUNT - 1)
+
 /** Visual size scales from first room (smallest) to last (largest). */
 export function ghostRoomVisualMul(roomIndex: number): number {
-  const t = (Math.max(1, Math.min(5, roomIndex)) - 1) / 4
+  const t =
+    (Math.max(1, Math.min(NORMAL_ROOM_COUNT, roomIndex)) - 1) / ROOM_CHAIN_DEPTH
   return (
     GHOST_ROOM_VISUAL_SCALE_MIN +
     t * (GHOST_ROOM_VISUAL_SCALE_MAX - GHOST_ROOM_VISUAL_SCALE_MIN)
@@ -143,23 +161,16 @@ export function ghostRoomVisualMul(roomIndex: number): number {
 
 /** Movement speeds scale from first room to last (still below player sprint). */
 export function ghostRoomSpeedMul(roomIndex: number): number {
-  const t = (Math.max(1, Math.min(5, roomIndex)) - 1) / 4
+  const t =
+    (Math.max(1, Math.min(NORMAL_ROOM_COUNT, roomIndex)) - 1) / ROOM_CHAIN_DEPTH
   return (
     GHOST_ROOM_SPEED_MUL_MIN +
     t * (GHOST_ROOM_SPEED_MUL_MAX - GHOST_ROOM_SPEED_MUL_MIN)
   )
 }
 
-const ROOM_CHAIN: readonly RoomId[] = [
-  'ROOM_1',
-  'ROOM_2',
-  'ROOM_3',
-  'ROOM_4',
-  'ROOM_5',
-]
-
-/** Local XZ offsets from room center — lengths match `GHOSTS_PER_ROOM`. */
-const SPAWN_OFFSETS: readonly (readonly { ox: number; oz: number }[])[] = [
+/** One pattern per chain slot — cycles when `NORMAL_ROOM_COUNT` exceeds pattern length. */
+const SPAWN_OFFSETS_BASE: readonly (readonly { ox: number; oz: number }[])[] = [
   [{ ox: -0.35, oz: 0.35 }],
   [{ ox: 0.38, oz: -0.28 }],
   [
@@ -177,13 +188,24 @@ const SPAWN_OFFSETS: readonly (readonly { ox: number; oz: number }[])[] = [
   ],
 ]
 
-const SPAWN_COLORS: readonly number[][] = [
+const SPAWN_COLORS_BASE: readonly number[][] = [
   [0xff3355],
   [0xff5eb5],
   [0x22e8ff, 0x1ad4ee],
   [0xffaa33, 0xff8822],
   [0x88ee66, 0x66dd44, 0x44cc33],
 ]
+
+const SPAWN_OFFSETS: readonly (readonly { ox: number; oz: number }[])[] =
+  Array.from({ length: NORMAL_ROOM_COUNT }, (_, i) => {
+    const src = SPAWN_OFFSETS_BASE[i % SPAWN_OFFSETS_BASE.length]!
+    return src
+  })
+
+const SPAWN_COLORS: readonly number[][] = Array.from(
+  { length: NORMAL_ROOM_COUNT },
+  (_, i) => SPAWN_COLORS_BASE[i % SPAWN_COLORS_BASE.length]!,
+)
 
 function clampSpawnToRoomBounds(
   x: number,
@@ -197,21 +219,21 @@ function clampSpawnToRoomBounds(
   }
 }
 
-/** Body tint for a new ghost at `roomIndex` 1…5 (matches default spawn palette). */
+/** Body tint for a new ghost at `roomIndex` ≥1 (matches default spawn palette). */
 export function pickGhostColorForRoomIndex(
   roomIndex: number,
   random: () => number,
 ): number {
-  const ri = Math.max(0, Math.min(4, Math.floor(roomIndex) - 1))
-  const colors = SPAWN_COLORS[ri]!
+  const slot = Math.max(0, Math.floor(roomIndex) - 1) % SPAWN_COLORS.length
+  const colors = SPAWN_COLORS[slot]!
   return colors[Math.floor(random() * colors.length)]!
 }
 
 export function buildDefaultGhostSpawns(): GhostSpawnSpec[] {
   const out: GhostSpawnSpec[] = []
   const margin = 0.62
-  for (let ri = 0; ri < ROOM_CHAIN.length; ri++) {
-    const roomId = ROOM_CHAIN[ri]!
+  for (let ri = 0; ri < NORMAL_ROOM_IDS.length; ri++) {
+    const roomId = NORMAL_ROOM_IDS[ri]!
     const count = GHOSTS_PER_ROOM[ri]!
     const offs = SPAWN_OFFSETS[ri]!
     const colors = SPAWN_COLORS[ri]!
@@ -233,9 +255,24 @@ export function buildDefaultGhostSpawns(): GhostSpawnSpec[] {
   return out
 }
 
-/** Spawns across the chain (counts from `GHOSTS_PER_ROOM`); larger & faster toward ROOM_5. */
+/** Full spawn list (used to partition per room for lazy spawn). */
 export const DEFAULT_GHOST_SPAWNS: readonly GhostSpawnSpec[] =
   buildDefaultGhostSpawns()
+
+/** Prespawn specs grouped by `roomIndex` (1…N) for unlocking rooms one at a time. */
+export function partitionGhostSpawnsByRoom(): readonly GhostSpawnSpec[][] {
+  const byRoom: GhostSpawnSpec[][] = Array.from(
+    { length: NORMAL_ROOM_COUNT },
+    () => [],
+  )
+  for (const s of buildDefaultGhostSpawns()) {
+    const i = s.roomIndex - 1
+    if (i >= 0 && i < byRoom.length) {
+      byRoom[i]!.push(s)
+    }
+  }
+  return byRoom
+}
 
 /**
  * Uniform mesh scale (same idea as `version3` `ENEMY_GHOST_VISUAL_SCALE` ~0.98).

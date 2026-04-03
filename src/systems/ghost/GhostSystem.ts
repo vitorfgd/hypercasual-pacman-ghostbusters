@@ -18,6 +18,11 @@ import { createGhostVisual } from './createGhostVisual.ts'
 import { MANSION_WORLD_HALF } from '../world/mansionGeometry.ts'
 import type { WorldCollision } from '../world/WorldCollision.ts'
 import {
+  BOSS_EXTRA_VISUAL_MUL,
+  BOSS_MINION_VISUAL_MUL,
+  BOSS_SEEK_SPEED,
+} from '../boss/bossRoomConfig.ts'
+import {
   GHOST_CHASE_SPEED,
   GHOST_COLLISION_RADIUS,
   GHOST_DEPOSIT_EXCLUSION_PADDING,
@@ -58,6 +63,7 @@ import {
   GHOST_WANDER_TURN_MIN,
   ghostRoomSpeedMul,
   ghostRoomVisualMul,
+  type GhostSpawnRole,
   type GhostSpawnSpec,
 } from './ghostConfig.ts'
 import { ROOMS } from '../world/mansionRoomData.ts'
@@ -109,21 +115,52 @@ export class GhostSystem {
   private readonly worldCollision: WorldCollision
   private readonly ghostGltf: GhostGltfTemplate | null
   private ghostAnimTime = 0
+  /** Run-wide modifier (e.g. Spectral bargain). Applied after per-room `speedMul`. */
+  private runtimeSpeedMul = 1
+
+  private readonly spawnsByRoom: readonly (readonly GhostSpawnSpec[])[]
+  private readonly spawnedRoomIndices = new Set<number>()
 
   constructor(
     ghostGroup: Group,
     worldCollision: WorldCollision,
-    spawns: readonly GhostSpawnSpec[] = [],
+    spawnsByRoom: readonly (readonly GhostSpawnSpec[])[],
     ghostGltf: GhostGltfTemplate | null = null,
   ) {
     this.ghostGroup = ghostGroup
     this.worldCollision = worldCollision
     this.ghostGltf = ghostGltf
-    for (const s of spawns) {
+    this.spawnsByRoom = spawnsByRoom
+    this.spawnGhostsForRoom(1)
+  }
+
+  /**
+   * Instantiate map ghosts for `ROOM_{roomIndex}` once (when that room unlocks).
+   * Room 1 is spawned at construction.
+   */
+  spawnGhostsForRoom(roomIndex: number): void {
+    if (roomIndex < 1 || this.spawnedRoomIndices.has(roomIndex)) return
+    const idx = roomIndex - 1
+    const specs = this.spawnsByRoom[idx]
+    if (!specs?.length) {
+      this.spawnedRoomIndices.add(roomIndex)
+      return
+    }
+    this.spawnedRoomIndices.add(roomIndex)
+    for (const s of specs) {
       this.ghosts.push(
         new Ghost(this.ghostGroup, this.worldCollision, s, this.ghostGltf),
       )
     }
+  }
+
+  /** Global ghost speed scale from run upgrades (clamped). */
+  setRuntimeSpeedMultiplier(m: number): void {
+    this.runtimeSpeedMul = Math.max(0.55, Math.min(1.15, m))
+  }
+
+  getRuntimeSpeedMultiplier(): number {
+    return this.runtimeSpeedMul
   }
 
   /** Runtime spawn (e.g. haunted clutter). Uses the same `Ghost` behavior as map spawns. */
@@ -131,6 +168,29 @@ export class GhostSystem {
     this.ghosts.push(
       new Ghost(this.ghostGroup, this.worldCollision, spec, this.ghostGltf),
     )
+  }
+
+  /** Boss ghost position for knockback pulses; null if absent or fading. */
+  getBossGhostXZ(): { x: number; z: number } | null {
+    for (const g of this.ghosts) {
+      if (!g.isBossGhost()) continue
+      if (g.isEaten() || g.isRoomClearPurging() || g.isGateClearFading())
+        continue
+      return { x: g.root.position.x, z: g.root.position.z }
+    }
+    return null
+  }
+
+  /** Minion ghosts in the final room (for spawn cap). */
+  countMinionGhostsInRoom(roomIndex: number): number {
+    let n = 0
+    for (const g of this.ghosts) {
+      if (!g.isMinionGhost()) continue
+      if (g.getRoomIndex() !== roomIndex) continue
+      if (g.isEaten() || g.isRoomClearPurging() || g.isGateClearFading()) continue
+      n++
+    }
+    return n
   }
 
   /** Ghosts currently in play (not eaten, not mid–room-clear purge). */
@@ -185,8 +245,13 @@ export class GhostSystem {
         playerInSafeCenter,
         playerCarryingRelic,
         gateCinematicRoamOnly,
+        this.runtimeSpeedMul,
       )
-      if (!g.isRoomClearPurging() && !g.isGateClearFading()) {
+      if (
+        !g.isRoomClearPurging() &&
+        !g.isGateClearFading() &&
+        !g.isBossGhost()
+      ) {
         g.updateVulnerableAppearance(false, this.ghostAnimTime)
       }
     }
@@ -262,7 +327,11 @@ export class GhostSystem {
       const dx = g.root.position.x - ghostX
       const dz = g.root.position.z - ghostZ
       if (dx * dx + dz * dz <= eps2) {
-        g.disengageAfterHit(playerPos)
+        if (g.isBossGhost()) {
+          g.disengageAfterHit(playerPos)
+        } else {
+          g.beginRoomClearPurge()
+        }
         return
       }
     }
@@ -313,7 +382,7 @@ type SkinSnap = {
 
 class Ghost {
   readonly root: Group
-  /** `ROOM_1` … `ROOM_5` index — matches `GhostSpawnSpec.roomIndex`. */
+  /** Mansion chain room index (1…N) — matches `GhostSpawnSpec.roomIndex`. */
   readonly roomIndex: number
   /** Spawn body tint (hex); used for gem color when eaten. */
   readonly bodyColor: number
@@ -359,6 +428,7 @@ class Ghost {
   private visionCooldownRemain = 0
   private visionDebugLine: Line | null = null
   private visionConeMesh: Mesh | null = null
+  private readonly role: GhostSpawnRole
 
   constructor(
     ghostGroup: Group,
@@ -367,12 +437,22 @@ class Ghost {
     ghostGltf: GhostGltfTemplate | null,
   ) {
     this.worldCollision = worldCollision
+    this.role = spec.role ?? 'normal'
     this.roomIndex = spec.roomIndex
     this.spawnX = spec.x
     this.spawnZ = spec.z
     this.bodyColor = spec.color
-    const visualMul = ghostRoomVisualMul(spec.roomIndex)
-    this.speedMul = ghostRoomSpeedMul(spec.roomIndex)
+    let visualMul = ghostRoomVisualMul(spec.roomIndex)
+    if (this.role === 'boss') {
+      visualMul *= BOSS_EXTRA_VISUAL_MUL
+    } else if (this.role === 'minion') {
+      visualMul *= BOSS_MINION_VISUAL_MUL
+    }
+    let sm = ghostRoomSpeedMul(spec.roomIndex)
+    if (this.role === 'boss') {
+      sm *= 0.76
+    }
+    this.speedMul = sm
     this.collisionRadius = GHOST_COLLISION_RADIUS * visualMul
     this.root = createGhostVisual(spec.color, ghostGltf, visualMul)
     this.root.position.set(spec.x, 0, spec.z)
@@ -418,7 +498,7 @@ class Ghost {
       this.root.add(line)
     }
 
-    if (GHOST_VISION_CONE_VISIBLE) {
+    if (GHOST_VISION_CONE_VISIBLE && this.role !== 'boss') {
       this.visionConeMesh = createGhostVisionConeMesh()
       this.root.add(this.visionConeMesh)
     }
@@ -430,6 +510,14 @@ class Ghost {
 
   getRoomIndex(): number {
     return this.roomIndex
+  }
+
+  isBossGhost(): boolean {
+    return this.role === 'boss'
+  }
+
+  isMinionGhost(): boolean {
+    return this.role === 'minion'
   }
 
   isRoomClearPurging(): boolean {
@@ -591,6 +679,97 @@ class Ghost {
     return true
   }
 
+  private updateBossSeek(
+    dt: number,
+    _realDt: number,
+    playerPos: Vector3,
+    timeSec: number,
+    cinematicRoamOnly: boolean,
+    globalSpeedMul: number,
+  ): void {
+    const pulse = 0.42 + 0.58 * Math.sin(timeSec * 2.05)
+    for (const m of this.materials) {
+      m.emissive.setHex(0xaa66ff)
+      m.emissiveIntensity = 0.44 + pulse * 0.48
+    }
+
+    if (cinematicRoamOnly) {
+      this.wanderTimer -= dt
+      if (this.wanderTimer <= 0) {
+        this.wanderAngle = Math.random() * Math.PI * 2
+        this.pickWanderTimer()
+      }
+      const tx = Math.cos(this.wanderAngle)
+      const tz = Math.sin(this.wanderAngle)
+      const targetSpeed =
+        GHOST_WANDER_SPEED * this.speedMul * 0.5 * globalSpeedMul
+      const dirK = 1 - Math.exp(-GHOST_DIRECTION_SMOOTH_WANDER * dt)
+      this.smoothedTx += (tx - this.smoothedTx) * dirK
+      this.smoothedTz += (tz - this.smoothedTz) * dirK
+      const sl = Math.hypot(this.smoothedTx, this.smoothedTz)
+      if (sl > 1e-5) {
+        this.smoothedTx /= sl
+        this.smoothedTz /= sl
+      }
+      const desiredVx = this.smoothedTx * targetSpeed
+      const desiredVz = this.smoothedTz * targetSpeed
+      const k = 1 - Math.exp(-GHOST_STEERING_ACCEL_WANDER * dt)
+      this.velocity.x += (desiredVx - this.velocity.x) * k
+      this.velocity.z += (desiredVz - this.velocity.z) * k
+    } else {
+      const px = this.root.position.x
+      const pz = this.root.position.z
+      const dx = playerPos.x - px
+      const dz = playerPos.z - pz
+      const dist = Math.hypot(dx, dz)
+      let tx = 0
+      let tz = 0
+      if (dist > 0.06) {
+        tx = dx / dist
+        tz = dz / dist
+      }
+      const targetSpeed = BOSS_SEEK_SPEED * this.speedMul * globalSpeedMul
+      const dirK = 1 - Math.exp(-GHOST_DIRECTION_SMOOTH_CHASE * dt)
+      this.smoothedTx += (tx - this.smoothedTx) * dirK
+      this.smoothedTz += (tz - this.smoothedTz) * dirK
+      const sl = Math.hypot(this.smoothedTx, this.smoothedTz)
+      if (sl > 1e-5) {
+        this.smoothedTx /= sl
+        this.smoothedTz /= sl
+      }
+      const desiredVx = this.smoothedTx * targetSpeed
+      const desiredVz = this.smoothedTz * targetSpeed
+      const sk = 1 - Math.exp(-GHOST_STEERING_ACCEL_CHASE * dt)
+      this.velocity.x += (desiredVx - this.velocity.x) * sk
+      this.velocity.z += (desiredVz - this.velocity.z) * sk
+    }
+
+    this.scratch.set(this.velocity.x * dt, 0, this.velocity.z * dt)
+    this.root.position.add(this.scratch)
+    this.resolveWallCollision()
+
+    const faceSl = Math.hypot(this.smoothedTx, this.smoothedTz)
+    if (faceSl > 0.06) {
+      const targetYaw = Math.atan2(this.smoothedTx, this.smoothedTz)
+      const cur = this.root.rotation.y
+      let delta = targetYaw - cur
+      delta = Math.atan2(Math.sin(delta), Math.cos(delta))
+      this.root.rotation.y =
+        cur + delta * (1 - Math.exp(-GHOST_FACING_TURN_DEFAULT * dt))
+    }
+
+    const anim = this.root.userData.updateGhostAnimation as
+      | ((
+          dt: number,
+          timeSec: number,
+          vx: number,
+          vz: number,
+          chaseAnim?: boolean,
+        ) => void)
+      | undefined
+    anim?.(dt, timeSec, this.velocity.x, this.velocity.z, true)
+  }
+
   update(
     dt: number,
     realDt: number,
@@ -600,6 +779,7 @@ class Ghost {
     playerInSafeCenter: boolean,
     relicCarried: boolean,
     cinematicRoamOnly: boolean,
+    globalSpeedMul = 1,
   ): void {
     if (this.gateClearFadeRemain > 0) {
       this.gateClearFadeRemain -= realDt
@@ -666,6 +846,18 @@ class Ghost {
         this.smoothedTx = 0
         this.smoothedTz = 1
       }
+      return
+    }
+
+    if (this.role === 'boss') {
+      this.updateBossSeek(
+        dt,
+        realDt,
+        playerPos,
+        timeSec,
+        cinematicRoamOnly,
+        globalSpeedMul,
+      )
       return
     }
 
@@ -818,7 +1010,7 @@ class Ghost {
       }
     }
 
-    targetSpeed *= this.speedMul
+    targetSpeed *= this.speedMul * globalSpeedMul
 
     const rawLen = Math.hypot(tx, tz)
     if (rawLen > 1e-5) {

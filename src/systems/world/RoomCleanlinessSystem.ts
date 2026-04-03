@@ -1,6 +1,7 @@
 import type { ClutterItem } from '../../core/types/GameItem.ts'
+import { roomIndexFromId } from '../doors/doorLayout.ts'
 import type { RoomId } from './mansionRoomData.ts'
-import { CLEANLINESS_PERCENT_PER_CLUTTER } from './roomCleanlinessConfig.ts'
+import { cleanlinessPercentPerClutter } from './roomCleanlinessConfig.ts'
 import { doorIndexToOpenWhenRoomCleared } from './roomCleanlinessLayout.ts'
 
 export type RoomCleanlinessSystemOptions = {
@@ -25,8 +26,13 @@ export class RoomCleanlinessSystem {
     if (!isTrackableRoom(room)) return
     if (this.cleared.has(room)) return
 
+    const idx = roomIndexFromId(room)
+    if (idx === null || idx < 1) return
     const cur = this.progress.get(room) ?? 0
-    const next = Math.min(100, cur + CLEANLINESS_PERCENT_PER_CLUTTER)
+    const next = Math.min(
+      100,
+      cur + cleanlinessPercentPerClutter(idx),
+    )
     this.progress.set(room, next)
 
     if (next >= 100 - 1e-5) {

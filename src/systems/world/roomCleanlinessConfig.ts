@@ -1,7 +1,10 @@
-import { CLUTTER_PER_ROOM } from '../clutter/clutterSpawnConfig.ts'
+import { clutterPiecesForRoom } from '../clutter/clutterSpawnConfig.ts'
 
 /**
- * Each clutter pickup adds this much to that room’s cleanliness (0–100).
- * Matches `CLUTTER_PER_ROOM` so collecting **all** clutter in a room reaches 100%.
+ * Each clutter pickup in `ROOM_k` adds this fraction toward 100% (piece count may vary by depth).
  */
-export const CLEANLINESS_PERCENT_PER_CLUTTER = 100 / CLUTTER_PER_ROOM
+export function cleanlinessPercentPerClutter(roomIndex: number): number {
+  const n = clutterPiecesForRoom(roomIndex)
+  if (n <= 0) return 0
+  return 100 / n
+}

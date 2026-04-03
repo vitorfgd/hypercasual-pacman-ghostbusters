@@ -72,10 +72,9 @@ const ROOM_CLEARED_SEC = 3.15
  */
 export function spawnRoomClearedBanner(
   viewport: HTMLElement,
-  upgradeKind: 'capacity' | 'speed',
+  subtitle: string,
 ): void {
-  const sub =
-    upgradeKind === 'capacity' ? 'MORE BAG SPACE' : 'YOU FEEL FASTER'
+  const sub = subtitle
   const el = document.createElement('div')
   el.className = 'room-cleared-banner'
   el.setAttribute('aria-live', 'polite')

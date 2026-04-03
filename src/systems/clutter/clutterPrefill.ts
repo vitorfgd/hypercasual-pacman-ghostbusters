@@ -1,4 +1,5 @@
 import type { ClutterVariant, GameItem } from '../../core/types/GameItem.ts'
+import { roomIndexFromId } from '../doors/doorLayout.ts'
 import type { ItemWorld } from '../items/ItemWorld.ts'
 import type { RoomSystem } from '../world/RoomSystem.ts'
 import type { WorldCollision } from '../world/WorldCollision.ts'
@@ -8,7 +9,7 @@ import {
   CLUTTER_SPAWN_BODY_RADIUS,
   CLUTTER_SPAWN_MIN_DIST_FROM_DEPOSIT,
   CLUTTER_SPAWN_ROOM_INSET,
-  CLUTTER_PER_ROOM,
+  clutterPiecesForRoom,
   CLUTTER_CLUSTER_COUNT,
   CLUTTER_CLUSTER_JITTER,
   CLUTTER_CLUSTER_ORBIT_MIN,
@@ -96,7 +97,7 @@ function tryFindClutterPositionNear(
 }
 
 /**
- * Precompute placements for every normal room (`ROOM_1`…`ROOM_5`).
+ * Precompute placements for every normal room in the chain.
  */
 export function precomputeAllClutterPlacements(
   roomSystem: RoomSystem,
@@ -107,6 +108,8 @@ export function precomputeAllClutterPlacements(
   const out: PrefillClutterPlacement[] = []
 
   for (const roomId of rooms) {
+    const roomIdx = roomIndexFromId(roomId) ?? 1
+    const pieceCount = clutterPiecesForRoom(roomIdx)
     const b = roomSystem.getBounds(roomId)
     const cx = (b.minX + b.maxX) * 0.5
     const cz = (b.minZ + b.maxZ) * 0.5
@@ -121,7 +124,7 @@ export function precomputeAllClutterPlacements(
       })
     }
 
-    for (let i = 0; i < CLUTTER_PER_ROOM; i++) {
+    for (let i = 0; i < pieceCount; i++) {
       const cc = centers[i % CLUTTER_CLUSTER_COUNT]!
       const pos =
         tryFindClutterPositionNear(

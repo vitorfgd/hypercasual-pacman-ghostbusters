@@ -12,7 +12,7 @@ import {
   GATE_SINK_DURATION_SEC,
 } from '../doors/doorUnlockConfig.ts'
 import { roomIndexFromId } from '../doors/doorLayout.ts'
-import { ROOMS, type RoomId } from './mansionRoomData.ts'
+import { NORMAL_ROOM_IDS, ROOMS, type RoomId } from './mansionRoomData.ts'
 import type { RoomSystem } from './RoomSystem.ts'
 import {
   ROOM_LOCK_COVER_FADE_DELAY_SEC,
@@ -21,7 +21,8 @@ import {
   ROOM_LOCK_COVER_HORIZONTAL_PAD,
 } from './roomLockCoverConfig.ts'
 
-const COVER_ROOMS: RoomId[] = ['ROOM_2', 'ROOM_3', 'ROOM_4', 'ROOM_5']
+/** Locked shells for every normal room except the first (visible until previous gate opens). */
+const COVER_ROOMS: RoomId[] = NORMAL_ROOM_IDS.filter((id) => id !== 'ROOM_1')
 
 /** Same as gate sink start in `DoorUnlockSystem.applyGatePose` — not duplicated animation, only timing sync. */
 const GATE_SINK_T0 = GATE_OPEN_DELAY_SEC + GATE_ANTICIPATION_SEC

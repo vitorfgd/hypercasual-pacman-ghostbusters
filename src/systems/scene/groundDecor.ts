@@ -69,13 +69,14 @@ function addRock(parent: Group, x: number, z: number, rnd: () => number): void {
 
 /**
  * Small rocks scattered on walkable floors — deterministic per area.
+ * `runSeed` mixes per-session so decor layout differs each run.
  */
-export function addCemeteryGroundDecor(root: Group): void {
+export function addCemeteryGroundDecor(root: Group, runSeed = 0): void {
   const decor = new Group()
   decor.name = 'cemeteryGroundDecor'
 
   const areas: { bounds: RoomBounds; seed: number }[] = []
-  let seedBase = 0xce3e1e
+  let seedBase = (0xce3e1e ^ runSeed) >>> 0
   for (const r of ROOM_LIST) {
     areas.push({ bounds: r.bounds, seed: seedBase++ })
   }

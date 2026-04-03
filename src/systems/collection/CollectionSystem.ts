@@ -12,6 +12,13 @@ import {
 
 const p = new Vector3()
 
+/** Run upgrades scale magnet band / pull speed. */
+export type MagnetTuning = {
+  extraRadiusMul?: number
+  pullSpeedMul?: number
+  recoverPullMul?: number
+}
+
 export type CollectionCallbacks = {
   /** When true (e.g. ghost hit i-frames), ground pickup is skipped. */
   pickupBlocked?: boolean
@@ -38,17 +45,21 @@ export class CollectionSystem {
     itemWorld: ItemWorld,
     dt: number,
     callbacks?: CollectionCallbacks,
+    magnet?: MagnetTuning,
   ): CollectedPickup[] {
     this.collectScratch.length = 0
 
     player.getPosition(p)
     if (!callbacks?.magnetBlocked) {
+      const rx = magnet?.extraRadiusMul ?? 1
+      const ps = magnet?.pullSpeedMul ?? 1
       itemWorld.applyMagnetPull(
         p,
         player.radius + this.pickupRadius,
-        MAGNET_EXTRA_RADIUS,
-        MAGNET_PULL_SPEED,
+        MAGNET_EXTRA_RADIUS * rx,
+        MAGNET_PULL_SPEED * ps,
         dt,
+        { recoverPullMul: magnet?.recoverPullMul },
       )
     }
 

@@ -14,9 +14,15 @@ export class TrashPortalSystem {
     center: new Vector3(),
     radius: TRASH_PORTAL_ZONE_RADIUS,
   }
+  /** Run upgrades (portal-tug); clamped for stability. */
+  private suctionStrengthMul = 1
 
   constructor(roomSystem: RoomSystem) {
     this.roomSystem = roomSystem
+  }
+
+  setSuctionStrengthMultiplier(m: number): void {
+    this.suctionStrengthMul = Math.max(0.65, Math.min(1.55, m))
   }
 
   /**
@@ -61,7 +67,8 @@ export class TrashPortalSystem {
     const d = Math.hypot(dx, dz)
     if (d < 0.06) return
     const t = Math.max(0, 1 - d / zone.radius)
-    const speed = TRASH_PORTAL_SUCTION_MAX_SPEED * t * t
+    const speed =
+      TRASH_PORTAL_SUCTION_MAX_SPEED * this.suctionStrengthMul * t * t
     const k = (speed * dt) / d
     p.x += dx * k
     p.z += dz * k

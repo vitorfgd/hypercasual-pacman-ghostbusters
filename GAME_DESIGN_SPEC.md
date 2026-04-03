@@ -25,11 +25,8 @@ Progression is **session-based**: there is **no campaign win screen** and **no s
 
 When **`ROOM_k`** reaches 100% cleanliness (`Game.ts` → `onRoomCleared`):
 
-1. **Automatic upgrade** (`applyUpgradeForRoomClear` in `roomClearUpgrade.ts`):
-   - **Odd** `k` (1, 3, 5): **prefer +1 capacity level** (raises `CarryStack` max from base `INITIAL_STACK_CAPACITY` + levels).
-   - **Even** `k` (2, 4): **prefer +1 speed level** (raises `PlayerController` max speed via `speedForLevel`).
-   - If the preferred track is **maxed** (`MAX_CAPACITY_UPGRADE_LEVELS` / `MAX_SPEED_UPGRADE_LEVELS` = **12** each), the **other** track is granted if possible.
-2. **UI**: Room-cleared **banner**, optional **floating level-up text**, **floor decal** in that room.
+1. **Gameplay pauses** (simulation and input freeze; the view still renders) while the player **chooses exactly one** of **three** random offers from `pickRunUpgradeOffers` (`upgradePool.ts`): a **shuffled subset** of a fixed run-wide pool (~14 entries) covering movement, vacuum, bag, risk/reward, and utility. Stackable upgrades can appear again until their cap; one-time upgrades are removed from the pool after selection. The choice UI is `#room-upgrade-overlay` + `roomUpgradePicker.ts` (three side-by-side cards on wide screens, stacked on narrow viewports).
+2. **After the pick**, `applyRoomClearOffer` applies the effect, the overlay closes, gameplay resumes, then: room-cleared **banner**, optional **floating reward text**, **floor decal** in that room.
 3. **Gates / ghosts**:
    - **`ROOM_1` … `ROOM_4`**: Triggers **`doorIndexToOpenWhenRoomCleared`** → **`doorIndex = k`** opens the corresponding gate after a **gate-opening cinematic** (`beginGateOpeningCinematic`); ghosts in that room **fade** during the intro of the cinematic.
    - **`ROOM_5`**: **No further door** (`doorIndex` is `null`); ghosts for that room are **purged** (shrink and remove) without the north-door cinematic.
@@ -59,7 +56,7 @@ When **`ROOM_k`** reaches 100% cleanliness (`Game.ts` → `onRoomCleared`):
 - **`PLAYER_MAX_LIVES`** = **3** (`juiceConfig.ts`). Shown as **♥♥♥** in `#hud-lives`.
 - Each time a **ghost contact** deals damage (same gate as stack loss: not during i-frames / cinematic / disarmed): **lose 1 life**, full-screen **−1** impact (`spawnLifeLostImpact`), strong screen shake, hearts update. **Stack loss** still applies as before.
 - **Traps** do **not** remove lives (only stack fraction / slow).
-- At **0 lives**: **`gameOver`** = true → animation loop **stops**, **game over overlay** (title, flavor line, **TRY AGAIN** → `location.reload()`).
+- At **0 lives**: **`gameOver`** = true → animation loop **stops**, **Run Failed** full-screen summary (`runFailedOverlay.ts`): rooms cleared, clutter collected, money, time survived, list of upgrade titles chosen; **Retry** disposes the session and **remounts** the game via `mountGame` (no instant reload). If remount fails, falls back to `location.reload()`.
 
 ### 3.2 Other situations (no life loss)
 
@@ -191,12 +188,12 @@ Vite, Three.js, `src/main.ts` → `Game`. GLB assets under `public/` with proced
 
 | Topic | Primary module |
 |--------|----------------|
-| Player lives / game over | `juiceConfig.ts` (`PLAYER_MAX_LIVES`), `Game.ts`, `juice/lifeHudJuice.ts` |
+| Player lives / run failed | `juiceConfig.ts` (`PLAYER_MAX_LIVES`), `Game.ts`, `juice/lifeHudJuice.ts`, `juice/runFailedOverlay.ts`, `bootstrap/mountGame.ts` |
 | Player / ghost speeds | `gameplaySpeed.ts`, `ghostConfig.ts` |
 | Vision cone shape / LOS / hunt timers | `ghostConfig.ts` |
 | Ghost hit loss, i-frames, knockback | `ghostConfig.ts` |
 | Room cleanliness math | `roomCleanlinessConfig.ts`, `clutterSpawnConfig.ts` |
-| Room-clear upgrades | `upgradeConfig.ts`, `roomClearUpgrade.ts` |
+| Room-clear upgrades | `upgradeConfig.ts`, `runUpgradeState.ts`, `upgradePool.ts`, `roomUpgradePicker.ts` |
 | Gates / cinematic timing | `doorUnlockConfig.ts`, `Game.ts` |
 | Doors / layout | `doorLayout.ts`, `DoorUnlockSystem.ts` |
 | Mansion geometry | `mansionGeometry.ts`, `mansionRoomData.ts`, `mansionWalls.ts` |
@@ -209,8 +206,8 @@ Vite, Three.js, `src/main.ts` → `Game`. GLB assets under `public/` with proced
 ## 14. Minimal checklist (this build)
 
 1. **XZ** movement, wall collision, optional **OTS** camera + **C** toggle.
-2. **Stack**, ghost **hit** strips stack **and** costs **1 life**; at **0 lives**, **game over** + reload.
-3. **Clutter** → **room %** → **clear** → **capacity/speed** upgrade + **gate** or **ghost purge**.
+2. **Stack**, ghost **hit** strips stack **and** costs **1 life**; at **0 lives**, **Run Failed** summary + **Retry** (remount).
+3. **Clutter** → **room %** → **clear** → **pick 1 of 3 upgrades** → **gate** or **ghost purge**.
 4. **Ghosts**: wander / chase (relic + vision hunt), **compact cone + LOS**, **high chase speeds**, contact damage, room clear removes/fades.
 5. **Trash portal** deposits → **money** + overload presentation.
 6. **HUD**: carry, **lives**, money, **room cleanliness**, toss at max stack.

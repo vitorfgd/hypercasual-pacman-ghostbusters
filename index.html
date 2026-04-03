@@ -22,6 +22,23 @@
         <p class="game-loading__text">Tidying the cemetery...</p>
       </div>
       <div id="game-viewport" aria-label="Game view">
+        <div
+          id="room-upgrade-overlay"
+          class="room-upgrade-overlay hidden"
+          aria-hidden="true"
+        >
+          <div class="room-upgrade-overlay__backdrop" aria-hidden="true"></div>
+          <div class="room-upgrade-overlay__panel" role="presentation">
+            <h2 class="room-upgrade-overlay__title">Room cleared</h2>
+            <p class="room-upgrade-overlay__sub">Choose one upgrade</p>
+            <div
+              id="room-upgrade-cards"
+              class="room-upgrade-overlay__cards"
+              role="group"
+              aria-label="Upgrade choices"
+            ></div>
+          </div>
+        </div>
         <div id="hud-hit-flash" class="hud-hit-flash" aria-hidden="true"></div>
         <div id="hud-top" class="hud-top" aria-live="polite">
           <div class="hud-main-row">

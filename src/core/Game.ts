@@ -45,8 +45,15 @@ import {
   createWispItem,
 } from '../themes/wisp/itemFactory.ts'
 import type { GameItem } from './types/GameItem.ts'
-import { INITIAL_STACK_CAPACITY } from '../systems/upgrades/upgradeConfig.ts'
-import { applyUpgradeForRoomClear } from '../systems/upgrades/roomClearUpgrade.ts'
+import { createRunRandom } from './runRng.ts'
+import { INITIAL_STACK_CAPACITY, speedForLevel } from '../systems/upgrades/upgradeConfig.ts'
+import {
+  applyRunUpgrade,
+  pickRunUpgradeOffers,
+  type ApplyRunUpgradeResult,
+} from '../systems/upgrades/upgradePool.ts'
+import { RunUpgradeState } from '../systems/upgrades/runUpgradeState.ts'
+import { mountRoomUpgradePicker } from '../ui/roomUpgradePicker.ts'
 import {
   GHOST_COLLISION_RADIUS,
   GHOST_HIT_INVULN_SEC,
@@ -54,11 +61,12 @@ import {
   GHOST_HIT_LOSS_MIN,
   GHOST_HIT_PICKUP_LOCK_SEC,
   GHOST_HIT_VACUUM_DISABLE_SEC,
-  DEFAULT_GHOST_SPAWNS,
   ghostRoomVisualMul,
   HAUNTED_PICKUP_GHOST_CHANCE,
   MAX_ACTIVE_GHOSTS,
+  partitionGhostSpawnsByRoom,
   pickGhostColorForRoomIndex,
+  ROOM_CLEAR_UPGRADE_INTRO_SEC,
 } from '../systems/ghost/ghostConfig.ts'
 import {
   disposeGhostGltfTemplate,
@@ -84,7 +92,11 @@ import {
   GATE_OPEN_TOTAL_SEC,
 } from '../systems/doors/doorUnlockConfig.ts'
 import { RoomCleanlinessSystem } from '../systems/world/RoomCleanlinessSystem.ts'
-import type { RoomId } from '../systems/world/mansionRoomData.ts'
+import {
+  FINAL_NORMAL_ROOM_ID,
+  NORMAL_ROOM_COUNT,
+  type RoomId,
+} from '../systems/world/mansionRoomData.ts'
 import { WorldCollision } from '../systems/world/WorldCollision.ts'
 import {
   DEPOSIT_ARC_EASE,
@@ -97,10 +109,9 @@ import {
   STACK_DROP_SCATTER_RADIUS,
   type CameraMode,
 } from '../juice/juiceConfig.ts'
-import {
-  showGameOverOverlay,
-  spawnLifeLostImpact,
-} from '../juice/lifeHudJuice.ts'
+import { spawnLifeLostImpact } from '../juice/lifeHudJuice.ts'
+import { showRunFailedOverlay } from '../juice/runFailedOverlay.ts'
+import { showRunSuccessOverlay } from '../juice/runSuccessOverlay.ts'
 import {
   spawnBagDisposeBurst,
   spawnBagLandImpact,
@@ -136,8 +147,8 @@ import { DoorUnlockSystem } from '../systems/doors/DoorUnlockSystem.ts'
 import { RoomLockCoverSystem } from '../systems/world/RoomLockCoverSystem.ts'
 import {
   computeStackWeight,
-  stackWeightDragMultiplier,
-  stackWeightSpeedMultiplier,
+  stackWeightDragMultiplierRelief,
+  stackWeightSpeedMultiplierRelief,
 } from '../systems/stack/stackWeightConfig.ts'
 import { TrapFieldSystem } from '../systems/traps/TrapFieldSystem.ts'
 import { TrashPortalSystem } from '../systems/trash/TrashPortalSystem.ts'
@@ -145,6 +156,16 @@ import {
   TRASH_PORTAL_COMBO_MAX,
   TRASH_PORTAL_COMBO_PER_CHAIN,
 } from '../systems/trash/trashPortalConfig.ts'
+import { BossRoomController } from '../systems/boss/BossRoomController.ts'
+import {
+  BOSS_CINE_RETURN_SEC,
+  BOSS_CINE_SLOW_SEC,
+  BOSS_CINE_SLOW_SIM_SCALE,
+  BOSS_CINE_ZOOM_SEC,
+  BOSS_PULSE_KNOCK_STRENGTH,
+  BOSS_VICTORY_OUTRO_SEC,
+  getBossSpawnXZ,
+} from '../systems/boss/bossRoomConfig.ts'
 
 const DEPOSIT_TOAST_MS = 2800
 const BAG_THROW_SEC = 0.78
@@ -155,21 +176,15 @@ function roomCleanHudLabel(roomId: RoomId): string {
   return m ? `Room ${m[1]}` : roomId
 }
 
-function upgradeLevelUpBanner(kind: 'capacity' | 'speed', newLevel: number): string {
-  switch (kind) {
-    case 'capacity':
-      return `Stack capacity — level ${newLevel}!`
-    case 'speed':
-      return `Speed — level ${newLevel}!`
-  }
-}
-
 function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
 }
 
 export class Game {
-  private readonly roomSystem = new RoomSystem()
+  /** New value each session — decor XOR + mulberry32 stream for gameplay RNG. */
+  private readonly runSeed: number
+  private readonly runRandom: () => number
+  private readonly roomSystem: RoomSystem
   private readonly worldCollision = new WorldCollision()
   private readonly scene: Scene
   private readonly camera: PerspectiveCamera
@@ -194,13 +209,14 @@ export class Game {
   private readonly roomWispSpawns: RoomWispSpawnSystem
   private readonly specialRelicSpawns: SpecialRelicSpawnSystem
   private readonly relicFootArrow: ReturnType<typeof createSpecialRelicFootArrow>
-  /** Room-clear progression (formerly hub pad levels). */
-  private capacityUpgradeLevel = 0
-  private speedUpgradeLevel = 0
+  /** Per-run room-clear upgrade pool + stacking state. */
+  private readonly runUpgrades = new RunUpgradeState()
   private readonly ghostSystem: GhostSystem
   private readonly ghostGltfTemplate: GhostGltfTemplate | null
   private readonly playerGltfTemplate: PlayerGltfTemplate | null
   private readonly hubTitleFloorLabel: HubTitleFloorLabelHandle
+  /** When set, Retry on run-failed avoids full page reload (remount from bootstrap). */
+  private readonly onRunFailedRetry?: () => void | Promise<void>
   /** World floor decals for cleared rooms (dispose on `Game.dispose`). */
   private readonly roomClearFloorDisposers: (() => void)[] = []
   private readonly burstGroup: Group
@@ -244,6 +260,20 @@ export class Game {
   private readonly hudLivesWrap: HTMLElement | null
   private lives = PLAYER_MAX_LIVES
   private gameOver = false
+  private runFailedCleanup: (() => void) | null = null
+  private runSuccessCleanup: (() => void) | null = null
+  private readonly bossRoom: BossRoomController
+  private runStatRoomsCleared = 0
+  private runStatClutterCollected = 0
+  private readonly runStatUpgradesPicked: { id: string; title: string }[] = []
+  /** Room reached 100% — waiting for player to pick an upgrade. */
+  private roomUpgradePaused = false
+  /** Delay before showing upgrade UI after a room clear (brief beat). */
+  private roomUpgradeIntroRemain: number | null = null
+  private roomUpgradePendingReveal: (() => void) | null = null
+  private readonly roomUpgradePicker: ReturnType<
+    typeof mountRoomUpgradePicker
+  > | null
   private readonly trapField: TrapFieldSystem
   private readonly trashPortals: TrashPortalSystem
   private readonly playerTrail: PlayerMotionTrail
@@ -281,6 +311,18 @@ export class Game {
   private readonly gateCineRigDesired = new Vector3()
   private gateCinematicDoorOpened = false
 
+  /** Final room: short camera beat before `BossRoomController.startFight`. */
+  private bossIntroCinematicRunning = false
+  private bossIntroCinematicElapsed = 0
+  /** Set when intro has been queued so we never double-start. */
+  private bossIntroCinematicDone = false
+  private readonly bossCineStartPos = new Vector3()
+  private readonly bossCinePullPos = new Vector3()
+  private readonly bossCineBossLook = new Vector3()
+  private readonly bossCineBlendLook = new Vector3()
+  /** Seconds until success overlay after boss defeat (ghosts fading). */
+  private bossVictoryOutroRemain: number | null = null
+
   private readonly onCameraModeKey = (e: KeyboardEvent): void => {
     if (e.code !== 'KeyC') return
     if (e.repeat) return
@@ -300,10 +342,22 @@ export class Game {
     host: HTMLElement,
     ghostGltfTemplate: GhostGltfTemplate | null = null,
     playerGltfTemplate: PlayerGltfTemplate | null = null,
+    onRunFailedRetry?: () => void | Promise<void>,
   ) {
+    this.onRunFailedRetry = onRunFailedRetry
+    const run = createRunRandom()
+    this.runSeed = run.seed
+    this.runRandom = run.random
+    this.roomSystem = new RoomSystem(this.runRandom)
     this.playerGltfTemplate = playerGltfTemplate
     this.gameViewport =
       host.querySelector<HTMLElement>('#game-viewport') ?? host
+    const roomUpgradeRoot = host.querySelector<HTMLElement>(
+      '#room-upgrade-overlay',
+    )
+    this.roomUpgradePicker = roomUpgradeRoot
+      ? mountRoomUpgradePicker(roomUpgradeRoot)
+      : null
     const {
       scene,
       playerRoot,
@@ -315,7 +369,7 @@ export class Game {
       depositUnderglowMesh,
       playerCharacter,
       hubTitleFloorLabel,
-    } = createScene(playerGltfTemplate)
+    } = createScene(playerGltfTemplate, this.runSeed)
 
     this.hubTitleFloorLabel = hubTitleFloorLabel
 
@@ -410,8 +464,12 @@ export class Game {
     this.doorUnlock = new DoorUnlockSystem({
       scene: this.scene,
       worldCollision: this.worldCollision,
-      onDoorPassageCleared: () => {
+      onDoorPassageCleared: (doorIndex) => {
         this.syncClutterRoomAccessibilityFromDoors()
+        const nextRoom = doorIndex + 1
+        if (nextRoom >= 1 && nextRoom <= NORMAL_ROOM_COUNT) {
+          this.ghostSystem.spawnGhostsForRoom(nextRoom)
+        }
       },
     })
 
@@ -427,7 +485,11 @@ export class Game {
 
     this.trashPortals = new TrashPortalSystem(this.roomSystem)
 
-    this.trapField = new TrapFieldSystem(this.scene, this.roomSystem, Math.random)
+    this.trapField = new TrapFieldSystem(
+      this.scene,
+      this.roomSystem,
+      this.runRandom,
+    )
     this.playerTrail = new PlayerMotionTrail(this.scene)
 
     this.roomWispSpawns = new RoomWispSpawnSystem({
@@ -435,12 +497,15 @@ export class Game {
       roomSystem: this.roomSystem,
       worldCollision: this.worldCollision,
       createWisp: () => this.createRoomWisp(),
-      canSpawnInRoom: (id) => this.doorUnlock.canAccessRoomForSpawning(id),
+      random: this.runRandom,
+      canSpawnInRoom: (id) =>
+        this.doorUnlock.canAccessRoomForSpawning(id) &&
+        id !== FINAL_NORMAL_ROOM_ID,
     })
     const clutterPlacements = precomputeAllClutterPlacements(
       this.roomSystem,
       this.worldCollision,
-      Math.random,
+      this.runRandom,
     )
     instantiatePrefilledClutter(
       clutterPlacements,
@@ -454,10 +519,13 @@ export class Game {
       roomSystem: this.roomSystem,
       worldCollision: this.worldCollision,
       createRelic: () => createRelicItem(),
+      random: this.runRandom,
       onSpawn: () => {
         playJuiceSound('relic_spawn')
       },
-      canSpawnInRoom: (id) => this.doorUnlock.canAccessRoomForSpawning(id),
+      canSpawnInRoom: (id) =>
+        this.doorUnlock.canAccessRoomForSpawning(id) &&
+        id !== FINAL_NORMAL_ROOM_ID,
     })
     this.relicFootArrow = createSpecialRelicFootArrow()
     this.scene.add(this.relicFootArrow.root)
@@ -465,50 +533,81 @@ export class Game {
     this.ghostSystem = new GhostSystem(
       ghostGroup,
       this.worldCollision,
-      DEFAULT_GHOST_SPAWNS,
+      partitionGhostSpawnsByRoom(),
       ghostGltfTemplate,
     )
+
+    this.bossRoom = new BossRoomController({
+      doorUnlock: this.doorUnlock,
+      ghostSystem: this.ghostSystem,
+      worldCollision: this.worldCollision,
+      random: this.runRandom,
+      onPulsePlayer: (bx, bz) => {
+        this.player.getPosition(this.playerPos)
+        this.player.applyGhostKnockback(
+          bx,
+          bz,
+          this.playerPos.x,
+          this.playerPos.z,
+          BOSS_PULSE_KNOCK_STRENGTH,
+        )
+        this.triggerDepositScreenShake(false)
+      },
+      onVictory: () => {
+        this.completeBossRunVictory()
+      },
+    })
 
     this.roomCleanliness = new RoomCleanlinessSystem({
       onRoomCleared: (roomId, doorIndex) => {
         const idx = roomIndexFromId(roomId)
-        if (idx !== null && idx >= 1) {
-          const levels = {
-            capacityLevel: this.capacityUpgradeLevel,
-            speedLevel: this.speedUpgradeLevel,
-          }
-          const up = applyUpgradeForRoomClear(
-            idx,
-            this.stack,
-            this.player,
-            levels,
-          )
-          this.capacityUpgradeLevel = levels.capacityLevel
-          this.speedUpgradeLevel = levels.speedLevel
-          const bannerKind =
-            up?.kind ?? (idx % 2 === 1 ? 'capacity' : 'speed')
-          spawnRoomClearedBanner(this.gameViewport, bannerKind)
-          this.roomClearFloorDisposers.push(
-            spawnRoomClearedFloorLabel(this.scene, roomId, bannerKind),
-          )
-          if (up) {
-            spawnFloatingHudText(
-              this.gameViewport,
-              upgradeLevelUpBanner(up.kind, up.newLevel),
-              'float-hud--level-up',
-              { topPct: 26, leftPct: 50, durationSec: 2.4 },
-            )
-          }
-          if (doorIndex !== null) {
-            this.ghostSystem.beginGateClearFadeForRoom(
-              idx,
-              GATE_CINE_GHOST_FADE_SEC,
-            )
-            this.beginGateOpeningCinematic(doorIndex)
-          } else {
-            this.ghostSystem.purgeGhostsForRoom(idx)
+        if (idx === null || idx < 1) return
+
+        const offers = pickRunUpgradeOffers(
+          this.runRandom,
+          this.runUpgrades,
+          this.lives,
+        )
+        const applyChosen = (offer: (typeof offers)[number]): void => {
+          const res = applyRunUpgrade(offer.id, {
+            state: this.runUpgrades,
+            stack: this.stack,
+            player: this.player,
+            economy: this.economy,
+            lives: this.lives,
+            random: this.runRandom,
+          })
+          if (!res) return
+          this.runStatUpgradesPicked.push({ id: offer.id, title: offer.title })
+          this.lives = res.lives
+          this.syncLivesHud()
+          this.moneyHud?.sync()
+          this.syncRunUpgradeModifiers()
+          this.completeRoomClearAfterChoice(roomId, doorIndex, idx, res)
+        }
+
+        const revealUpgrades = (): void => {
+          if (this.roomUpgradePicker && offers.length > 0) {
+            this.roomUpgradePaused = true
+            this.roomUpgradePicker.show(offers, (offer) => {
+              if (!this.roomUpgradePaused) return
+              this.roomUpgradePicker?.hide()
+              this.roomUpgradePaused = false
+              applyChosen(offer)
+            })
+          } else if (offers[0]) {
+            applyChosen(offers[0])
           }
         }
+
+        spawnFloatingHudText(
+          this.gameViewport,
+          'Room cleared!',
+          'float-hud--pickup',
+          { topPct: 30, leftPct: 50, durationSec: 1.1 },
+        )
+        this.roomUpgradeIntroRemain = ROOM_CLEAR_UPGRADE_INTRO_SEC
+        this.roomUpgradePendingReveal = revealUpgrades
       },
     })
 
@@ -573,7 +672,10 @@ export class Game {
             this.gameViewport,
             `+$${item.value + combo}`,
             'float-hud--coin',
-            { topPct: 58 + Math.random() * 16, leftPct: 40 + Math.random() * 20 },
+            {
+              topPct: 58 + this.runRandom() * 16,
+              leftPct: 40 + this.runRandom() * 20,
+            },
           )
           playJuiceSound('deposit_item', { pitch: 1 + flightIndex * 0.045 })
           this.triggerDepositScreenShake(false)
@@ -599,19 +701,38 @@ export class Game {
 
     this.player.getPosition(this.playerPos)
 
+    this.initRunUpgrades()
+
     const tick = (now: number) => {
       if (this.gameOver) return
       this.raf = requestAnimationFrame(tick)
+      if (this.roomUpgradePaused) {
+        this.lastTime = now
+        this.perf.beginFrame(now)
+        this.renderer.render(this.scene, this.camera)
+        this.perf.endFrame(this.renderer.info.render.calls, 0)
+        return
+      }
       const dt = Math.min(0.05, (now - this.lastTime) / 1000)
       this.lastTime = now
       this.elapsedSec += dt
       this.perf.beginFrame(now)
 
+      if (this.roomUpgradeIntroRemain !== null) {
+        this.roomUpgradeIntroRemain -= dt
+        if (this.roomUpgradeIntroRemain <= 0) {
+          this.roomUpgradeIntroRemain = null
+          const reveal = this.roomUpgradePendingReveal
+          this.roomUpgradePendingReveal = null
+          reveal?.()
+        }
+      }
+
       let move = mergeMoveInput(
         this.joystick.getVector(),
         this.keyboardMove.getVector(),
       )
-      if (this.gateCinematicRunning) {
+      if (this.isInteractionCinematicBlocking()) {
         move = { x: 0, y: 0, fingerDown: false, active: false }
       } else {
         move = this.applyOtsCameraRelativeMove(move)
@@ -643,6 +764,16 @@ export class Game {
       this.roomLockCovers.update()
 
       const roomPre = this.roomSystem.getRoomAt(this.playerPos.x, this.playerPos.z)
+      if (
+        roomPre === FINAL_NORMAL_ROOM_ID &&
+        this.bossRoom.isIdle() &&
+        !this.bossIntroCinematicRunning &&
+        !this.bossIntroCinematicDone
+      ) {
+        this.bossIntroCinematicDone = true
+        this.beginBossIntroCinematic()
+      }
+      this.bossRoom.update(dt, roomPre)
       this.syncRoomCleanHud(roomPre)
       const trapSlow = this.trapField.update(
         this.elapsedSec,
@@ -659,10 +790,13 @@ export class Game {
         this.stack.count,
         this.stack.maxCapacity,
       )
+      const relief = this.runUpgrades.encumbranceReliefStacks
       this.player.setMovementSlowMultiplier(
-        stackWeightSpeedMultiplier(weight) * trapSlow,
+        stackWeightSpeedMultiplierRelief(weight, relief) * trapSlow,
       )
-      this.player.setDragWeightMultiplier(stackWeightDragMultiplier(weight))
+      this.player.setDragWeightMultiplier(
+        stackWeightDragMultiplierRelief(weight, relief),
+      )
       this.syncStackJuiceHud(weight)
 
       let simDt =
@@ -670,6 +804,9 @@ export class Game {
       this.ghostHitSlowMoRemain = Math.max(0, this.ghostHitSlowMoRemain - dt)
       if (this.gateCinematicSlowMoActive()) {
         simDt *= GATE_CINE_SLOW_SIM_SCALE
+      }
+      if (this.bossIntroSlowMoActive()) {
+        simDt *= BOSS_CINE_SLOW_SIM_SCALE
       }
 
       this.player.update(simDt, move)
@@ -707,7 +844,7 @@ export class Game {
         dt,
         this.playerPos,
         this.stack.hasRelic(),
-        this.gateCinematicRunning,
+        this.isInteractionCinematicBlocking(),
       )
 
       this.ghostHitInvuln = Math.max(0, this.ghostHitInvuln - dt)
@@ -740,7 +877,7 @@ export class Game {
         this.player.radius,
         this.ghostHitInvuln > 0 ||
           !this.ghostDamageArmed ||
-          this.gateCinematicRunning,
+          this.isInteractionCinematicBlocking(),
       )
       if (hit.kind === 'hit') {
         this.ghostDamageArmed = false
@@ -759,9 +896,12 @@ export class Game {
         const c = this.stack.count
         let toRemove = 0
         if (c > 0) {
+          const lossMul =
+            1 - Math.min(0.58, this.runUpgrades.ghostHitLossReduction)
           const frac =
-            GHOST_HIT_LOSS_MIN +
-            Math.random() * (GHOST_HIT_LOSS_MAX - GHOST_HIT_LOSS_MIN)
+            (            GHOST_HIT_LOSS_MIN +
+              this.runRandom() * (GHOST_HIT_LOSS_MAX - GHOST_HIT_LOSS_MIN)) *
+            lossMul
           const raw = Math.ceil(c * frac)
           toRemove = Math.min(c, Math.max(1, raw))
         }
@@ -803,31 +943,76 @@ export class Game {
         this.syncLivesHud()
         if (this.lives <= 0) {
           this.gameOver = true
-          showGameOverOverlay(this.gameViewport, () => {
-            location.reload()
-          })
+          this.runFailedCleanup = showRunFailedOverlay(
+            this.gameViewport,
+            {
+              roomsCleared: this.runStatRoomsCleared,
+              clutterCollected: this.runStatClutterCollected,
+              money: this.economy.money,
+              timeSec: this.elapsedSec,
+              upgrades: this.runStatUpgradesPicked.map((u) => ({
+                title: u.title,
+              })),
+            },
+            {
+              onRetry: () => {
+                this.runFailedCleanup?.()
+                this.runFailedCleanup = null
+                if (this.onRunFailedRetry) {
+                  void Promise.resolve(this.onRunFailedRetry()).catch(() => {
+                    location.reload()
+                  })
+                } else {
+                  location.reload()
+                }
+              },
+            },
+          )
         }
       }
       updateGhostHitBursts(this.burstParticles, dt)
 
-      const collected = this.collection.update(this.player, this.stack, this.itemWorld, dt, {
-        pickupBlocked:
-          this.ghostHitPickupLockRemain > 0 ||
-          this.bagDisposeInFlight ||
-          this.gateCinematicRunning,
-        magnetBlocked: this.ghostVacuumDisabledRemain > 0,
-      })
+      const collected = this.collection.update(
+        this.player,
+        this.stack,
+        this.itemWorld,
+        dt,
+        {
+          pickupBlocked:
+            this.ghostHitPickupLockRemain > 0 ||
+            this.bagDisposeInFlight ||
+            this.isInteractionCinematicBlocking(),
+          magnetBlocked: this.ghostVacuumDisabledRemain > 0,
+        },
+        {
+          extraRadiusMul: this.runUpgrades.magnetRangeMul(),
+          pullSpeedMul: this.runUpgrades.magnetPullMul(),
+          recoverPullMul: this.runUpgrades.scavengerRecoverPullMul(),
+        },
+      )
       for (const { item, pickupX, pickupZ } of collected) {
         if (item.type === 'clutter') {
           this.roomCleanliness.registerClutterCollected(item)
+          this.runStatClutterCollected += 1
         }
         if (item.type === 'clutter' && item.haunted) {
+          if (this.bossRoom.isFightActive()) {
+            continue
+          }
           this.specialRelicSpawns.trySpawnRelicFromHauntedClutter(
             item.spawnRoomId,
           )
+          const ghostFromThisRoom =
+            roomPre !== null && item.spawnRoomId === roomPre
           if (
+            ghostFromThisRoom &&
             this.ghostSystem.getActiveGhostCount() < MAX_ACTIVE_GHOSTS &&
-            Math.random() < HAUNTED_PICKUP_GHOST_CHANCE
+            this.runRandom() <
+              Math.min(
+                0.94,
+                HAUNTED_PICKUP_GHOST_CHANCE +
+                  this.runUpgrades.hauntedChanceBonus,
+              )
           ) {
             const spawn = this.resolveGhostSpawnFromHauntedClutter(
               pickupX,
@@ -838,7 +1023,10 @@ export class Game {
               x: spawn.x,
               z: spawn.z,
               roomIndex: spawn.roomIndex,
-              color: pickGhostColorForRoomIndex(spawn.roomIndex, Math.random),
+              color: pickGhostColorForRoomIndex(
+                spawn.roomIndex,
+                this.runRandom,
+              ),
             })
           }
           continue
@@ -882,6 +1070,8 @@ export class Game {
       })
       if (this.gateCinematicRunning) {
         this.updateGateOpeningCinematic(dt)
+      } else if (this.bossIntroCinematicRunning) {
+        this.updateBossIntroCinematic(dt)
       } else {
         this.cameraRig.update(dt)
       }
@@ -899,6 +1089,15 @@ export class Game {
         this.specialRelicSpawns.getActiveRelicXZ(),
       )
 
+      if (this.bossVictoryOutroRemain !== null) {
+        this.bossVictoryOutroRemain -= dt
+        if (this.bossVictoryOutroRemain <= 0) {
+          this.bossVictoryOutroRemain = null
+          this.gameOver = true
+          this.openBossRunSuccessOverlay()
+        }
+      }
+
       this.renderer.render(scene, this.camera)
       this.perf.endFrame(this.renderer.info.render.calls, collected.length)
     }
@@ -908,8 +1107,8 @@ export class Game {
 
   private createRoomWisp(): GameItem {
     return createWispItem(
-      0.44 + Math.random() * 0.14,
-      4 + Math.floor(Math.random() * 12),
+      0.44 + this.runRandom() * 0.14,
+      4 + Math.floor(this.runRandom() * 12),
     )
   }
 
@@ -928,6 +1127,28 @@ export class Game {
     )
   }
 
+  /** New session: reset pooled upgrades and re-sync stack speed / vacuum / ghosts. */
+  private initRunUpgrades(): void {
+    this.runUpgrades.reset()
+    this.runStatRoomsCleared = 0
+    this.runStatClutterCollected = 0
+    this.runStatUpgradesPicked.length = 0
+    this.roomUpgradeIntroRemain = null
+    this.roomUpgradePendingReveal = null
+    this.syncRunUpgradeModifiers()
+  }
+
+  private syncRunUpgradeModifiers(): void {
+    this.stack.setMaxCapacity(this.runUpgrades.maxCapacitySlots)
+    this.player.setMaxSpeed(speedForLevel(this.runUpgrades.speedLevel))
+    this.ghostSystem.setRuntimeSpeedMultiplier(
+      this.runUpgrades.ghostSpeedRuntimeMul,
+    )
+    this.trashPortals.setSuctionStrengthMultiplier(
+      this.runUpgrades.trashSuctionMul(),
+    )
+  }
+
   private syncLivesHud(): void {
     const wrap = this.hudLivesWrap
     if (!wrap) return
@@ -938,6 +1159,82 @@ export class Game {
     wrap.setAttribute(
       'aria-label',
       `Lives: ${this.lives} of ${PLAYER_MAX_LIVES}`,
+    )
+  }
+
+  private completeRoomClearAfterChoice(
+    roomId: RoomId,
+    doorIndex: number | null,
+    roomIndex: number,
+    res: ApplyRunUpgradeResult,
+  ): void {
+    this.runStatRoomsCleared += 1
+    spawnRoomClearedBanner(this.gameViewport, res.bannerSubtitle)
+    this.roomClearFloorDisposers.push(
+      spawnRoomClearedFloorLabel(this.scene, roomId, res.bannerSubtitle),
+    )
+    if (res.floatText) {
+      spawnFloatingHudText(
+        this.gameViewport,
+        res.floatText,
+        res.floatClass ?? 'float-hud--level-up',
+        { topPct: 26, leftPct: 50, durationSec: 2.35 },
+      )
+    }
+
+    if (doorIndex !== null) {
+      this.ghostSystem.beginGateClearFadeForRoom(
+        roomIndex,
+        GATE_CINE_GHOST_FADE_SEC,
+      )
+      this.beginGateOpeningCinematic(doorIndex)
+    } else {
+      this.ghostSystem.purgeGhostsForRoom(roomIndex)
+    }
+  }
+
+  private completeBossRunVictory(): void {
+    if (this.gameOver || this.bossVictoryOutroRemain !== null) return
+    this.runStatRoomsCleared += 1
+    spawnRoomClearedBanner(this.gameViewport, 'Mansion cleared')
+    this.ghostSystem.beginGateClearFadeForRoom(
+      NORMAL_ROOM_COUNT,
+      GATE_CINE_GHOST_FADE_SEC,
+    )
+    spawnFloatingHudText(
+      this.gameViewport,
+      'Haunt banished!',
+      'float-hud--level-up',
+      { topPct: 24, leftPct: 50, durationSec: 1.65 },
+    )
+    this.bossVictoryOutroRemain = BOSS_VICTORY_OUTRO_SEC
+  }
+
+  private openBossRunSuccessOverlay(): void {
+    this.runSuccessCleanup = showRunSuccessOverlay(
+      this.gameViewport,
+      {
+        roomsCleared: this.runStatRoomsCleared,
+        clutterCollected: this.runStatClutterCollected,
+        money: this.economy.money,
+        timeSec: this.elapsedSec,
+        upgrades: this.runStatUpgradesPicked.map((u) => ({
+          title: u.title,
+        })),
+      },
+      {
+        onContinue: () => {
+          this.runSuccessCleanup?.()
+          this.runSuccessCleanup = null
+          if (this.onRunFailedRetry) {
+            void Promise.resolve(this.onRunFailedRetry()).catch(() => {
+              location.reload()
+            })
+          } else {
+            location.reload()
+          }
+        },
+      },
     )
   }
 
@@ -974,12 +1271,88 @@ export class Game {
     }
   }
 
+  /** Gate intro, boss intro, or post-boss outro — block movement and pickups. */
+  private isInteractionCinematicBlocking(): boolean {
+    return (
+      this.gateCinematicRunning ||
+      this.bossIntroCinematicRunning ||
+      this.bossVictoryOutroRemain !== null
+    )
+  }
+
   private gateCinematicSlowMoActive(): boolean {
     if (!this.gateCinematicRunning) return false
     const e = this.gateCinematicElapsed
     const t0 = GATE_CINE_ZOOM_OUT_SEC
     const t1 = t0 + GATE_CINE_SLOW_MO_SEC
     return e >= t0 && e < t1
+  }
+
+  private bossIntroSlowMoActive(): boolean {
+    if (!this.bossIntroCinematicRunning) return false
+    const e = this.bossIntroCinematicElapsed
+    const t0 = BOSS_CINE_ZOOM_SEC
+    const t1 = t0 + BOSS_CINE_SLOW_SEC
+    return e >= t0 && e < t1
+  }
+
+  private beginBossIntroCinematic(): void {
+    this.bossIntroCinematicRunning = true
+    this.bossIntroCinematicElapsed = 0
+    this.bossCineStartPos.copy(this.camera.position)
+    this.player.getPosition(this.playerPos)
+    const { x, z } = getBossSpawnXZ()
+    this.bossCineBossLook.set(x, 1.28, z)
+
+    let hdx = this.camera.position.x - this.playerPos.x
+    let hdz = this.camera.position.z - this.playerPos.z
+    const hlen = Math.hypot(hdx, hdz) || 1
+    hdx /= hlen
+    hdz /= hlen
+    const pullDist = 3.15
+    this.bossCinePullPos.set(
+      this.camera.position.x + hdx * pullDist,
+      this.camera.position.y + 0.72,
+      this.camera.position.z + hdz * pullDist,
+    )
+  }
+
+  private updateBossIntroCinematic(dt: number): void {
+    this.bossIntroCinematicElapsed += dt
+    const e = this.bossIntroCinematicElapsed
+    const tZoom = BOSS_CINE_ZOOM_SEC
+    const tSlowEnd = tZoom + BOSS_CINE_SLOW_SEC
+    const tEnd = tSlowEnd + BOSS_CINE_RETURN_SEC
+
+    this.player.getPosition(this.playerPos)
+    this.gateCinePlayerLook.set(this.playerPos.x, 1.12, this.playerPos.z)
+    this.cameraRig.getDesiredCameraPosition(this.gateCineRigDesired)
+
+    if (e < tZoom) {
+      const u = easeInOutCubic(Math.min(1, e / tZoom))
+      this.camera.position.lerpVectors(this.bossCineStartPos, this.bossCinePullPos, u)
+      this.bossCineBlendLook.lerpVectors(
+        this.gateCinePlayerLook,
+        this.bossCineBossLook,
+        u,
+      )
+      this.camera.lookAt(this.bossCineBlendLook)
+    } else if (e < tSlowEnd) {
+      this.camera.position.copy(this.bossCinePullPos)
+      this.camera.lookAt(this.bossCineBossLook)
+    } else if (e < tEnd) {
+      const u = easeInOutCubic(Math.min(1, (e - tSlowEnd) / BOSS_CINE_RETURN_SEC))
+      this.camera.position.lerpVectors(this.bossCinePullPos, this.gateCineRigDesired, u)
+      this.bossCineBlendLook.lerpVectors(this.bossCineBossLook, this.gateCinePlayerLook, u)
+      this.camera.lookAt(this.bossCineBlendLook)
+    } else {
+      this.camera.position.copy(this.gateCineRigDesired)
+      this.camera.lookAt(this.gateCinePlayerLook)
+      this.cameraRig.resetOtsLookBlend()
+      this.bossIntroCinematicRunning = false
+      this.bossIntroCinematicElapsed = 0
+      this.bossRoom.startFight()
+    }
   }
 
   private beginGateOpeningCinematic(doorIndex: number): void {
@@ -1097,11 +1470,20 @@ export class Game {
     }
 
     wrap.classList.remove('hud-room-clean--inactive')
-    titleEl.textContent = roomCleanHudLabel(roomId)
-    const pct = this.roomCleanliness.getDisplayPercent(roomId)
-    const rounded = Math.round(pct)
-    pctEl.textContent = `${rounded}%`
-    fill.style.transform = `scaleX(${Math.max(0, Math.min(1, pct / 100))})`
+    let rounded = 0
+    if (roomId === FINAL_NORMAL_ROOM_ID && this.bossRoom.isFightActive()) {
+      titleEl.textContent = this.bossRoom.getBossHudLabel()
+      const pct = this.bossRoom.getBossHudPercent()
+      rounded = Math.round(pct)
+      pctEl.textContent = `${rounded}%`
+      fill.style.transform = `scaleX(${Math.max(0, Math.min(1, pct / 100))})`
+    } else {
+      titleEl.textContent = roomCleanHudLabel(roomId)
+      const pct = this.roomCleanliness.getDisplayPercent(roomId)
+      rounded = Math.round(pct)
+      pctEl.textContent = `${rounded}%`
+      fill.style.transform = `scaleX(${Math.max(0, Math.min(1, pct / 100))})`
+    }
     wrap.querySelector('[role="progressbar"]')?.setAttribute(
       'aria-valuenow',
       String(rounded),
@@ -1136,7 +1518,7 @@ export class Game {
     let dz = sz - pz
     let dist = Math.hypot(dx, dz)
     if (dist < 1e-5) {
-      const ang = Math.random() * Math.PI * 2
+      const ang = this.runRandom() * Math.PI * 2
       dx = Math.cos(ang)
       dz = Math.sin(ang)
       dist = 1
@@ -1156,22 +1538,16 @@ export class Game {
     roomId: ReturnType<RoomSystem['getRoomAt']>,
   ): number {
     if (!roomId || roomId === 'SAFE_CENTER') return 1
-    const m: Record<string, number> = {
-      ROOM_1: 1,
-      ROOM_2: 2,
-      ROOM_3: 3,
-      ROOM_4: 4,
-      ROOM_5: 5,
-    }
-    return m[roomId] ?? 1
+    const m = /^ROOM_(\d+)$/.exec(roomId)
+    return m ? Number(m[1]) : 1
   }
 
   private scatterDroppedItems(items: readonly GameItem[], radius: number): void {
     const px = this.playerPos.x
     const pz = this.playerPos.z
     for (const it of items) {
-      const ang = Math.random() * Math.PI * 2
-      const d = Math.random() * radius
+      const ang = this.runRandom() * Math.PI * 2
+      const d = this.runRandom() * radius
       this.itemWorld.spawnRecoverable(
         it,
         px + Math.cos(ang) * d,
@@ -1228,7 +1604,7 @@ export class Game {
         lost,
       ),
     )
-    const ang = Math.random() * Math.PI * 2
+    const ang = this.runRandom() * Math.PI * 2
     this.player.applyGhostKnockback(
       this.playerPos.x - Math.cos(ang) * 0.02,
       this.playerPos.z - Math.sin(ang) * 0.02,
@@ -1556,6 +1932,10 @@ export class Game {
   }
 
   dispose(): void {
+    this.runFailedCleanup?.()
+    this.runFailedCleanup = null
+    this.runSuccessCleanup?.()
+    this.runSuccessCleanup = null
     cancelAnimationFrame(this.raf)
     if (this.depositShakeTimer) {
       clearTimeout(this.depositShakeTimer)

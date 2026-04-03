@@ -683,6 +683,454 @@ body {
   transform: translateY(2px);
 }
 
+/* Run failed — summary + retry */
+.run-failed-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 210;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  opacity: 0;
+  transform: scale(0.96);
+  transition:
+    opacity 0.38s ease,
+    transform 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.run-failed-overlay--show {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.run-failed-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 88% 72% at 50% 40%,
+    rgba(28, 12, 22, 0.78) 0%,
+    rgba(8, 4, 12, 0.92) 55%,
+    #000 100%
+  );
+  backdrop-filter: blur(3px);
+}
+
+.run-failed-overlay__panel {
+  position: relative;
+  z-index: 1;
+  width: min(94%, 26rem);
+  max-height: min(88vh, 36rem);
+  overflow-y: auto;
+  padding: clamp(1.1rem, 3.5vw, 1.65rem) clamp(1.15rem, 4vw, 1.85rem);
+  border-radius: 14px;
+  background: linear-gradient(
+    165deg,
+    rgba(42, 22, 30, 0.97) 0%,
+    rgba(14, 10, 16, 0.99) 100%
+  );
+  border: 1px solid rgba(255, 100, 120, 0.22);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 22px 52px rgba(0, 0, 0, 0.58),
+    inset 0 1px 0 rgba(255, 200, 210, 0.06);
+}
+
+.run-failed-overlay__title {
+  margin: 0 0 1rem;
+  text-align: center;
+  font: 800 clamp(1.45rem, 5.5vw, 1.85rem) system-ui, sans-serif;
+  letter-spacing: 0.1em;
+  color: #ffc8d0;
+  text-shadow:
+    0 0 20px rgba(255, 80, 100, 0.45),
+    0 2px 0 #4a1018;
+}
+
+.run-failed-overlay__stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 1rem;
+}
+
+.run-failed-overlay__stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  font: 500 0.92rem system-ui, sans-serif;
+}
+
+.run-failed-overlay__stat-label {
+  color: rgba(220, 200, 208, 0.72);
+}
+
+.run-failed-overlay__stat-value {
+  font-weight: 700;
+  color: #f5e8ec;
+  text-align: right;
+}
+
+.run-failed-overlay__upgrades-title {
+  margin: 0.35rem 0 0.4rem;
+  font: 700 0.72rem system-ui, sans-serif;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 180, 195, 0.55);
+}
+
+.run-failed-overlay__upgrades {
+  margin: 0 0 1.1rem;
+  padding-left: 1.1rem;
+  color: rgba(235, 220, 225, 0.88);
+  font: 500 0.88rem/1.45 system-ui, sans-serif;
+}
+
+.run-failed-overlay__upgrade--empty {
+  list-style: none;
+  margin-left: -1.1rem;
+  color: rgba(200, 190, 195, 0.55);
+  font-style: italic;
+}
+
+.run-failed-overlay__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  justify-content: center;
+}
+
+.run-failed-overlay__btn {
+  cursor: pointer;
+  border: none;
+  border-radius: 999px;
+  font: 700 0.88rem system-ui, sans-serif;
+  letter-spacing: 0.1em;
+  padding: 0.65rem 1.5rem;
+  transition:
+    transform 0.12s ease,
+    filter 0.12s ease;
+}
+
+.run-failed-overlay__btn--primary {
+  color: #1a0508;
+  background: linear-gradient(180deg, #ffb0b8 0%, #ff5a6e 45%, #c41e3a 100%);
+  box-shadow:
+    0 4px 0 #5c1018,
+    0 8px 22px rgba(120, 0, 20, 0.42);
+}
+
+.run-failed-overlay__btn--primary:hover {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+}
+
+.run-failed-overlay__btn--primary:active {
+  transform: translateY(2px);
+}
+
+.run-failed-overlay__btn--secondary {
+  color: rgba(245, 230, 235, 0.92);
+  background: rgba(30, 22, 28, 0.95);
+  border: 1px solid rgba(255, 140, 160, 0.35);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.run-failed-overlay__btn--secondary:hover {
+  filter: brightness(1.08);
+}
+
+/* Run complete — final boss survived */
+.run-success-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 210;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+  opacity: 0;
+  transform: scale(0.96);
+  transition:
+    opacity 0.38s ease,
+    transform 0.38s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.run-success-overlay--show {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.run-success-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 88% 72% at 50% 40%,
+    rgba(12, 28, 22, 0.78) 0%,
+    rgba(4, 12, 10, 0.92) 55%,
+    #000 100%
+  );
+  backdrop-filter: blur(3px);
+}
+
+.run-success-overlay__panel {
+  position: relative;
+  z-index: 1;
+  width: min(94%, 26rem);
+  max-height: min(88vh, 36rem);
+  overflow-y: auto;
+  padding: clamp(1.1rem, 3.5vw, 1.65rem) clamp(1.15rem, 4vw, 1.85rem);
+  border-radius: 14px;
+  background: linear-gradient(
+    165deg,
+    rgba(22, 38, 32, 0.97) 0%,
+    rgba(10, 14, 16, 0.99) 100%
+  );
+  border: 1px solid rgba(100, 220, 160, 0.28);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 22px 52px rgba(0, 0, 0, 0.58),
+    inset 0 1px 0 rgba(200, 255, 220, 0.06);
+}
+
+.run-success-overlay__title {
+  margin: 0 0 0.35rem;
+  text-align: center;
+  font: 800 clamp(1.45rem, 5.5vw, 1.85rem) system-ui, sans-serif;
+  letter-spacing: 0.1em;
+  color: #c8ffd8;
+  text-shadow:
+    0 0 20px rgba(80, 220, 140, 0.45),
+    0 2px 0 #103020;
+}
+
+.run-success-overlay__sub {
+  margin: 0 0 1rem;
+  text-align: center;
+  font: 500 0.88rem/1.4 system-ui, sans-serif;
+  color: rgba(200, 230, 210, 0.72);
+}
+
+.run-success-overlay__stats {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin-bottom: 1rem;
+}
+
+.run-success-overlay__stat {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  font: 500 0.92rem system-ui, sans-serif;
+}
+
+.run-success-overlay__stat-label {
+  color: rgba(190, 220, 205, 0.72);
+}
+
+.run-success-overlay__stat-value {
+  font-weight: 700;
+  color: #e8f8ee;
+  text-align: right;
+}
+
+.run-success-overlay__upgrades-title {
+  margin: 0.35rem 0 0.4rem;
+  font: 700 0.72rem system-ui, sans-serif;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(160, 230, 190, 0.55);
+}
+
+.run-success-overlay__upgrades {
+  margin: 0 0 1.1rem;
+  padding-left: 1.1rem;
+  color: rgba(220, 240, 230, 0.88);
+  font: 500 0.88rem/1.45 system-ui, sans-serif;
+}
+
+.run-success-overlay__upgrade--empty {
+  list-style: none;
+  margin-left: -1.1rem;
+  color: rgba(190, 210, 200, 0.55);
+  font-style: italic;
+}
+
+.run-success-overlay__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+  justify-content: center;
+}
+
+.run-success-overlay__btn {
+  cursor: pointer;
+  border: none;
+  border-radius: 999px;
+  font: 700 0.88rem system-ui, sans-serif;
+  letter-spacing: 0.1em;
+  padding: 0.65rem 1.5rem;
+  transition:
+    transform 0.12s ease,
+    filter 0.12s ease;
+}
+
+.run-success-overlay__btn--primary {
+  color: #061208;
+  background: linear-gradient(180deg, #b8ffd0 0%, #44cc88 45%, #1a8860 100%);
+  box-shadow:
+    0 4px 0 #0c3020,
+    0 8px 22px rgba(0, 80, 40, 0.42);
+}
+
+.run-success-overlay__btn--primary:hover {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+}
+
+.run-success-overlay__btn--primary:active {
+  transform: translateY(2px);
+}
+
+/* Room clear — pick 1 of 3 upgrades */
+.room-upgrade-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 150;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.room-upgrade-overlay.hidden {
+  display: none;
+}
+
+.room-upgrade-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 85% 65% at 50% 42%,
+    rgba(10, 18, 32, 0.55) 0%,
+    rgba(4, 6, 14, 0.82) 55%,
+    rgba(0, 0, 0, 0.88) 100%
+  );
+  backdrop-filter: blur(3px);
+}
+
+.room-upgrade-overlay__panel {
+  position: relative;
+  z-index: 1;
+  width: min(96%, 52rem);
+  max-height: min(88vh, 36rem);
+  padding: clamp(1rem, 3.5vw, 1.5rem) clamp(1rem, 3vw, 1.75rem);
+  border-radius: 14px;
+  background: linear-gradient(
+    165deg,
+    rgba(28, 32, 48, 0.96) 0%,
+    rgba(12, 14, 22, 0.98) 100%
+  );
+  border: 1px solid rgba(140, 180, 255, 0.2);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.45),
+    0 20px 48px rgba(0, 0, 0, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.room-upgrade-overlay__title {
+  margin: 0 0 0.35rem;
+  text-align: center;
+  font: 800 clamp(1.25rem, 4.5vw, 1.65rem) system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  color: #dce6ff;
+  text-shadow: 0 2px 12px rgba(80, 120, 255, 0.35);
+}
+
+.room-upgrade-overlay__sub {
+  margin: 0 0 1rem;
+  text-align: center;
+  font: 500 clamp(0.82rem, 2.8vw, 0.95rem) system-ui, sans-serif;
+  color: rgba(200, 210, 230, 0.75);
+}
+
+.room-upgrade-overlay__cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: clamp(0.5rem, 2vw, 0.85rem);
+  align-items: stretch;
+}
+
+@media (max-width: 520px) {
+  .room-upgrade-overlay__cards {
+    grid-template-columns: 1fr;
+    max-height: min(60vh, 22rem);
+    overflow-y: auto;
+    padding-right: 2px;
+  }
+}
+
+.room-upgrade-card {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0.75rem 0.65rem;
+  min-height: 5.5rem;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: #e8ecfa;
+  background: linear-gradient(
+    180deg,
+    rgba(42, 48, 68, 0.95) 0%,
+    rgba(22, 26, 38, 0.98) 100%
+  );
+  border: 1px solid rgba(120, 150, 220, 0.22);
+  border-radius: 10px;
+  box-shadow: 0 2px 0 rgba(0, 0, 0, 0.35);
+  transition:
+    transform 0.14s ease,
+    border-color 0.14s ease,
+    box-shadow 0.14s ease,
+    filter 0.14s ease;
+}
+
+.room-upgrade-card:hover {
+  transform: translateY(-2px);
+  border-color: rgba(160, 200, 255, 0.45);
+  box-shadow:
+    0 4px 0 rgba(0, 0, 0, 0.3),
+    0 0 0 1px rgba(120, 180, 255, 0.25);
+  filter: brightness(1.05);
+}
+
+.room-upgrade-card:focus-visible {
+  outline: 2px solid rgba(120, 190, 255, 0.85);
+  outline-offset: 2px;
+}
+
+.room-upgrade-card:active {
+  transform: translateY(1px);
+  filter: brightness(0.96);
+}
+
+.room-upgrade-card__title {
+  font: 700 clamp(0.88rem, 2.6vw, 1rem) system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  color: #f2f5ff;
+}
+
+.room-upgrade-card__desc {
+  font: 500 clamp(0.72rem, 2.2vw, 0.82rem) system-ui, sans-serif;
+  line-height: 1.35;
+  color: rgba(190, 200, 225, 0.82);
+}
+
 .hud-stat--money {
   margin-left: auto;
   background: linear-gradient(

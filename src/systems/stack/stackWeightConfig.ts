@@ -27,3 +27,24 @@ export function stackWeightDragMultiplier(weight: number): number {
   const t = Math.max(0, Math.min(1, weight))
   return 1 + (STACK_WEIGHT_DRAG_MAX_MULT - 1) * t
 }
+
+/**
+ * Treat stack encumbrance as milder: effective weight = raw × (1 − reliefPerStack × stacks), capped.
+ */
+export function stackWeightSpeedMultiplierRelief(
+  weight: number,
+  reliefStacks: number,
+): number {
+  const relief = Math.min(0.42, Math.max(0, reliefStacks) * 0.075)
+  const t = Math.max(0, Math.min(1, weight * (1 - relief)))
+  return stackWeightSpeedMultiplier(t)
+}
+
+export function stackWeightDragMultiplierRelief(
+  weight: number,
+  reliefStacks: number,
+): number {
+  const relief = Math.min(0.35, Math.max(0, reliefStacks) * 0.055)
+  const t = Math.max(0, Math.min(1, weight * (1 - relief)))
+  return stackWeightDragMultiplier(t)
+}

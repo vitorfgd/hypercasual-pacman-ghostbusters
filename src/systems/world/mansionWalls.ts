@@ -5,15 +5,19 @@ import {
   MANSION_OUTER_WALL_THICKNESS,
   ROOM_HALF,
 } from './mansionGeometry.ts'
-import { roomNorthZ, roomSouthZ } from './mansionRoomData.ts'
+import {
+  NORMAL_ROOM_COUNT,
+  roomNorthZ,
+  roomSouthZ,
+} from './mansionRoomData.ts'
 
 const S = ROOM_HALF
 const C = CORRIDOR_DEPTH
 const D = DOOR_HALF
 const t = MANSION_OUTER_WALL_THICKNESS
 
-/** South interior edge of ROOM_5 (deepest room, most negative Z). */
-const Z_BOTTOM = roomSouthZ(5)
+/** South interior edge of deepest room (most negative Z). */
+const Z_BOTTOM = roomSouthZ(NORMAL_ROOM_COUNT)
 
 function hGap(
   minX: number,
@@ -72,7 +76,7 @@ export function buildMansionWallColliders(): AabbXZ[] {
   boxes.push(...hGap(-S - t, S + t, r1North - t, r1North, -D, D))
 
   // Between rooms: south face of ROOM_k, threshold, north face of ROOM_{k+1}
-  for (let k = 1; k <= 4; k++) {
+  for (let k = 1; k < NORMAL_ROOM_COUNT; k++) {
     const southZk = roomSouthZ(k)
     const northNext = roomNorthZ(k + 1)
     boxes.push(...hGap(-S - t, S + t, southZk - t, southZk, -D, D))

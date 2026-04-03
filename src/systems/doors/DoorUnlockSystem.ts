@@ -36,7 +36,7 @@ const OPEN_TOTAL_SEC =
   GATE_OPEN_DELAY_SEC + GATE_ANTICIPATION_SEC + GATE_SINK_DURATION_SEC
 
 /**
- * North-chain gates: hub passage starts open; doors 1…4 sink when their room hits 100% cleanliness.
+ * North-chain gates: hub passage starts open; doors 1…N−1 sink when that room hits 100% cleanliness.
  */
 export class DoorUnlockSystem {
   private readonly worldCollision: WorldCollision
@@ -66,6 +66,10 @@ export class DoorUnlockSystem {
     { length: DOOR_COUNT },
     () => null,
   )
+  /**
+   * Extra solid collider while passage stays “open” for access checks — e.g. boss seals return path.
+   */
+  private readonly bossTrapDoorIndices = new Set<number>()
 
   constructor(opts: DoorUnlockSystemOptions) {
     this.worldCollision = opts.worldCollision
@@ -88,6 +92,30 @@ export class DoorUnlockSystem {
       doorIndex < DOOR_COUNT &&
       this.passageOpen[doorIndex] === true
     )
+  }
+
+  /**
+   * Block walking back through `doorIndex` without changing unlock state (room stays accessible for HUD/spawns).
+   * Shows the gate mesh closed at floor level.
+   */
+  setBossDoorTrap(doorIndex: number, active: boolean): void {
+    if (doorIndex < 0 || doorIndex >= DOOR_COUNT) return
+    if (active) {
+      this.bossTrapDoorIndices.add(doorIndex)
+      const root = this.gateRoots[doorIndex]
+      if (root) {
+        root.visible = true
+        const content = this.gateContents[doorIndex]
+        if (content) content.position.set(0, 0, 0)
+      }
+    } else {
+      this.bossTrapDoorIndices.delete(doorIndex)
+      if (this.passageOpen[doorIndex]) {
+        const root = this.gateRoots[doorIndex]
+        if (root) root.visible = false
+      }
+    }
+    this.syncColliders()
   }
 
   canAccessRoomForSpawning(roomId: RoomId): boolean {
@@ -243,7 +271,8 @@ export class DoorUnlockSystem {
     const hw = DOOR_HALF + 0.04
 
     for (let i = 0; i < DOOR_COUNT; i++) {
-      if (this.passageOpen[i] === true) continue
+      if (this.passageOpen[i] === true && !this.bossTrapDoorIndices.has(i))
+        continue
       const zc = getDoorBlockerZ(i)
       extra.push({
         minX: -hw,

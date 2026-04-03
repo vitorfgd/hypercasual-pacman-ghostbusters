@@ -1,8 +1,13 @@
 import { ROOM_HALF } from '../world/mansionGeometry.ts'
-import { roomNorthZ, roomSouthZ } from '../world/mansionRoomData.ts'
+import {
+  NORMAL_ROOM_COUNT,
+  roomNorthZ,
+  roomSouthZ,
+} from '../world/mansionRoomData.ts'
 import type { RoomId } from '../world/mansionRoomData.ts'
 
-export const DOOR_COUNT = 5
+/** Hub passage + one gate per threshold toward the next room (matches `CORRIDOR_BOUNDS.length`). */
+export const DOOR_COUNT = NORMAL_ROOM_COUNT
 
 const S = ROOM_HALF
 

@@ -1,6 +1,14 @@
 import type { Game } from '../../core/Game.ts'
 
-export async function mountGame(host: HTMLElement): Promise<Game> {
+export type MountGameOptions = {
+  /** Called when the player chooses Retry on the run-failed screen (dispose + remount from host). */
+  onRunFailedRetry?: () => void | Promise<void>
+}
+
+export async function mountGame(
+  host: HTMLElement,
+  options?: MountGameOptions,
+): Promise<Game> {
   const gameModPromise = import('../../core/Game.ts')
   const ghostCfgPromise = import('../ghost/ghostConfig.ts')
   const ghostLoadPromise = import('../ghost/ghostGltfAsset.ts')
@@ -77,5 +85,6 @@ export async function mountGame(host: HTMLElement): Promise<Game> {
     host,
     ghostLoaded.ok ? ghostLoaded.template : null,
     playerLoaded.ok ? playerLoaded.template : null,
+    options?.onRunFailedRetry,
   )
 }
