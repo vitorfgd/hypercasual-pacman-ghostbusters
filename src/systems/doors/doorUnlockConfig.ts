@@ -3,15 +3,20 @@
  * Contact in the push band triggers one smooth eased open. Values below tune timing & collision.
  */
 
+import { GRID_ROOM_INSET, ROOM_GRID_ROWS } from '../grid/gridConfig.ts'
+import { ROOM_HALF } from '../world/mansionGeometry.ts'
+
 /** Fallback procedural door panel height when GLB is missing. */
 export const GATE_PANEL_HEIGHT = 2.4
 
 /**
  * Applied to the loaded double-door GLB root only (walkable gap & door AABBs use `DOOR_HALF`).
- * Slightly >1 lets the mesh read larger and overlap wall trim.
+ * >1 lets the mesh overlap wall trim slightly (wider read).
  */
-export const DOUBLE_DOOR_VISUAL_SCALE_XZ = 1.3
-export const DOUBLE_DOOR_VISUAL_SCALE_Y = 1.1
+export const DOUBLE_DOOR_VISUAL_SCALE_XZ = 1.48
+export const DOUBLE_DOOR_VISUAL_SCALE_Y = 1.14
+/** Procedural fallback leaves scale vs this prior XZ scale. */
+export const DOUBLE_DOOR_VISUAL_BASELINE_XZ = 1.3
 
 /**
  * Nudges the GLB toward the next room (−Z) so the panel sits deeper in the jamb.
@@ -69,9 +74,10 @@ export const DOOR_LIGHT_PUSH_VEL_THRESHOLD = 0.14
 /** Max swing angle (radians) when open amount = 1. */
 export const DOOR_MAX_SWING_RAD = 1.12
 
-/** One-shot open: brief hold, then full swing over this duration (ease-out cubic). */
-export const DOOR_AUTO_OPEN_ANTICIPATE_SEC = 0.05
-export const DOOR_AUTO_OPEN_DURATION_SEC = 0.52
+/** One-shot open: optional hold, then full swing over this duration (ease-out cubic). */
+export const DOOR_AUTO_OPEN_ANTICIPATE_SEC = 0
+/** One-shot open swing duration — also sets how fast room blackout fades with reveal. */
+export const DOOR_AUTO_OPEN_DURATION_SEC = 1.6
 
 /**
  * Normalized swing (0…1) at which passage counts as clear for spawns, clutter, and collision gap.
@@ -106,6 +112,19 @@ export const ROOM_CLEAR_INTRO_GHOST_FADE_SEC =
 export const ROOM_CLEAR_DOOR_CINE_APPROACH_SEC = 1.05
 export const ROOM_CLEAR_DOOR_CINE_HOLD_SEC = 1.05
 export const ROOM_CLEAR_DOOR_CINE_RETURN_SEC = 0.55
+
+/** ~One grid step (room interior) — prefetch open when facing door from this far out. */
+export const DOOR_APPROACH_CELL_WORLD =
+  (2 * ROOM_HALF - 2 * GRID_ROOM_INSET) / ROOM_GRID_ROWS
+
+/** How close to “exactly one cell” counts (world Z). */
+export const DOOR_APPROACH_ONE_CELL_BAND = 0.38
+
+/** Must be looking toward the doorway (unit forward · toward-door). */
+export const DOOR_PREFETCH_FACE_DOT_MIN = 0.86
+
+/** Stay near center line when prefetching (world X). */
+export const DOOR_PREFETCH_MAX_ABS_X = 1.85
 
 /** Half-width (X) and depth (Z) — player enters this band to trigger one-shot open. */
 export const DOOR_PUSH_ZONE_HALF_X = 1.05

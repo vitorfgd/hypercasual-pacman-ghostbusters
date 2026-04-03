@@ -4,7 +4,7 @@
 
 export type RunSuccessStats = {
   roomsCleared: number
-  clutterCollected: number
+  wispsCollected: number
   timeSec: number
   upgrades: readonly { title: string }[]
 }
@@ -61,7 +61,7 @@ export function showRunSuccessOverlay(
   }
 
   row('Rooms cleared', String(stats.roomsCleared))
-  row('Clutter collected', String(stats.clutterCollected))
+  row('Wisps collected', String(stats.wispsCollected))
   row('Time', formatTime(stats.timeSec))
 
   const upTitle = document.createElement('div')

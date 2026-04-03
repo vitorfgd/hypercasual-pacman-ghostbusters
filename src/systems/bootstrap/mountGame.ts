@@ -17,11 +17,13 @@ export async function mountGame(
   const [
     { loadWispPickupGltf, WISP_GLTF_URL },
     { loadRelicGltfs, RELIC_GLTF_URLS },
-    { loadClutterGltfs, CLUTTER_GLTF_URLS },
+    { loadGridWispGltf, GRID_WISP_GLTF_URL },
+    { loadGridTrapGltf, GRID_TRAP_GLTF_URL },
   ] = await Promise.all([
     import('../wisp/wispGltfAsset.ts'),
     import('../relic/relicGltfAsset.ts'),
-    import('../clutter/clutterGltfAsset.ts'),
+    import('../grid/gridWispGltfAsset.ts'),
+    import('../grid/gridTrapGltfAsset.ts'),
   ])
 
   const [
@@ -40,11 +42,12 @@ export async function mountGame(
     m.loadGateGltf(),
   )
 
-  /** Wisp / relic / clutter must finish before `Game` — prefilled clutter reads GLB prototypes at spawn. */
+  /** Pickup + grid prototypes load before `Game` so spawns clone GLBs immediately. */
   const pickupLoadsPromise = Promise.all([
     loadWispPickupGltf(WISP_GLTF_URL),
     loadRelicGltfs(RELIC_GLTF_URLS),
-    loadClutterGltfs(CLUTTER_GLTF_URLS),
+    loadGridWispGltf(GRID_WISP_GLTF_URL),
+    loadGridTrapGltf(GRID_TRAP_GLTF_URL),
   ])
 
   const [ghostLoaded, playerLoaded, bagLoaded, _gateLoaded] = await Promise.all([

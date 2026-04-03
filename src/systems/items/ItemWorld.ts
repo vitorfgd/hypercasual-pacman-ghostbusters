@@ -8,12 +8,13 @@ import {
   type Scene,
 } from 'three'
 import type { DoorUnlockSystem } from '../doors/DoorUnlockSystem.ts'
+import type { RoomSystem } from '../world/RoomSystem.ts'
 import { computeClutterRevealOpacity } from '../clutter/clutterRevealOpacity.ts'
-import type { Vector3 } from 'three'
 import type { GameItem } from '../../core/types/GameItem.ts'
 import { isWorldPickupInteractable } from './pickupWorldState.ts'
 import { disposeClutterGltfClone } from '../clutter/clutterGltfAsset.ts'
 import { disposeRelicGltfClone } from '../relic/relicGltfAsset.ts'
+import { disposeGridWispClone } from '../grid/gridWispGltfAsset.ts'
 import { disposeWispGltfClone } from '../wisp/wispGltfAsset.ts'
 import { createPickupMesh } from './ItemVisuals.ts'
 import {
@@ -64,6 +65,12 @@ function cloneMaterialsForClutterFade(root: Object3D): void {
 }
 
 function applyClutterRevealOpacity(root: Object3D, alpha: number): void {
+  const prevAlpha = root.userData.clutterRevealAlpha as number | undefined
+  if (prevAlpha !== undefined && Math.abs(prevAlpha - alpha) <= 1e-4) {
+    return
+  }
+  root.userData.clutterRevealAlpha = alpha
+
   if (alpha <= CLUTTER_FADE_EPS) {
     root.visible = false
     return
@@ -173,9 +180,19 @@ export class ItemWorld {
     const y = mesh.position.y
     mesh.position.set(x, y, z)
     const show = opts?.visible !== false
+    if (
+      (item.type === 'wisp' || item.type === 'power_pellet') &&
+      item.spawnRoomId
+    ) {
+      mesh.userData.gridWispSpawnRoomId = item.spawnRoomId
+    }
     if (item.type === 'clutter') {
       mesh.userData.clutterSpawnRoomId = item.spawnRoomId
       mesh.userData.clutterWorldInteractable = show
+      if (!mesh.userData.clutterFadeMaterialsOwned) {
+        cloneMaterialsForClutterFade(mesh)
+        mesh.userData.clutterFadeMaterialsOwned = true
+      }
       mesh.rotation.y = Math.random() * Math.PI * 2
       const base = (mesh.userData.clutterBaseScale as number | undefined) ?? 1
       const mul = 0.8 + Math.random() * 0.4
@@ -184,7 +201,7 @@ export class ItemWorld {
     mesh.visible = show
     attachPickupIdleMotion(
       mesh,
-      item.type === 'wisp' ? 'wisp' : 'pellet',
+      item.type === 'wisp' || item.type === 'power_pellet' ? 'wisp' : 'pellet',
     )
     this.pickupGroup.add(mesh)
     this.byId.set(item.id, { mesh, item })
@@ -232,37 +249,6 @@ export class ItemWorld {
       if (item.type === 'relic') return true
     }
     return false
-  }
-
-  applyMagnetPull(
-    playerXZ: Vector3,
-    collectRadius: number,
-    magnetExtra: number,
-    pullSpeed: number,
-    dt: number,
-    opts?: { recoverPullMul?: number },
-  ): void {
-    const recoverMul = opts?.recoverPullMul ?? 1
-    const innerR = collectRadius
-    const outerR = collectRadius + magnetExtra
-    const outerR2 = outerR * outerR
-    const innerR2 = innerR * innerR
-    for (const [, { mesh, item, recover }] of this.byId) {
-      if (!isWorldPickupInteractable(mesh, item)) continue
-      if (recover && !recover.landed) continue
-      const dx = playerXZ.x - mesh.position.x
-      const dz = playerXZ.z - mesh.position.z
-      const d2 = dx * dx + dz * dz
-      if (d2 <= innerR2 || d2 > outerR2) continue
-      const d = Math.sqrt(d2) || 1e-6
-      const nx = dx / d
-      const nz = dz / d
-      const t = Math.min(1, (Math.sqrt(d2) - innerR) / magnetExtra)
-      const mul = recover && recover.landed ? recoverMul : 1
-      const step = pullSpeed * dt * (0.35 + 0.65 * t * t) * mul
-      mesh.position.x += nx * step
-      mesh.position.z += nz * step
-    }
   }
 
   detachPickupForCollect(id: string): void {
@@ -329,6 +315,19 @@ export class ItemWorld {
       const alpha = computeClutterRevealOpacity(item.spawnRoomId, doorUnlock)
       applyClutterRevealOpacity(mesh, alpha)
       mesh.userData.clutterWorldInteractable = alpha >= 1 - CLUTTER_FADE_EPS
+    }
+  }
+
+  /** Locked rooms: hide grid wisps until southern doors grant access (no fade — instant show). */
+  updateGridWispRoomVisibility(roomSystem: RoomSystem): void {
+    for (const [, { mesh, item }] of this.byId) {
+      if (
+        (item.type !== 'wisp' && item.type !== 'power_pellet') ||
+        !item.spawnRoomId
+      ) {
+        continue
+      }
+      mesh.visible = roomSystem.isRoomAccessibleForGameplay(item.spawnRoomId)
     }
   }
 
@@ -452,6 +451,25 @@ export class ItemWorld {
           const pulse = 0.93 + 0.07 * Math.sin(timeSec * 4.2 + phase)
           gem.scale.setScalar(pulse)
         }
+      } else if (item.type === 'power_pellet') {
+        const body = mesh.userData.powerPelletCore as Mesh | undefined
+        const ring = mesh.userData.powerPelletRing as Mesh | undefined
+        const ph = timeSec * 5.2
+        if (body) {
+          const pulse = 0.94 + 0.06 * Math.sin(ph)
+          body.scale.setScalar(pulse)
+          const bm = body.material
+          if (bm && !Array.isArray(bm) && 'emissiveIntensity' in bm) {
+            bm.emissiveIntensity = 1.65 + 0.35 * (0.5 + 0.5 * Math.sin(ph * 1.3))
+          }
+        }
+        if (ring) {
+          ring.rotation.z += dt * 2.4
+          const rm = ring.material
+          if (rm && !Array.isArray(rm) && 'emissiveIntensity' in rm) {
+            rm.emissiveIntensity = 1.05 + 0.25 * (0.5 + 0.5 * Math.sin(ph * 0.9))
+          }
+        }
       } else if (item.type === 'relic') {
         if (mesh.userData.relicGltf === true) {
           const baseScale = (mesh.userData.relicBaseScale as number | undefined) ?? 1
@@ -483,6 +501,10 @@ export class ItemWorld {
   }
 
   private disposeMesh(root: Object3D): void {
+    if (root.userData.gridWispGltf === true) {
+      disposeGridWispClone(root)
+      return
+    }
     if (root.userData.wispGltf === true) {
       disposeWispGltfClone(root)
       return
@@ -551,6 +573,9 @@ export class ItemWorld {
   }
 
   private tryPoolMesh(root: Object3D): boolean {
+    if (root.userData.gridWispGltf === true) {
+      return false
+    }
     if (root.userData.wispGltf === true || root.userData.wispBody) {
       root.removeFromParent()
       root.visible = false

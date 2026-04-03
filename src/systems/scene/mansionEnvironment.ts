@@ -13,7 +13,6 @@ import {
   ROOMS,
   type RoomId,
 } from '../world/mansionRoomData.ts'
-import { addCemeteryGroundDecor } from './groundDecor.ts'
 
 const WALL_HEIGHT = 2.35
 const WALL_Y = WALL_HEIGHT * 0.5
@@ -137,9 +136,8 @@ const ROOM_ORDER: RoomId[] = ['SAFE_CENTER', ...NORMAL_ROOM_IDS]
 
 /**
  * Mansion floor (one mesh per room; unified floor material) + wall meshes aligned with `MANSION_WALL_COLLIDERS`.
- * @param runSeed XOR-mixed into procedural ground decor (rocks) per session.
  */
-export function createMansionGround(runSeed = 0): Group {
+export function createMansionGround(): Group {
   const root = new Group()
   root.name = 'mansionGround'
 
@@ -153,7 +151,6 @@ export function createMansionGround(runSeed = 0): Group {
 
   addWallMeshes(root)
   addEdgeVignette(root)
-  addCemeteryGroundDecor(root, runSeed)
 
   return root
 }

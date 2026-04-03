@@ -1,7 +1,17 @@
 /**
- * Carry encumbrance ∈ [0, 1]: `count / maxCapacity` (0 if no capacity).
- * Safe for UI and movement tuning.
+ * Encumbrance approaches 1 as the player carries more items — **not** tied to a hard capacity cap.
  */
+export const STACK_ENCUMBRANCE_REFERENCE_ITEMS = 28
+
+export function computeCarryEncumbranceWeight(count: number): number {
+  const n = Math.max(0, count)
+  return Math.max(
+    0,
+    Math.min(1, n / Math.max(1, STACK_ENCUMBRANCE_REFERENCE_ITEMS)),
+  )
+}
+
+/** @deprecated Prefer `computeCarryEncumbranceWeight` — no fixed stack cap. */
 export function computeStackWeight(count: number, maxCapacity: number): number {
   if (maxCapacity <= 0) return 0
   return Math.max(0, Math.min(1, count / maxCapacity))

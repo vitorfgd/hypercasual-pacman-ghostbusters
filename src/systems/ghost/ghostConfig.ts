@@ -13,6 +13,10 @@ import {
 export {
   GHOST_CHASE_SPEED,
   GHOST_FRIGHT_SPEED,
+  GHOST_GRID_CHASE_SPEED,
+  GHOST_GRID_FRIGHT_SPEED,
+  GHOST_GRID_HUNT_SPEED,
+  GHOST_GRID_WANDER_SPEED,
   GHOST_HUNT_SPEED,
   GHOST_WANDER_SPEED,
 } from '../gameplaySpeed.ts'
@@ -71,18 +75,18 @@ export const GHOST_VISION_CONE_COLOR = 0x55eecc
 /** Arc smoothness. */
 export const GHOST_VISION_CONE_SEGMENTS = 40
 
-/** Steering: chase / fright — snappier pursuit */
-export const GHOST_STEERING_ACCEL_CHASE = 18
+/** Steering: chase / fright — moderated so speed ramp + direction read cleanly */
+export const GHOST_STEERING_ACCEL_CHASE = 11
 
 /** Steering: wander — softer, less twitchy */
-export const GHOST_STEERING_ACCEL_WANDER = 9.2
+export const GHOST_STEERING_ACCEL_WANDER = 8.2
 
 /** Steering: frightened flee */
 export const GHOST_STEERING_ACCEL_FRIGHT = 12
 
 /** Lerp speed for desired direction (higher = snappier turns) */
 export const GHOST_DIRECTION_SMOOTH_WANDER = 4.2
-export const GHOST_DIRECTION_SMOOTH_CHASE = 15
+export const GHOST_DIRECTION_SMOOTH_CHASE = 9.5
 export const GHOST_DIRECTION_SMOOTH_FRIGHT = 4.8
 
 /** Yaw lerp (rad/s scale in exp) — face smoothed intent, not raw velocity (avoids spin on wall slides). */
@@ -92,6 +96,16 @@ export const GHOST_FACING_TURN_FRIGHT = 10
 /** Seconds between new random wander headings (calmer = longer) */
 export const GHOST_WANDER_TURN_MIN = 1.05
 export const GHOST_WANDER_TURN_MAX = 2.85
+
+/**
+ * Chase peak speed ramps from wander-equivalent (0) to full chase/hunt (1).
+ * Keeps chase readable — no instant snap to max speed.
+ */
+export const GHOST_CHASE_RAMP_UP_SEC = 0.62
+export const GHOST_CHASE_RAMP_DOWN_SEC = 0.32
+
+/** After spotting the player, brief wander-only grid before chase AI/speed ramp (seconds). */
+export const GHOST_CHASE_WINDUP_SEC = 0.38
 
 export type GhostSpawnRole = 'normal' | 'boss' | 'minion'
 
@@ -140,10 +154,36 @@ export function randomSpawnChaseGraceSec(): number {
  * Chance that collecting **haunted** clutter spawns a ghost (relic logic is unchanged).
  * Tuned with `clutterPrefill` haunted density so extra spawns stay noticeable but not spammy.
  */
-export const HAUNTED_PICKUP_GHOST_CHANCE = 0.52
+export const HAUNTED_PICKUP_GHOST_CHANCE = 0.38
+
+/**
+ * Per grid-wisp pickup: spawn chance ramps from min (early in room) to max (few wisps left).
+ * `wispsCollectedInRoomAfterThisPickup / totalWispsInRoom` drives the blend.
+ */
+export const WISP_COLLECT_GHOST_CHANCE_MIN = 0.028
+export const WISP_COLLECT_GHOST_CHANCE_MAX = 0.18
+
+/** Min world distance from player for random grid spawn (fallback picks farther cells if cramped). */
+export const WISP_GHOST_SPAWN_MIN_PLAYER_DIST = 1.85
+
+export function wispCollectGhostSpawnProbability(
+  wispsCollectedInRoomAfterThisPickup: number,
+  totalWispsInRoom: number,
+  hauntedChanceBonus: number,
+): number {
+  if (totalWispsInRoom <= 0) return 0
+  const t = Math.min(
+    1,
+    Math.max(0, wispsCollectedInRoomAfterThisPickup / totalWispsInRoom),
+  )
+  const p =
+    WISP_COLLECT_GHOST_CHANCE_MIN +
+    t * (WISP_COLLECT_GHOST_CHANCE_MAX - WISP_COLLECT_GHOST_CHANCE_MIN)
+  return Math.min(0.94, p + hauntedChanceBonus)
+}
 
 /** Stop spawning new ghosts from haunted pickups once this many are active (chase/wander). */
-export const MAX_ACTIVE_GHOSTS = 14
+export const MAX_ACTIVE_GHOSTS = 9
 
 /** Mesh scale multiplier at first vs last chain room (applied on top of `GHOST_VISUAL_SCALE`). */
 const GHOST_ROOM_VISUAL_SCALE_MIN = 0.82
@@ -151,7 +191,7 @@ const GHOST_ROOM_VISUAL_SCALE_MAX = 1.18
 
 /** Speed multiplier at first vs last chain room (wander / chase / fright). */
 const GHOST_ROOM_SPEED_MUL_MIN = 0.88
-const GHOST_ROOM_SPEED_MUL_MAX = 1.28
+const GHOST_ROOM_SPEED_MUL_MAX = 1.06
 
 const ROOM_CHAIN_DEPTH = Math.max(1, NORMAL_ROOM_COUNT - 1)
 
@@ -336,9 +376,6 @@ export const GHOST_HIT_BURST_MAX_PARTICLES = 14
 
 /** Stronger burst cap when ghost lands a hit (visual juice). */
 export const GHOST_HIT_BURST_MAX_PARTICLES_INTENSE = 34
-
-/** After a hit, vacuum (magnet pull) is disabled for this many seconds. */
-export const GHOST_HIT_VACUUM_DISABLE_SEC = 0.42
 
 /** Ghost-hit scatter: min ring radius (world units) from player */
 export const GHOST_HIT_SCATTER_R_MIN = 0.45

@@ -12,6 +12,7 @@ export type JuiceSoundId =
   | 'ghost_hit'
   | 'ghost_pulse'
   | 'ghost_eat'
+  | 'power_pickup'
   | 'relic_spawn'
   | 'relic_collect'
 
@@ -50,6 +51,8 @@ function baseFrequencyHz(id: JuiceSoundId): number {
       return 340
     case 'ghost_eat':
       return 260
+    case 'power_pickup':
+      return 380
     case 'relic_spawn':
       return 480
     case 'relic_collect':
@@ -75,7 +78,8 @@ export function playJuiceSound(
   const pitch = opts?.pitch ?? 1
   const freq = Math.min(4800, Math.max(60, baseFrequencyHz(id) * pitch))
   const t0 = ctx.currentTime
-  const dur = id === 'ghost_pulse' ? 0.06 : 0.045
+  const dur =
+    id === 'ghost_pulse' ? 0.06 : id === 'power_pickup' ? 0.11 : 0.045
 
   const osc = ctx.createOscillator()
   const gain = ctx.createGain()

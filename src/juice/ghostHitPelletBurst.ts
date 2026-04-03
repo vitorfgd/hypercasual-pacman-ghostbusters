@@ -34,6 +34,9 @@ function createBurstFleckMesh(item: GameItem): Mesh {
   if (item.type === 'wisp') {
     color = new Color().setHSL(item.hue, 0.75, 0.56)
     emissive = color.clone()
+  } else if (item.type === 'power_pellet') {
+    color = new Color(0x66eeff)
+    emissive = new Color(0x44ccff)
   } else if (item.type === 'gem') {
     if (item.gemColor === 'red') {
       color = new Color(0xff4466)

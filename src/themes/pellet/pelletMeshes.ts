@@ -29,6 +29,7 @@ import {
   RELIC_STACK_TARGET_MAX_DIM,
   type RelicVariantIndex,
 } from '../../systems/relic/relicGltfAsset.ts'
+import { cloneGridWispPickup } from '../../systems/grid/gridWispGltfAsset.ts'
 import {
   cloneWispPickupFromGltf,
   getWispPickupPrototype,
@@ -121,7 +122,66 @@ export function createRelicPickupMesh(
   return createProceduralRelicPickupMesh(hue)
 }
 
+/** Large glowing pickup — distinct from wisps; reads clearly on the grid floor. */
+export function createPowerPelletPickupMesh(): Group {
+  const root = new Group()
+  root.name = 'powerPelletPickup'
+  root.userData.powerPelletPickup = true
+  const core = new Color().setHSL(0.52, 0.95, 0.58)
+  const em = new Color().setHSL(0.48, 1, 0.62)
+  const r = SOUL_BODY_R * 2.1
+  const body = new Mesh(
+    new SphereGeometry(r * 0.85, 18, 16),
+    new MeshStandardMaterial({
+      color: core,
+      emissive: em,
+      emissiveIntensity: 1.85,
+      roughness: 0.14,
+      metalness: 0.08,
+    }),
+  )
+  body.position.y = r * 0.9
+  root.add(body)
+
+  const ring = new Mesh(
+    new TorusGeometry(r * 1.05, r * 0.14, 10, 28),
+    new MeshStandardMaterial({
+      color: core,
+      emissive: em,
+      emissiveIntensity: 1.2,
+      roughness: 0.2,
+      metalness: 0.15,
+    }),
+  )
+  ring.rotation.x = Math.PI / 2
+  ring.position.y = r * 0.9
+  root.add(ring)
+
+  const aura = new Mesh(
+    new SphereGeometry(r * 1.65, 14, 12),
+    new MeshStandardMaterial({
+      color: new Color(0x88eeff),
+      emissive: new Color(0x44ccff),
+      emissiveIntensity: 0.45,
+      transparent: true,
+      opacity: 0.22,
+      roughness: 1,
+      depthWrite: false,
+    }),
+  )
+  aura.position.y = r * 0.9
+  root.add(aura)
+
+  root.userData.powerPelletCore = body
+  root.userData.powerPelletRing = ring
+  return root
+}
+
 export function createWispPickupMesh(hue: number): Group {
+  const grid = cloneGridWispPickup()
+  if (grid) {
+    return grid
+  }
   if (getWispPickupPrototype()) {
     return cloneWispPickupFromGltf(hue)
   }
@@ -552,6 +612,9 @@ export function createPelletStackMesh(item: GameItem): Object3D {
   }
   if (item.type === 'clutter') {
     return createClutterStackMesh(item.clutterVariant)
+  }
+  if (item.type === 'power_pellet') {
+    return createWispStackMesh(0.52)
   }
   return createWispStackMesh(item.hue)
 }

@@ -17,16 +17,19 @@ import {
 /** Every normal room stays blacked out until the previous double door swings open. */
 const COVER_ROOMS: RoomId[] = [...NORMAL_ROOM_IDS]
 
-/** Subtle ease for opacity (smoothstep). */
-function easeOpacityFade(t: number): number {
+/** Ease-in cubic: slow at first — room stays dark longer, then brightens for a gradual reveal. */
+function easeInCubic(t: number): number {
   const u = Math.max(0, Math.min(1, t))
-  return u * u * (3 - 2 * u)
+  return u * u * u
 }
 
-/** Blackout fades 1→0 as the revealing door swings 0→1 (see `DoorUnlockSystem.getDoorSwingOpen01`). */
-function coverOpacityFromDoorSwing(swing01: number): number {
-  const u = Math.max(0, Math.min(1, swing01))
-  return 1 - easeOpacityFade(u)
+/**
+ * Blackout opacity 1→0 tracks full door-open sequence time (not raw swing), so the fade
+ * begins when the door starts opening and eases in slowly.
+ */
+function coverOpacityFromRevealProgress(reveal01: number): number {
+  const u = Math.max(0, Math.min(1, reveal01))
+  return 1 - easeInCubic(u)
 }
 
 /**
@@ -54,12 +57,12 @@ export class RoomLockCoverSystem {
       const cx = (b.minX + b.maxX) * 0.5
       const cz = (b.minZ + b.maxZ) * 0.5
 
-      // `transparent: true` with full opacity still uses the transparent render queue and
-      // can sort after opaque geometry (doors), painting black over door faces. Only enable
-      // transparency while the shell is actually fading.
+      // Must use transparent: true from frame 0 — with opaque materials Three.js ignores
+      // opacity, so the fade would snap from solid black the first frame opacity < 1 applies.
       const mat = new MeshBasicMaterial({
-        color: 0x000000,
-        transparent: false,
+        // Dark purple (temporary — was 0x000000 black) for fade testing visibility
+        color: 0x1a0a22,
+        transparent: true,
         opacity: 1,
         depthWrite: true,
         depthTest: true,
@@ -81,13 +84,13 @@ export class RoomLockCoverSystem {
       if (idx === null || idx < 1) continue
 
       const doorIndex = idx - 1
-      const swing = this.doorUnlock.getDoorSwingOpen01(doorIndex)
+      const reveal = this.doorUnlock.getDoorRevealProgress01(doorIndex)
       const mat = mesh.material as MeshBasicMaterial
 
-      const op = coverOpacityFromDoorSwing(swing)
+      const op = coverOpacityFromRevealProgress(reveal)
       mat.opacity = op
-      mat.transparent = op < 0.999
-      mesh.visible = op > 0.004
+      mat.depthWrite = op > 0.02
+      mesh.visible = op > 1e-6
     }
   }
 

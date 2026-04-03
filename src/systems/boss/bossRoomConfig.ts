@@ -26,7 +26,7 @@ export const BOSS_COLOR_HEX = 0x9933ff
 export const BOSS_MINION_COLOR_HEX = 0xff5599
 
 /** Slow approach — still threatening in a small room. */
-export const BOSS_SEEK_SPEED = 2.4
+export const BOSS_SEEK_SPEED = 2.11
 
 export const BOSS_EXTRA_VISUAL_MUL = 1.68
 export const BOSS_MINION_VISUAL_MUL = 0.5

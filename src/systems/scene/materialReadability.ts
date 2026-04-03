@@ -18,6 +18,8 @@ export function meshIsFromLoadedGltf(mesh: Mesh): boolean {
     const u = o.userData as Record<string, unknown>
     if (
       u.clutterGltf === true ||
+      u.gridWispGltf === true ||
+      u.gridTrapGltf === true ||
       u.wispGltf === true ||
       u.relicGltf === true ||
       u.carryBagGltf === true ||

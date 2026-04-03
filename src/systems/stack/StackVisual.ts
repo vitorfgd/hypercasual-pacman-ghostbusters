@@ -43,6 +43,7 @@ export class StackVisual {
   private hitReact = 0
   private targetFill = 0
   private displayFill = 0
+  private prevCleaning01 = -1
   private readonly curMul = new Vector3(1, 1, 1)
   private readonly tgtMul = new Vector3(1, 1, 1)
   private readonly worldPos = new Vector3()
@@ -68,7 +69,11 @@ export class StackVisual {
     this.hitReact = 1
   }
 
-  sync(items: readonly GameItem[], maxCapacity: number): void {
+  /**
+   * Bag size follows **room cleanliness** (0…1) while the room is not yet cleared; after clear, 0 → default size.
+   * Item count still drives pickup bounce feedback via `prevIds`.
+   */
+  sync(items: readonly GameItem[], roomCleaningProgress01: number): void {
     if (this.bag === null && items.length > 0) {
       return
     }
@@ -77,27 +82,28 @@ export class StackVisual {
     }
 
     const ids = items.map((x) => x.id)
-    if (
+    const idsUnchanged =
       ids.length === this.prevIds.length &&
       ids.every((id, i) => id === this.prevIds[i])
-    ) {
+    const clean = Math.max(0, Math.min(1, roomCleaningProgress01))
+    const cleaningUnchanged = Math.abs(clean - this.prevCleaning01) < 1e-5
+    if (idsUnchanged && cleaningUnchanged) {
       return
     }
+    this.prevCleaning01 = clean
 
-    const incremental =
-      ids.length === this.prevIds.length + 1 &&
-      this.prevIds.length > 0 &&
-      this.prevIds.every((id, i) => id === ids[i])
-    if (incremental) {
-      this.bounce = 1
+    if (!idsUnchanged) {
+      const incremental =
+        ids.length === this.prevIds.length + 1 &&
+        this.prevIds.length > 0 &&
+        this.prevIds.every((id, i) => id === ids[i])
+      if (incremental) {
+        this.bounce = 1
+      }
+      this.prevIds = ids
     }
 
-    this.prevIds = ids
-    const max = Math.max(1, maxCapacity)
-    const fillVol = items.length / max
-    const clutterN = items.filter((x) => x.type === 'clutter').length
-    const clutterBoost = Math.min(0.38, clutterN * 0.034)
-    this.targetFill = Math.max(0, Math.min(1, fillVol + clutterBoost))
+    this.targetFill = clean
     this.recomputeTargetScales(this.targetFill)
   }
 

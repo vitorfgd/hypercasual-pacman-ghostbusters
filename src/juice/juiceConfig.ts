@@ -4,10 +4,6 @@
 
 /** Collection: base pickup (player.radius + this) */
 export const PICKUP_EXTRA_RADIUS = 0.42
-/** Pull pickups toward player in this outer band (world units beyond pickup reach) */
-export const MAGNET_EXTRA_RADIUS = 1.15
-/** How fast pickups slide on XZ toward player while in magnet band (world units / sec) */
-export const MAGNET_PULL_SPEED = 5.5
 
 /** World pickup collect pop duration (ItemWorld) */
 export const COLLECT_POP_SEC = 0.22
@@ -31,23 +27,31 @@ export const CAMERA_EXTRA_ZOOM_HEAVY = 1.15
 export const CAMERA_STACK_ZOOM_MAX = 2.6
 export const CAMERA_SMOOTH = 6.2
 
+/** Pac-Man-style ghost fear mode after collecting a power pellet. */
+export const POWER_MODE_DURATION_MIN_SEC = 5.2
+export const POWER_MODE_DURATION_MAX_SEC = 6.9
+/** Top-down camera: extra height pull while power mode is active. */
+export const CAMERA_POWER_MODE_PULL_Y = 0.55
+export const CAMERA_POWER_MODE_PULL_Z = 0.22
+
 export type CameraMode = 'top_down' | 'over_shoulder'
 
 /** Over-shoulder: distance behind player along facing. */
-export const CAMERA_OTS_DISTANCE = 5.05
+export const CAMERA_OTS_DISTANCE = 5.95
 /** Height above player feet. */
-export const CAMERA_OTS_HEIGHT = 2.72
+export const CAMERA_OTS_HEIGHT = 3.08
 /** Lateral shift (positive = player’s right) for shoulder framing. */
 export const CAMERA_OTS_SHOULDER_OFFSET = 0.42
 /** Look target ahead on the ground — keeps avatar lower in frame, clearer forward view. */
-export const CAMERA_OTS_LOOK_AHEAD = 5.2
-export const CAMERA_OTS_LOOK_HEIGHT = 1.02
+export const CAMERA_OTS_LOOK_AHEAD = 5.35
+/** Lower = camera aims more downward over the scene. */
+export const CAMERA_OTS_LOOK_HEIGHT = 0.78
 /** Position smoothing (higher = snappier). */
 export const CAMERA_OTS_SMOOTH_POS = 5.8
 /** Look-target smoothing (reduces jitter when turning). */
 export const CAMERA_OTS_SMOOTH_LOOK = 7.5
 /** Eye height used for collision pull (between player and camera). */
-export const CAMERA_OTS_EYE_HEIGHT = 1.52
+export const CAMERA_OTS_EYE_HEIGHT = 1.62
 /** Circle probe radius for wall avoidance (keep < player radius for tight halls). */
 export const CAMERA_OTS_PROBE_RADIUS = 0.36
 /** Enable pull-in when overlapping wall AABBs. */

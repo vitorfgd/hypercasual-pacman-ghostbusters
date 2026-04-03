@@ -4,7 +4,7 @@
 
 export type RunFailedStats = {
   roomsCleared: number
-  clutterCollected: number
+  wispsCollected: number
   /** Seconds survived this run */
   timeSec: number
   /** Each upgrade pick in order (titles may repeat if stacked). */
@@ -61,7 +61,7 @@ export function showRunFailedOverlay(
   }
 
   row('Rooms cleared', String(stats.roomsCleared))
-  row('Clutter collected', String(stats.clutterCollected))
+  row('Wisps collected', String(stats.wispsCollected))
   row('Time survived', formatTime(stats.timeSec))
 
   const upTitle = document.createElement('div')

@@ -1,7 +1,7 @@
 import type { PerspectiveCamera } from 'three'
 import type { Scene } from 'three'
 import type { WebGLRenderer } from 'three'
-import { Group, Mesh, Vector3 } from 'three'
+import { Group, Vector3 } from 'three'
 import { CameraRig } from '../systems/camera/CameraRig.ts'
 import { CollectionSystem } from '../systems/collection/CollectionSystem.ts'
 import {
@@ -10,42 +10,35 @@ import {
 } from '../systems/deposit/DepositController.ts'
 import { DepositFlightAnimator } from '../systems/deposit/DepositFlightAnimator.ts'
 import { DepositZoneFeedback } from '../systems/deposit/DepositZoneFeedback.ts'
-import {
-  evaluateDeposit,
-  type DepositEval,
-} from '../systems/economy/depositEvaluation.ts'
+import type { DepositEval } from '../systems/economy/depositEvaluation.ts'
 import {
   KeyboardMoveInput,
   mergeMoveInput,
 } from '../systems/input/KeyboardMoveInput.ts'
 import { TouchJoystick } from '../systems/input/TouchJoystick.ts'
 import { ItemWorld } from '../systems/items/ItemWorld.ts'
-import {
-  instantiatePrefilledClutter,
-  precomputeAllClutterPlacements,
-} from '../systems/clutter/clutterPrefill.ts'
-import { RoomWispSpawnSystem } from '../systems/wisp/RoomWispSpawnSystem.ts'
 import { SpecialRelicSpawnSystem } from '../systems/wisp/SpecialRelicSpawnSystem.ts'
 import type { PlayerCharacterVisual } from '../systems/player/PlayerCharacterVisual.ts'
+import {
+  formatNavDebugHud,
+  SHOW_PLAYER_NAV_DEBUG_HUD,
+} from '../systems/player/playerNavDebug.ts'
+import { PLAYER_BASE_MAX_SPEED } from '../systems/gameplaySpeed.ts'
 import { PlayerController } from '../systems/player/PlayerController.ts'
 import { createSpecialRelicFootArrow } from '../systems/player/SpecialRelicFootArrow.ts'
 import { createCamera } from '../systems/scene/createCamera.ts'
 import { createRenderer } from '../systems/scene/createRenderer.ts'
 import { createScene } from '../systems/scene/SceneSetup.ts'
 import type { HubTitleFloorLabelHandle } from '../systems/scene/hubTitleFloorLabel.ts'
+import { attachGridCellDebugOverlays } from '../systems/scene/gridCellDebugOverlay.ts'
 import { spawnRoomClearedFloorLabel } from '../systems/scene/roomClearedFloorLabel.ts'
 import { subscribeViewportResize } from '../systems/scene/resize.ts'
-import { CarryStack } from '../systems/stack/CarryStack.ts'
-import { disposeCarryBagClone } from '../systems/stack/bagGltfAsset.ts'
+import { CarryStack, UNLIMITED_STACK_MAX } from '../systems/stack/CarryStack.ts'
 import { StackVisual } from '../systems/stack/StackVisual.ts'
-import {
-  createClutterItem,
-  createRelicItem,
-  createWispItem,
-} from '../themes/wisp/itemFactory.ts'
+import { createRelicItem, createWispItem } from '../themes/wisp/itemFactory.ts'
 import type { GameItem } from './types/GameItem.ts'
 import { createRunRandom } from './runRng.ts'
-import { INITIAL_STACK_CAPACITY, speedForLevel } from '../systems/upgrades/upgradeConfig.ts'
+import { speedForLevel } from '../systems/upgrades/upgradeConfig.ts'
 import {
   applyRunUpgrade,
   pickRunUpgradeOffers,
@@ -56,15 +49,13 @@ import { mountRoomUpgradePicker } from '../ui/roomUpgradePicker.ts'
 import {
   GHOST_COLLISION_RADIUS,
   GHOST_HIT_INVULN_SEC,
-  GHOST_HIT_LOSS_MAX,
-  GHOST_HIT_LOSS_MIN,
   GHOST_HIT_PICKUP_LOCK_SEC,
-  GHOST_HIT_VACUUM_DISABLE_SEC,
   ghostRoomVisualMul,
-  HAUNTED_PICKUP_GHOST_CHANCE,
   MAX_ACTIVE_GHOSTS,
   partitionGhostSpawnsByRoom,
   pickGhostColorForRoomIndex,
+  wispCollectGhostSpawnProbability,
+  WISP_GHOST_SPAWN_MIN_PLAYER_DIST,
 } from '../systems/ghost/ghostConfig.ts'
 import {
   disposeGhostGltfTemplate,
@@ -95,39 +86,29 @@ import { RoomCleanlinessSystem } from '../systems/world/RoomCleanlinessSystem.ts
 import {
   FINAL_NORMAL_ROOM_ID,
   NORMAL_ROOM_COUNT,
+  type NormalRoomId,
   type RoomId,
 } from '../systems/world/mansionRoomData.ts'
 import { WorldCollision } from '../systems/world/WorldCollision.ts'
 import {
-  DEPOSIT_ARC_EASE,
   GHOST_HIT_SLOW_MO_SCALE,
   GHOST_HIT_SLOW_MO_SEC,
+  POWER_MODE_DURATION_MAX_SEC,
+  POWER_MODE_DURATION_MIN_SEC,
   loadSavedCameraMode,
   PLAYER_MAX_LIVES,
   saveCameraMode,
-  STACK_DROP_RECOVERY_TTL_SEC,
-  STACK_DROP_SCATTER_RADIUS,
   type CameraMode,
 } from '../juice/juiceConfig.ts'
 import { spawnLifeLostImpact } from '../juice/lifeHudJuice.ts'
 import { showRunFailedOverlay } from '../juice/runFailedOverlay.ts'
 import { showRunSuccessOverlay } from '../juice/runSuccessOverlay.ts'
-import {
-  spawnBagDisposeBurst,
-  spawnBagLandImpact,
-} from '../juice/bagDisposeVfx.ts'
 import { PlayerMotionTrail } from '../juice/playerMotionTrail.ts'
-import {
-  OVERLOAD_BONUS_MULT,
-  OVERLOAD_STACK_THRESHOLD,
-  PERFECT_OVERLOAD_BONUS_MULT,
-} from '../systems/overload/overloadDropConfig.ts'
 import {
   spawnFloatingHudText,
   spawnRoomClearedBanner,
 } from '../juice/floatingHud.ts'
 import { playJuiceSound } from '../juice/juiceSound.ts'
-import { spawnGhostHitDroppedItems } from '../juice/ghostHitBagBurst.ts'
 import {
   disposeAllGhostHitBursts,
   spawnGhostHitEctoplasmBurst,
@@ -147,16 +128,19 @@ import {
 } from '../systems/doors/DoorUnlockSystem.ts'
 import { RoomLockCoverSystem } from '../systems/world/RoomLockCoverSystem.ts'
 import {
-  computeStackWeight,
+  computeCarryEncumbranceWeight,
   stackWeightDragMultiplierRelief,
   stackWeightSpeedMultiplierRelief,
 } from '../systems/stack/stackWeightConfig.ts'
-import { TrapFieldSystem } from '../systems/traps/TrapFieldSystem.ts'
-import { TrashPortalSystem } from '../systems/trash/TrashPortalSystem.ts'
+import { spawnGridWispsForPlans } from '../systems/grid/instantiateGridRoomContent.ts'
+import { spawnPowerPelletsForRun } from '../systems/grid/powerPelletSpawn.ts'
+import { pickGridGhostSpawnXZ } from '../systems/grid/gridGhostSpawn.ts'
 import {
-  TRASH_PORTAL_COMBO_MAX,
-  TRASH_PORTAL_COMBO_PER_CHAIN,
-} from '../systems/trash/trashPortalConfig.ts'
+  flattenTrapPlacements,
+  planAllRoomGrids,
+  type RoomGridPlan,
+} from '../systems/grid/planRoomGrids.ts'
+import { TrapFieldSystem } from '../systems/traps/TrapFieldSystem.ts'
 import { BossRoomController } from '../systems/boss/BossRoomController.ts'
 import {
   BOSS_CINE_RETURN_SEC,
@@ -169,7 +153,6 @@ import {
 } from '../systems/boss/bossRoomConfig.ts'
 
 const DEPOSIT_TOAST_MS = 2800
-const BAG_THROW_SEC = 0.78
 
 function roomCleanHudLabel(roomId: RoomId): string {
   if (roomId === 'SAFE_CENTER') return 'Safe'
@@ -182,8 +165,7 @@ function easeInOutCubic(t: number): number {
 }
 
 export class Game {
-  /** New value each session — decor XOR + mulberry32 stream for gameplay RNG. */
-  private readonly runSeed: number
+  /** Mulberry32 stream for gameplay RNG (new seed each session). */
   private readonly runRandom: () => number
   private readonly roomSystem: RoomSystem
   private readonly worldCollision = new WorldCollision()
@@ -205,8 +187,7 @@ export class Game {
   private readonly playerCharacter: PlayerCharacterVisual
   private readonly doorUnlock: DoorUnlockSystem
   private readonly roomLockCovers: RoomLockCoverSystem
-  private readonly roomCleanliness: RoomCleanlinessSystem
-  private readonly roomWispSpawns: RoomWispSpawnSystem
+  private roomCleanliness!: RoomCleanlinessSystem
   private readonly specialRelicSpawns: SpecialRelicSpawnSystem
   private readonly relicFootArrow: ReturnType<typeof createSpecialRelicFootArrow>
   /** Per-run room-clear upgrade pool + stacking state. */
@@ -225,14 +206,12 @@ export class Game {
   private ghostHitInvuln = 0
   /** Brief lock on walking pickups after a hit (burst scatter reads first). */
   private ghostHitPickupLockRemain = 0
-  /** Real-time seconds; magnet pull off briefly after a ghost hit. */
-  private ghostVacuumDisabledRemain = 0
   private ghostDamageArmed = true
+  /** Pac-Man-style ghost fear + eat window. */
+  private powerModeRemain = 0
   private hitFlashEl: HTMLElement | null = null
   private hitFlashTimer: ReturnType<typeof setTimeout> | null = null
   private depositToastTimer: ReturnType<typeof setTimeout> | null = null
-  private overloadHudTimer: ReturnType<typeof setTimeout> | null = null
-  private overloadSession: { active: boolean; perfect: boolean } | null = null
   private raf = 0
   private lastTime = performance.now()
   private elapsedSec = 0
@@ -251,8 +230,7 @@ export class Game {
   private readonly hudDepositToastEl: HTMLElement | null
   private readonly depositToastAmountEl: HTMLElement | null
   private readonly depositToastHintEl: HTMLElement | null
-  private readonly hudOverloadEl: HTMLElement | null
-  private readonly hudOverloadAmountEl: HTMLElement | null
+  private readonly hudCarryEl: HTMLElement | null
   private readonly hudCameraHintEl: HTMLElement | null
   private readonly hudLivesWrap: HTMLElement | null
   private lives = PLAYER_MAX_LIVES
@@ -261,7 +239,7 @@ export class Game {
   private runSuccessCleanup: (() => void) | null = null
   private readonly bossRoom: BossRoomController
   private runStatRoomsCleared = 0
-  private runStatClutterCollected = 0
+  private runStatWispsCollected = 0
   private readonly runStatUpgradesPicked: { id: string; title: string }[] = []
   /** Room reached 100% — waiting for player to pick an upgrade. */
   private roomUpgradePaused = false
@@ -270,28 +248,18 @@ export class Game {
     typeof mountRoomUpgradePicker
   > | null
   private readonly trapField: TrapFieldSystem
-  private readonly trashPortals: TrashPortalSystem
+  private readonly roomGridPlans: ReadonlyMap<NormalRoomId, RoomGridPlan>
+  private readonly gridWispTotalsPerRoom: ReadonlyMap<RoomId, number>
+  private readonly wispsCollectedPerRoom = new Map<RoomId, number>()
   private readonly playerTrail: PlayerMotionTrail
   private ghostHitSlowMoRemain = 0
   private hudStackHum: HTMLElement | null = null
   private depositShakeTimer: ReturnType<typeof setTimeout> | null = null
-  /** Edge-detect carry stack full (max slots) for one-shot HUD celebration. */
-  private wasAtMaxCapacity = false
-  private bagDisposeInFlight = false
-  private bagThrow: {
-    bag: Group
-    t: number
-    dur: number
-    start: Vector3
-    end: Vector3
-    mid: Vector3
-    scale0: Vector3
-    snapshot: GameItem[]
-    overload: { active: boolean; perfect: boolean }
-  } | null = null
   /** Hide north welcome banner after first exit from the safe hub room. */
   private hubWelcomeHidden = false
   private wasInSafeRoom = true
+  private readonly navDebugHudEl: HTMLElement | null
+  private lastNavIdleWarnSec = -999
 
   /** Room clear: zoom out + slow-mo while ghosts fade; then upgrade picker. */
   private roomClearIntroCinematicRunning = false
@@ -346,7 +314,6 @@ export class Game {
   ) {
     this.onRunFailedRetry = onRunFailedRetry
     const run = createRunRandom()
-    this.runSeed = run.seed
     this.runRandom = run.random
     this.roomSystem = new RoomSystem(this.runRandom)
     this.playerGltfTemplate = playerGltfTemplate
@@ -369,17 +336,18 @@ export class Game {
       depositUnderglowMesh,
       playerCharacter,
       hubTitleFloorLabel,
-    } = createScene(playerGltfTemplate, this.runSeed)
+    } = createScene(playerGltfTemplate)
 
     this.hubTitleFloorLabel = hubTitleFloorLabel
 
     this.scene = scene
+    attachGridCellDebugOverlays(scene)
     this.burstGroup = new Group()
     this.burstGroup.name = 'ghostHitBurst'
     this.burstGroup.renderOrder = 50
     this.scene.add(this.burstGroup)
 
-    const hudCarry = host.querySelector<HTMLElement>('#hud-carry')
+    this.hudCarryEl = host.querySelector<HTMLElement>('#hud-carry')
     const hudDepositToast = host.querySelector<HTMLElement>(
       '#hud-deposit-toast',
     )
@@ -387,9 +355,6 @@ export class Game {
       hudDepositToast?.querySelector<HTMLElement>('.deposit-amount') ?? null
     const depositHintEl =
       hudDepositToast?.querySelector<HTMLElement>('.deposit-hint') ?? null
-    const hudOverload = host.querySelector<HTMLElement>('#hud-overload')
-    const hudOverloadAmount =
-      hudOverload?.querySelector<HTMLElement>('.hud-overload-amount') ?? null
     this.hudSpawn = host.querySelector('#hud-spawn')
     this.hudRoomCleanWrap = host.querySelector('#hud-room-clean')
     this.hudRoomCleanFill = host.querySelector('#hud-room-clean-fill')
@@ -398,11 +363,13 @@ export class Game {
     this.hudDepositToastEl = hudDepositToast
     this.depositToastAmountEl = depositAmountEl
     this.depositToastHintEl = depositHintEl
-    this.hudOverloadEl = hudOverload
-    this.hudOverloadAmountEl = hudOverloadAmount
     this.hudCameraHintEl = host.querySelector<HTMLElement>('#hud-camera-hint')
     this.hudLivesWrap = host.querySelector<HTMLElement>('#hud-lives')
     this.hudStackHum = host.querySelector('#hud-stack-hum')
+    this.navDebugHudEl = host.querySelector('#nav-debug-hud')
+    if (!SHOW_PLAYER_NAV_DEBUG_HUD && this.navDebugHudEl) {
+      this.navDebugHudEl.style.display = 'none'
+    }
 
     this.camera = createCamera(
       host.clientWidth / Math.max(host.clientHeight, 1),
@@ -417,13 +384,31 @@ export class Game {
     /** Joystick on canvas only so HUD buttons receive taps (viewport capture broke upgrades). */
     this.joystick = new TouchJoystick(this.renderer.domElement)
     this.keyboardMove = new KeyboardMoveInput()
-    this.player = new PlayerController(playerRoot, this.worldCollision)
+    this.player = new PlayerController(
+      playerRoot,
+      this.worldCollision,
+      PLAYER_BASE_MAX_SPEED,
+      12,
+      (x, z) => this.roomSystem.getRoomAt(x, z),
+    )
     this.playerCharacter = playerCharacter
+
+    this.stackVisual = new StackVisual(stackAnchor)
+    this.stack = new CarryStack(UNLIMITED_STACK_MAX, () => {
+      this.stackVisual.sync(
+        this.stack.getSnapshot(),
+        this.getRoomCleaningProgressForBag(),
+      )
+      if (this.hudCarryEl) this.hudCarryEl.textContent = String(this.stack.count)
+    })
+    if (this.hudCarryEl) this.hudCarryEl.textContent = '0'
+    this.stackVisual.sync(this.stack.getSnapshot(), 0)
+
     const savedCam = loadSavedCameraMode()
     this.cameraRig = new CameraRig(
       this.camera,
       playerRoot,
-      () => computeStackWeight(this.stack.count, this.stack.maxCapacity),
+      () => computeCarryEncumbranceWeight(this.stack.count),
       {
         worldCollision: this.worldCollision,
         getFacingYaw: () => this.player.getFacingYaw(),
@@ -434,29 +419,16 @@ export class Game {
     this.syncCameraModeHud()
     this.syncLivesHud()
 
-    this.stackVisual = new StackVisual(stackAnchor)
-    this.stack = new CarryStack(INITIAL_STACK_CAPACITY, () => {
-      this.stackVisual.sync(this.stack.getSnapshot(), this.stack.maxCapacity)
-      if (hudCarry) {
-        hudCarry.textContent = `${this.stack.count} / ${this.stack.maxCapacity}`
-      }
-    })
-    if (hudCarry) {
-      hudCarry.textContent = `0 / ${INITIAL_STACK_CAPACITY}`
-    }
-    this.stackVisual.sync(this.stack.getSnapshot(), this.stack.maxCapacity)
-
     this.itemWorld = new ItemWorld(pickupGroup, scene)
     this.itemWorld.prewarmWispPool(8)
-    this.itemWorld.prewarmClutterPool(3)
 
     this.doorUnlock = new DoorUnlockSystem({
       scene: this.scene,
       worldCollision: this.worldCollision,
       onDoorPassageCleared: (doorIndex) => {
-        /** Next frame: avoids a same-frame hitch when the door swing + collision sync already ran. */
+        /** Defer one frame so door colliders + camera settle; ghost spawns use per-frame budget. */
         requestAnimationFrame(() => {
-          this.syncClutterRoomAccessibilityFromDoors()
+          this.syncRoomPickupAccessibilityFromDoors()
           const nextRoom = doorIndex + 1
           if (nextRoom >= 1 && nextRoom <= NORMAL_ROOM_COUNT) {
             this.ghostSystem.spawnGhostsForRoom(nextRoom)
@@ -475,37 +447,29 @@ export class Game {
 
     this.roomLockCovers = new RoomLockCoverSystem(this.scene, this.doorUnlock)
 
-    this.trashPortals = new TrashPortalSystem(this.roomSystem)
-
+    const { plans: roomGridPlans, wispTotals: gridWispTotalsPerRoom } =
+      planAllRoomGrids(this.roomSystem, this.runRandom)
+    this.roomGridPlans = roomGridPlans
+    this.gridWispTotalsPerRoom = gridWispTotalsPerRoom
     this.trapField = new TrapFieldSystem(
       this.scene,
-      this.roomSystem,
+      flattenTrapPlacements(roomGridPlans),
+    )
+    spawnGridWispsForPlans(
+      roomGridPlans,
+      this.itemWorld,
+      (roomId) => this.roomSystem.isRoomAccessibleForGameplay(roomId),
+      (id, hue, value, roomId) => createWispItem(hue, value, id, roomId),
+      this.runRandom,
+    )
+    spawnPowerPelletsForRun(
+      roomGridPlans,
+      this.itemWorld,
+      (roomId) => this.roomSystem.isRoomAccessibleForGameplay(roomId),
       this.runRandom,
     )
     this.playerTrail = new PlayerMotionTrail(this.scene)
 
-    this.roomWispSpawns = new RoomWispSpawnSystem({
-      itemWorld: this.itemWorld,
-      roomSystem: this.roomSystem,
-      worldCollision: this.worldCollision,
-      createWisp: () => this.createRoomWisp(),
-      random: this.runRandom,
-      canSpawnInRoom: (id) =>
-        this.doorUnlock.canAccessRoomForSpawning(id) &&
-        id !== FINAL_NORMAL_ROOM_ID,
-    })
-    const clutterPlacements = precomputeAllClutterPlacements(
-      this.roomSystem,
-      this.worldCollision,
-      this.runRandom,
-    )
-    instantiatePrefilledClutter(
-      clutterPlacements,
-      this.itemWorld,
-      (variant, value, spawnRoomId, haunted, stableId) =>
-        createClutterItem(variant, value, spawnRoomId, haunted, stableId),
-      (roomId) => this.roomSystem.isRoomAccessibleForGameplay(roomId),
-    )
     this.specialRelicSpawns = new SpecialRelicSpawnSystem({
       itemWorld: this.itemWorld,
       roomSystem: this.roomSystem,
@@ -527,6 +491,7 @@ export class Game {
       this.worldCollision,
       partitionGhostSpawnsByRoom(),
       ghostGltfTemplate,
+      this.doorUnlock,
     )
 
     this.bossRoom = new BossRoomController({
@@ -551,6 +516,7 @@ export class Game {
     })
 
     this.roomCleanliness = new RoomCleanlinessSystem({
+      wispTotalsByRoom: gridWispTotalsPerRoom,
       onRoomCleared: (roomId, doorIndex) => {
         const idx = roomIndexFromId(roomId)
         if (idx === null || idx < 1) return
@@ -627,49 +593,21 @@ export class Game {
       stackVisual: this.stackVisual,
       flight: this.depositFlight,
       resolveDepositZone: () => null,
-      evaluateOverload: (snapshot) => {
-        const largeStack = snapshot.length >= OVERLOAD_STACK_THRESHOLD
-        const perfect = snapshot.length >= this.stack.maxCapacity
-        return { overload: largeStack, perfect }
-      },
-      onDepositSessionStart: (meta) => {
-        this.overloadSession = { active: meta.overload, perfect: meta.perfect }
-      },
-      onDepositSessionEnd: () => {
-        this.overloadSession = null
-      },
+      evaluateOverload: () => ({ overload: false, perfect: false }),
       onItemDepositLanded: (item, flightIndex) => {
-        this.trashPortals.pulsePortalItemLand(
-          this.playerPos.x,
-          this.playerPos.z,
+        void flightIndex
+        this.depositFeedback.triggerItem()
+        spawnFloatingHudText(
+          this.gameViewport,
+          `+${item.value}`,
+          'float-hud--pickup',
+          {
+            topPct: 58 + this.runRandom() * 16,
+            leftPct: 40 + this.runRandom() * 20,
+          },
         )
-        if (this.overloadSession?.active) {
-          this.depositFeedback.triggerOverloadItemImpact(
-            this.overloadSession.perfect,
-          )
-          playJuiceSound('overload_impact')
-          this.triggerDepositScreenShake(true)
-        } else {
-          const combo =
-            flightIndex > 0
-              ? Math.min(
-                  TRASH_PORTAL_COMBO_MAX,
-                  flightIndex * TRASH_PORTAL_COMBO_PER_CHAIN,
-                )
-              : 0
-          this.depositFeedback.triggerItem()
-          spawnFloatingHudText(
-            this.gameViewport,
-            `+${item.value + combo}`,
-            'float-hud--pickup',
-            {
-              topPct: 58 + this.runRandom() * 16,
-              leftPct: 40 + this.runRandom() * 20,
-            },
-          )
-          playJuiceSound('deposit_item', { pitch: 1 + flightIndex * 0.045 })
-          this.triggerDepositScreenShake(false)
-        }
+        playJuiceSound('deposit_item', { pitch: 1 + flightIndex * 0.045 })
+        this.triggerDepositScreenShake(false)
       },
       onDepositPresentationComplete: (items, ev, ol) => {
         this.runDepositPresentationUi(items, ev, ol)
@@ -699,6 +637,8 @@ export class Game {
       this.elapsedSec += dt
       this.perf.beginFrame(now)
 
+      let pickupsThisFrame = 0
+
       let move = mergeMoveInput(
         this.joystick.getVector(),
         this.keyboardMove.getVector(),
@@ -725,11 +665,6 @@ export class Game {
       }
       this.wasInSafeRoom = inSafeRoomEarly
 
-      const inTrashPortal = this.trashPortals.isPlayerInTrashPortal(
-        this.playerPos.x,
-        this.playerPos.z,
-      )
-
       const roomPre = this.roomSystem.getRoomAt(this.playerPos.x, this.playerPos.z)
       if (
         roomPre === FINAL_NORMAL_ROOM_ID &&
@@ -742,21 +677,22 @@ export class Game {
       }
       this.bossRoom.update(dt, roomPre)
       this.syncRoomCleanHud(roomPre)
+      this.stackVisual.sync(
+        this.stack.getSnapshot(),
+        this.getRoomCleaningProgressForBag(),
+      )
       const trapSlow = this.trapField.update(
         this.elapsedSec,
         this.playerPos.x,
         this.playerPos.z,
         this.player.radius,
         {
-          onDamage: (frac) => {
-            this.applyTrapDamageLoss(frac)
+          onStepTrap: () => {
+            this.applyTrapLifeLoss()
           },
         },
       )
-      const weight = computeStackWeight(
-        this.stack.count,
-        this.stack.maxCapacity,
-      )
+      const weight = computeCarryEncumbranceWeight(this.stack.count)
       const relief = this.runUpgrades.encumbranceReliefStacks
       this.player.setMovementSlowMultiplier(
         stackWeightSpeedMultiplierRelief(weight, relief) * trapSlow,
@@ -776,33 +712,40 @@ export class Game {
         simDt *= ROOM_CLEAR_CINE_SLOW_SIM_SCALE
       }
 
-      this.player.update(simDt, move)
-      this.trashPortals.applySuction(
-        this.player.root,
-        this.stack.count,
+      this.player.update(
         simDt,
-        (x, z, r) => this.worldCollision.resolveCircleXZ(x, z, r),
-        this.player.radius,
+        move,
+        (x, z) =>
+          this.roomSystem.getNavGridBounds(x, z, this.player.getGridNavContext()),
+        (x, z) => this.roomSystem.getGridBoundsAt(x, z),
       )
+      if (SHOW_PLAYER_NAV_DEBUG_HUD && this.navDebugHudEl) {
+        const snap = this.player.getNavDebugSnapshot()
+        this.navDebugHudEl.textContent = formatNavDebugHud(snap)
+        if (
+          snap.idleBlocked &&
+          this.elapsedSec - this.lastNavIdleWarnSec >= 0.85
+        ) {
+          this.lastNavIdleWarnSec = this.elapsedSec
+          console.warn('[player nav] IDLE BLOCKED — finger down but no segment', {
+            ...snap,
+          })
+        }
+      }
       this.player.getPosition(this.playerPos)
       this.player.getVelocity(this.velScratch)
+      const yaw = this.player.getFacingYaw()
       const doorPlayer: DoorPlayerSample = {
         x: this.playerPos.x,
         z: this.playerPos.z,
         radius: this.player.radius,
         vz: this.velScratch.z,
+        facingX: -Math.sin(yaw),
+        facingZ: -Math.cos(yaw),
       }
       this.doorUnlock.update(dt, this.elapsedSec, doorPlayer)
       this.itemWorld.updateClutterGateReveal(this.doorUnlock)
       this.roomLockCovers.update()
-
-      this.trashPortals.update(
-        dt,
-        this.elapsedSec,
-        this.playerPos.x,
-        this.playerPos.z,
-        this.stack.count,
-      )
 
       this.itemWorld.updateVisuals(this.elapsedSec, dt)
 
@@ -816,22 +759,128 @@ export class Game {
         dt,
       )
 
+      const hadPowerHud = this.powerModeRemain > 0
+      this.powerModeRemain = Math.max(0, this.powerModeRemain - simDt)
+      if (hadPowerHud && this.powerModeRemain <= 0) {
+        this.gameViewport.classList.remove('game-viewport--power-mode')
+      }
+
+      const collected = this.collection.update(
+        this.player,
+        this.stack,
+        this.itemWorld,
+        dt,
+        {
+          pickupBlocked:
+            this.ghostHitPickupLockRemain > 0 ||
+            this.isInteractionCinematicBlocking(),
+        },
+      )
+      for (const { item, pickupX, pickupZ } of collected) {
+        if (item.type === 'power_pellet') {
+          this.activatePowerMode()
+        }
+        if (item.type === 'wisp' && item.spawnRoomId) {
+          this.roomCleanliness.registerGridWispCollected(item.spawnRoomId)
+          this.runStatWispsCollected += 1
+          const prevCollected =
+            this.wispsCollectedPerRoom.get(item.spawnRoomId) ?? 0
+          const collectedAfter = prevCollected + 1
+          this.wispsCollectedPerRoom.set(item.spawnRoomId, collectedAfter)
+          const totalWispsInRoom =
+            this.gridWispTotalsPerRoom.get(item.spawnRoomId) ?? 0
+          if (!this.bossRoom.isFightActive()) {
+            const ghostFromThisRoom =
+              roomPre !== null && item.spawnRoomId === roomPre
+            if (
+              ghostFromThisRoom &&
+              totalWispsInRoom > 0 &&
+              this.ghostSystem.getActiveGhostCount() < MAX_ACTIVE_GHOSTS &&
+              this.runRandom() <
+                wispCollectGhostSpawnProbability(
+                  collectedAfter,
+                  totalWispsInRoom,
+                  this.runUpgrades.hauntedChanceBonus,
+                )
+            ) {
+              const plan = this.roomGridPlans.get(
+                item.spawnRoomId as NormalRoomId,
+              )
+              let spawn: { x: number; z: number; roomIndex: number } | null =
+                null
+              if (plan) {
+                const xz = pickGridGhostSpawnXZ(
+                  plan,
+                  this.playerPos.x,
+                  this.playerPos.z,
+                  WISP_GHOST_SPAWN_MIN_PLAYER_DIST,
+                  this.runRandom,
+                )
+                if (xz) {
+                  const roomIndex = this.roomChainIndexFromId(item.spawnRoomId)
+                  const visualMul = ghostRoomVisualMul(roomIndex)
+                  const placed = this.worldCollision.resolveCircleXZ(
+                    xz.x,
+                    xz.z,
+                    GHOST_COLLISION_RADIUS * visualMul,
+                  )
+                  spawn = {
+                    x: placed.x,
+                    z: placed.z,
+                    roomIndex,
+                  }
+                }
+              }
+              if (!spawn) {
+                spawn = this.resolveGhostSpawnFromHauntedClutter(
+                  pickupX,
+                  pickupZ,
+                  item.spawnRoomId,
+                )
+              }
+              this.ghostSystem.spawnGhost({
+                x: spawn.x,
+                z: spawn.z,
+                roomIndex: spawn.roomIndex,
+                color: pickGhostColorForRoomIndex(
+                  spawn.roomIndex,
+                  this.runRandom,
+                ),
+              })
+            }
+          }
+        }
+        if (item.type === 'wisp') {
+          spawnFloatingHudText(this.gameViewport, '+1', 'float-hud--pickup')
+        }
+        if (
+          item.type === 'wisp' ||
+          item.type === 'relic' ||
+          item.type === 'gem'
+        ) {
+          playJuiceSound('pickup')
+        }
+      }
+      pickupsThisFrame = collected.length
+
+      if (this.powerModeRemain > 0) {
+        this.gameViewport.classList.add('game-viewport--power-mode')
+      }
+      this.cameraRig.setPowerModeActive(this.powerModeRemain > 0)
+
       this.ghostSystem.update(
         simDt,
         dt,
         this.playerPos,
         this.stack.hasRelic(),
         this.isInteractionCinematicBlocking(),
+        this.powerModeRemain > 0,
       )
 
       this.ghostHitInvuln = Math.max(0, this.ghostHitInvuln - dt)
       this.ghostHitPickupLockRemain = Math.max(
         0,
         this.ghostHitPickupLockRemain - dt,
-      )
-      this.ghostVacuumDisabledRemain = Math.max(
-        0,
-        this.ghostVacuumDisabledRemain - dt,
       )
       if (!this.ghostDamageArmed) {
         if (
@@ -847,6 +896,33 @@ export class Game {
       if (invuln !== this.lastGhostInvuln) {
         this.gameViewport.classList.toggle('game-viewport--ghost-invuln', invuln)
         this.lastGhostInvuln = invuln
+      }
+
+      if (
+        this.powerModeRemain > 0 &&
+        !this.isInteractionCinematicBlocking()
+      ) {
+        const eat = this.ghostSystem.tryEatGhost(
+          this.playerPos,
+          this.player.radius,
+          true,
+        )
+        if (eat.kind === 'eat') {
+          this.burstSpawnScratch.set(eat.ghostX, 0.42, eat.ghostZ)
+          this.burstParticles.push(
+            ...spawnGhostHitEctoplasmBurst(
+              this.burstGroup,
+              this.burstSpawnScratch,
+            ),
+          )
+          playJuiceSound('ghost_eat', { pitch: 1.08 })
+          spawnFloatingHudText(
+            this.gameViewport,
+            'Gotcha!',
+            'float-hud--pickup',
+            { topPct: 28, leftPct: 50, durationSec: 0.85 },
+          )
+        }
       }
 
       const hit = this.ghostSystem.tryHitPlayer(
@@ -867,43 +943,21 @@ export class Game {
         )
         this.triggerGhostHitFlash(210, true)
         this.triggerDepositScreenShake(false)
-        this.ghostVacuumDisabledRemain = GHOST_HIT_VACUUM_DISABLE_SEC
         this.ghostHitPickupLockRemain = GHOST_HIT_PICKUP_LOCK_SEC
 
-        const c = this.stack.count
-        let toRemove = 0
-        if (c > 0) {
-          const lossMul =
-            1 - Math.min(0.58, this.runUpgrades.ghostHitLossReduction)
-          const frac =
-            (            GHOST_HIT_LOSS_MIN +
-              this.runRandom() * (GHOST_HIT_LOSS_MAX - GHOST_HIT_LOSS_MIN)) *
-            lossMul
-          const raw = Math.ceil(c * frac)
-          toRemove = Math.min(c, Math.max(1, raw))
-        }
-        const lost =
-          toRemove > 0 ? this.stack.popManyFromTop(toRemove) : []
-        if (lost.length > 0) {
-          spawnGhostHitDroppedItems(
-            this.itemWorld,
-            this.playerPos.x,
-            this.playerPos.z,
-            lost,
-            STACK_DROP_RECOVERY_TTL_SEC,
-          )
-          this.stackVisual.triggerGhostHitReaction()
-        }
+        /** Ghost hits cost a life only — stack is preserved (no dropped pickups). */
+        this.stackVisual.triggerGhostHitReaction()
         this.ghostHitSlowMoRemain = GHOST_HIT_SLOW_MO_SEC
 
         this.burstSpawnScratch.copy(this.playerPos)
         this.burstSpawnScratch.y += 0.38
+        const lostItems: GameItem[] = []
         this.burstParticles.push(
           ...spawnGhostHitEctoplasmBurst(this.burstGroup, this.burstSpawnScratch),
           ...spawnGhostHitPelletBurst(
             this.burstGroup,
             this.burstSpawnScratch,
-            lost,
+            lostItems,
             { intense: true },
           ),
         )
@@ -924,7 +978,7 @@ export class Game {
             this.gameViewport,
             {
               roomsCleared: this.runStatRoomsCleared,
-              clutterCollected: this.runStatClutterCollected,
+              wispsCollected: this.runStatWispsCollected,
               timeSec: this.elapsedSec,
               upgrades: this.runStatUpgradesPicked.map((u) => ({
                 title: u.title,
@@ -948,98 +1002,13 @@ export class Game {
       }
       updateGhostHitBursts(this.burstParticles, dt)
 
-      const collected = this.collection.update(
-        this.player,
-        this.stack,
-        this.itemWorld,
-        dt,
-        {
-          pickupBlocked:
-            this.ghostHitPickupLockRemain > 0 ||
-            this.bagDisposeInFlight ||
-            this.isInteractionCinematicBlocking(),
-          magnetBlocked: this.ghostVacuumDisabledRemain > 0,
-        },
-        {
-          extraRadiusMul: this.runUpgrades.magnetRangeMul(),
-          pullSpeedMul: this.runUpgrades.magnetPullMul(),
-          recoverPullMul: this.runUpgrades.scavengerRecoverPullMul(),
-        },
-      )
-      for (const { item, pickupX, pickupZ } of collected) {
-        if (item.type === 'clutter') {
-          this.roomCleanliness.registerClutterCollected(item)
-          this.runStatClutterCollected += 1
-        }
-        if (item.type === 'clutter' && item.haunted) {
-          if (this.bossRoom.isFightActive()) {
-            continue
-          }
-          this.specialRelicSpawns.trySpawnRelicFromHauntedClutter(
-            item.spawnRoomId,
-          )
-          const ghostFromThisRoom =
-            roomPre !== null && item.spawnRoomId === roomPre
-          if (
-            ghostFromThisRoom &&
-            this.ghostSystem.getActiveGhostCount() < MAX_ACTIVE_GHOSTS &&
-            this.runRandom() <
-              Math.min(
-                0.94,
-                HAUNTED_PICKUP_GHOST_CHANCE +
-                  this.runUpgrades.hauntedChanceBonus,
-              )
-          ) {
-            const spawn = this.resolveGhostSpawnFromHauntedClutter(
-              pickupX,
-              pickupZ,
-              item.spawnRoomId,
-            )
-            this.ghostSystem.spawnGhost({
-              x: spawn.x,
-              z: spawn.z,
-              roomIndex: spawn.roomIndex,
-              color: pickGhostColorForRoomIndex(
-                spawn.roomIndex,
-                this.runRandom,
-              ),
-            })
-          }
-          continue
-        }
-        if (item.type === 'wisp' || item.type === 'clutter') {
-          spawnFloatingHudText(this.gameViewport, '+1', 'float-hud--pickup')
-        }
-        if (
-          item.type === 'wisp' ||
-          item.type === 'clutter' ||
-          item.type === 'relic' ||
-          item.type === 'gem'
-        ) {
-          playJuiceSound('pickup')
-        }
-      }
-
-      const maxCap = this.stack.maxCapacity
-      const atMax = maxCap > 0 && this.stack.count >= maxCap
-      if (
-        atMax &&
-        !this.wasAtMaxCapacity &&
-        !inTrashPortal &&
-        !this.bagDisposeInFlight
-      ) {
-        this.tryStartBagDispose()
-      }
-      this.wasAtMaxCapacity = atMax
-
       this.player.getVelocity(this.velScratch)
       this.playerCharacter.update(dt, {
         timeSec: this.elapsedSec,
         speed: this.player.getHorizontalSpeed(),
         velX: this.velScratch.x,
         itemsCarried: this.stack.count,
-        maxCarry: this.stack.maxCapacity,
-        powerMode: false,
+        powerMode: this.powerModeRemain > 0,
         ghostInvuln: this.ghostHitInvuln > 0,
         recentPickupSec: 0,
       })
@@ -1053,12 +1022,10 @@ export class Game {
         this.cameraRig.update(dt)
       }
       this.itemWorld.updateCollectEffects(dt)
-      this.updateBagThrow(dt)
       this.stackVisual.update(dt)
       this.depositController.update(dt)
-      this.depositFeedback.setPlayerInside(inTrashPortal)
+      this.depositFeedback.setPlayerInside(false)
       this.depositFeedback.update(dt)
-      this.roomWispSpawns.update(dt, this.elapsedSec)
       this.specialRelicSpawns.update(dt)
       this.relicFootArrow.setTarget(
         this.playerPos,
@@ -1075,21 +1042,30 @@ export class Game {
       }
 
       this.renderer.render(scene, this.camera)
-      this.perf.endFrame(this.renderer.info.render.calls, collected.length)
+      this.perf.endFrame(this.renderer.info.render.calls, pickupsThisFrame)
     }
 
     this.raf = requestAnimationFrame(tick)
   }
 
-  private createRoomWisp(): GameItem {
-    return createWispItem(
-      0.44 + this.runRandom() * 0.14,
-      4 + Math.floor(this.runRandom() * 12),
+  private activatePowerMode(): void {
+    this.powerModeRemain =
+      POWER_MODE_DURATION_MIN_SEC +
+      this.runRandom() *
+        (POWER_MODE_DURATION_MAX_SEC - POWER_MODE_DURATION_MIN_SEC)
+    this.gameViewport.classList.add('game-viewport--power-mode')
+    playJuiceSound('power_pickup')
+    spawnFloatingHudText(
+      this.gameViewport,
+      'POWER MODE!',
+      'float-hud--level-up',
+      { topPct: 22, leftPct: 50, durationSec: 1.15 },
     )
   }
 
-  private syncClutterRoomAccessibilityFromDoors(): void {
+  private syncRoomPickupAccessibilityFromDoors(): void {
     this.itemWorld.updateClutterGateReveal(this.doorUnlock)
+    this.itemWorld.updateGridWispRoomVisibility(this.roomSystem)
   }
 
   private syncCameraModeHud(): void {
@@ -1103,24 +1079,24 @@ export class Game {
     )
   }
 
-  /** New session: reset pooled upgrades and re-sync stack speed / vacuum / ghosts. */
+  /** New session: reset pooled upgrades and re-sync stack speed / ghosts. */
   private initRunUpgrades(): void {
     this.runUpgrades.reset()
     this.runStatRoomsCleared = 0
-    this.runStatClutterCollected = 0
+    this.runStatWispsCollected = 0
+    this.wispsCollectedPerRoom.clear()
     this.runStatUpgradesPicked.length = 0
     this.roomUpgradePendingReveal = null
+    this.powerModeRemain = 0
+    this.gameViewport.classList.remove('game-viewport--power-mode')
+    this.cameraRig.setPowerModeActive(false)
     this.syncRunUpgradeModifiers()
   }
 
   private syncRunUpgradeModifiers(): void {
-    this.stack.setMaxCapacity(this.runUpgrades.maxCapacitySlots)
     this.player.setMaxSpeed(speedForLevel(this.runUpgrades.speedLevel))
     this.ghostSystem.setRuntimeSpeedMultiplier(
       this.runUpgrades.ghostSpeedRuntimeMul,
-    )
-    this.trashPortals.setSuctionStrengthMultiplier(
-      this.runUpgrades.trashSuctionMul(),
     )
   }
 
@@ -1186,7 +1162,7 @@ export class Game {
       this.gameViewport,
       {
         roomsCleared: this.runStatRoomsCleared,
-        clutterCollected: this.runStatClutterCollected,
+        wispsCollected: this.runStatWispsCollected,
         timeSec: this.elapsedSec,
         upgrades: this.runStatUpgradesPicked.map((u) => ({
           title: u.title,
@@ -1561,19 +1537,25 @@ export class Game {
     return m ? Number(m[1]) : 1
   }
 
-  private scatterDroppedItems(items: readonly GameItem[], radius: number): void {
-    const px = this.playerPos.x
-    const pz = this.playerPos.z
-    for (const it of items) {
-      const ang = this.runRandom() * Math.PI * 2
-      const d = this.runRandom() * radius
-      this.itemWorld.spawnRecoverable(
-        it,
-        px + Math.cos(ang) * d,
-        pz + Math.sin(ang) * d,
-        STACK_DROP_RECOVERY_TTL_SEC,
-      )
+  /** 0 = default bag size; rises with room clean progress while the room is not cleared. */
+  private getRoomCleaningProgressForBag(): number {
+    this.player.getPosition(this.playerPos)
+    const roomId = this.roomSystem.getRoomAt(this.playerPos.x, this.playerPos.z)
+    if (
+      roomId === null ||
+      roomId === 'SAFE_CENTER' ||
+      !roomId.startsWith('ROOM_')
+    ) {
+      return 0
     }
+    if (roomId === FINAL_NORMAL_ROOM_ID && this.bossRoom.isFightActive()) {
+      return Math.max(0, Math.min(1, this.bossRoom.getBossHudPercent() / 100))
+    }
+    if (this.roomCleanliness.isRoomCleared(roomId)) return 0
+    return Math.max(
+      0,
+      Math.min(1, this.roomCleanliness.getDisplayPercent(roomId) / 100),
+    )
   }
 
   private syncStackJuiceHud(weight: number): void {
@@ -1607,22 +1589,40 @@ export class Game {
     }, 280)
   }
 
-  private applyTrapDamageLoss(frac: number): void {
-    const c = this.stack.count
-    if (c <= 0) return
-    const toRemove = Math.min(c, Math.ceil(c * frac))
-    if (toRemove <= 0) return
-    const lost = this.stack.popManyFromTop(toRemove)
-    this.scatterDroppedItems(lost, STACK_DROP_SCATTER_RADIUS * 0.85)
-    this.burstSpawnScratch.copy(this.playerPos)
-    this.burstSpawnScratch.y += 0.35
-    this.burstParticles.push(
-      ...spawnGhostHitPelletBurst(
-        this.burstGroup,
-        this.burstSpawnScratch,
-        lost,
-      ),
-    )
+  /** Spike trap: always −1 life (no stack loss); mesh has no physics collider — overlap only. */
+  private applyTrapLifeLoss(): void {
+    this.lives = Math.max(0, this.lives - 1)
+    spawnLifeLostImpact(this.gameViewport)
+    this.triggerDepositScreenShake(true)
+    this.syncLivesHud()
+    if (this.lives <= 0) {
+      this.gameOver = true
+      this.runFailedCleanup = showRunFailedOverlay(
+        this.gameViewport,
+        {
+          roomsCleared: this.runStatRoomsCleared,
+          wispsCollected: this.runStatWispsCollected,
+          timeSec: this.elapsedSec,
+          upgrades: this.runStatUpgradesPicked.map((u) => ({
+            title: u.title,
+          })),
+        },
+        {
+          onRetry: () => {
+            this.runFailedCleanup?.()
+            this.runFailedCleanup = null
+            if (this.onRunFailedRetry) {
+              void Promise.resolve(this.onRunFailedRetry()).catch(() => {
+                location.reload()
+              })
+            } else {
+              location.reload()
+            }
+          },
+        },
+      )
+    }
+
     const ang = this.runRandom() * Math.PI * 2
     this.player.applyGhostKnockback(
       this.playerPos.x - Math.cos(ang) * 0.02,
@@ -1632,6 +1632,7 @@ export class Game {
       0.45,
     )
     playJuiceSound('ghost_hit')
+    this.triggerGhostHitFlash(160, false)
   }
 
   /** Current room / `CORRIDOR` / null (outside layout), from player XZ. */
@@ -1647,7 +1648,7 @@ export class Game {
   private runDepositPresentationUi(
     items: GameItem[],
     ev: DepositEval,
-    ol: DepositPresentationOverload,
+    _ol: DepositPresentationOverload,
   ): void {
     const relicItem = items.find((it) => it.type === 'relic')
     if (relicItem) {
@@ -1662,36 +1663,14 @@ export class Game {
       playJuiceSound('relic_collect')
     }
 
-    if (ol.overloadActive) {
-      this.depositFeedback.triggerOverloadBurst(ol.perfect)
-    } else {
-      this.depositFeedback.triggerDepositComplete(
-        items.length,
-        ev.batchTotal + ol.overloadBonus,
-      )
-    }
-    const totalBatch = ev.batchTotal + ol.overloadBonus
-    const hudOverload = this.hudOverloadEl
-    const hudOverloadAmount = this.hudOverloadAmountEl
-    if (hudOverload && hudOverloadAmount && ol.overloadActive) {
-      if (this.overloadHudTimer) clearTimeout(this.overloadHudTimer)
-      hudOverloadAmount.textContent = `+${totalBatch}`
-      hudOverload.classList.toggle('hud-overload--perfect', ol.perfect)
-      hudOverload.classList.remove('hidden')
-      hudOverload.classList.add('visible')
-      this.overloadHudTimer = setTimeout(() => {
-        hudOverload.classList.remove('visible', 'hud-overload--perfect')
-        hudOverload.classList.add('hidden')
-        this.overloadHudTimer = null
-      }, 2400)
-    }
+    this.depositFeedback.triggerDepositComplete(items.length, ev.batchTotal)
     const hudDepositToast = this.hudDepositToastEl
     const depositAmountEl = this.depositToastAmountEl
     const depositHintEl = this.depositToastHintEl
     if (hudDepositToast && depositAmountEl && depositHintEl) {
       const showDepositToast = (): void => {
         if (this.depositToastTimer) clearTimeout(this.depositToastTimer)
-        this.fillDepositToastLines(depositAmountEl, depositHintEl, ev, ol)
+        this.fillDepositToastLines(depositAmountEl, depositHintEl, ev)
         hudDepositToast.classList.remove('hidden')
         hudDepositToast.classList.add('visible')
         this.depositToastTimer = setTimeout(() => {
@@ -1708,211 +1687,26 @@ export class Game {
     }
   }
 
-  private computeOverloadBonusForDispose(
-    ev: DepositEval,
-    active: boolean,
-    perfect: boolean,
-  ): number {
-    if (!active) return 0
-    let extra = Math.floor(ev.batchTotal * (OVERLOAD_BONUS_MULT - 1))
-    if (perfect) {
-      extra = Math.floor(extra * PERFECT_OVERLOAD_BONUS_MULT)
-    }
-    return Math.max(0, extra)
-  }
-
-  private tryStartBagDispose(): void {
-    if (this.bagThrow !== null || this.bagDisposeInFlight) return
-    const maxCap = this.stack.maxCapacity
-    if (this.stack.count < maxCap) return
-
-    this.bagDisposeInFlight = true
-    const snapshot = [...this.stack.getSnapshot()]
-    const overload = {
-      active: snapshot.length >= OVERLOAD_STACK_THRESHOLD,
-      perfect: snapshot.length >= maxCap,
-    }
-
-    const bag = this.stackVisual.detachBagForThrow(this.scene)
-    bag.updateMatrixWorld(true)
-    const start = new Vector3()
-    bag.getWorldPosition(start)
-
-    const yaw = this.player.root.rotation.y
-    const fx = -Math.sin(yaw)
-    const fz = -Math.cos(yaw)
-
-    const tossDist = 5.4
-    const end = new Vector3(
-      start.x + fx * tossDist,
-      0.26,
-      start.z + fz * tossDist,
-    )
-    const mid = new Vector3()
-      .copy(start)
-      .lerp(end, 0.5)
-    mid.y += 2.1
-
-    const scale0 = bag.scale.clone().multiplyScalar(1.32)
-
-    this.burstSpawnScratch.copy(start)
-    this.burstSpawnScratch.y += 0.2
-    this.burstParticles.push(
-      ...spawnBagDisposeBurst(this.burstGroup, this.burstSpawnScratch, 30, {
-        intense: true,
-      }),
-    )
-    spawnFloatingHudText(
-      this.gameViewport,
-      'Clearing bag',
-      'float-hud--pickup',
-      { topPct: 58, leftPct: 50, durationSec: 0.7 },
-    )
-    playJuiceSound('deposit_complete', { pitch: 1.15 })
-    this.gameViewport.classList.add('game-viewport--glow-ecto')
-
-    this.bagThrow = {
-      bag,
-      t: 0,
-      dur: BAG_THROW_SEC,
-      start,
-      end,
-      mid,
-      scale0,
-      snapshot,
-      overload,
-    }
-  }
-
-  private updateBagThrow(dt: number): void {
-    const bt = this.bagThrow
-    if (!bt) return
-
-    bt.t += dt
-    const alpha = Math.min(1, bt.t / bt.dur)
-    const ease = 1 - Math.pow(1 - alpha, DEPOSIT_ARC_EASE)
-    const u = ease
-    const omu = 1 - u
-    const b = bt.bag
-    const x =
-      omu * omu * bt.start.x +
-      2 * omu * u * bt.mid.x +
-      u * u * bt.end.x
-    const y =
-      omu * omu * bt.start.y +
-      2 * omu * u * bt.mid.y +
-      u * u * bt.end.y
-    const z =
-      omu * omu * bt.start.z +
-      2 * omu * u * bt.mid.z +
-      u * u * bt.end.z
-    b.position.set(x, y, z)
-
-    const shrink = Math.max(0.38, Math.pow(1 - ease, 1.45))
-    b.scale.set(
-      bt.scale0.x * shrink,
-      bt.scale0.y * shrink,
-      bt.scale0.z * shrink,
-    )
-
-    if (alpha >= 1) {
-      this.completeBagThrow()
-    }
-  }
-
-  private completeBagThrow(): void {
-    const bt = this.bagThrow
-    if (!bt) return
-
-    const snapshot = bt.snapshot
-    const ov = bt.overload
-    const endPos = bt.bag.position.clone()
-
-    endPos.y += 0.08
-    this.burstParticles.push(...spawnBagLandImpact(this.burstGroup, endPos))
-    this.burstParticles.push(
-      ...spawnBagDisposeBurst(this.burstGroup, endPos, 26, { intense: false }),
-    )
-    playJuiceSound('deposit_item', { pitch: 0.9 })
-    this.triggerDepositScreenShake(
-      snapshot.length >= OVERLOAD_STACK_THRESHOLD,
-    )
-
-    this.disposeThrownBagMesh(bt.bag)
-    this.bagThrow = null
-
-    const ev = evaluateDeposit(snapshot)
-    const overloadBonus = this.computeOverloadBonusForDispose(
-      ev,
-      ov.active,
-      ov.perfect,
-    )
-    this.runDepositPresentationUi(snapshot, ev, {
-      overloadActive: ov.active,
-      perfect: ov.perfect,
-      overloadBonus,
-    })
-
-    this.stack.drain()
-    this.trashPortals.pulsePortalItemLand(this.playerPos.x, this.playerPos.z)
-
-    this.bagDisposeInFlight = false
-    this.gameViewport.classList.remove('game-viewport--glow-ecto')
-  }
-
-  private disposeThrownBagMesh(root: Group): void {
-    root.removeFromParent()
-    if (root.userData.carryBagGltf === true) {
-      disposeCarryBagClone(root)
-      return
-    }
-    root.traverse((o) => {
-      if (o instanceof Mesh) {
-        o.geometry.dispose()
-        const m = o.material
-        if (Array.isArray(m)) m.forEach((x) => x.dispose())
-        else m.dispose()
-      }
-    })
-  }
-
   private fillDepositToastLines(
     amountEl: HTMLElement,
     hintEl: HTMLElement,
     ev: DepositEval,
-    overload?: DepositPresentationOverload,
   ): void {
-    const total = ev.batchTotal + (overload?.overloadBonus ?? 0)
     const stackJackpot =
-      !overload?.overloadActive &&
-      ev.itemCount >= 2 &&
-      ev.batchMultiplier >= 1.18
+      ev.itemCount >= 2 && ev.batchMultiplier >= 1.18
     amountEl.classList.remove(
       'deposit-amount--overload',
       'deposit-amount--overload-perfect',
       'deposit-amount--stack-jackpot',
     )
-    if (overload?.overloadActive) {
-      amountEl.textContent = total > 0 ? `+${total}` : '0'
-      amountEl.classList.add('deposit-amount--overload')
-      if (overload.perfect) amountEl.classList.add('deposit-amount--overload-perfect')
-    } else {
-      amountEl.textContent = ev.batchTotal > 0 ? `+${ev.batchTotal}` : '0'
-      if (stackJackpot) amountEl.classList.add('deposit-amount--stack-jackpot')
-    }
+    amountEl.textContent = ev.batchTotal > 0 ? `+${ev.batchTotal}` : '0'
+    if (stackJackpot) amountEl.classList.add('deposit-amount--stack-jackpot')
 
     const riskLine =
-      !overload?.overloadActive && ev.batchMultiplier > 1.02
+      ev.batchMultiplier > 1.02
         ? `Stack bonus ×${ev.batchMultiplier.toFixed(2)} (base ${ev.baseSum})`
         : ''
 
-    if (overload?.overloadActive) {
-      hintEl.style.display = 'block'
-      hintEl.textContent = overload.perfect
-        ? 'Perfect overload — maximum burst'
-        : 'Overload drop — extra batch weight'
-      return
-    }
     if (riskLine) {
       hintEl.style.display = 'block'
       hintEl.textContent = `${riskLine} — bigger stacks clear harder`
@@ -1937,9 +1731,9 @@ export class Game {
     }, durationMs)
   }
 
-  /** Encumbrance ∈ [0, 1] — `count / maxCapacity` (for HUD / future UI). */
+  /** Encumbrance ∈ [0, 1] — scales with items carried (no hard cap). */
   getStackWeight(): number {
-    return computeStackWeight(this.stack.count, this.stack.maxCapacity)
+    return computeCarryEncumbranceWeight(this.stack.count)
   }
 
   /** Double door swing progress 0…1 (for UI / debugging). */
@@ -1958,7 +1752,6 @@ export class Game {
       this.depositShakeTimer = null
     }
     if (this.depositToastTimer) clearTimeout(this.depositToastTimer)
-    if (this.overloadHudTimer) clearTimeout(this.overloadHudTimer)
     if (this.hitFlashTimer) {
       clearTimeout(this.hitFlashTimer)
       this.hitFlashTimer = null
@@ -1967,12 +1760,15 @@ export class Game {
       'hud-hit-flash--on',
       'hud-hit-flash--ghost',
     )
-    this.gameViewport.classList.remove('game-viewport--ghost-invuln')
+    this.gameViewport.classList.remove(
+      'game-viewport--ghost-invuln',
+      'game-viewport--power-mode',
+    )
+    this.cameraRig.setPowerModeActive(false)
     disposeAllGhostHitBursts(this.burstParticles)
     this.burstGroup.removeFromParent()
     this.doorUnlock.dispose()
     this.roomLockCovers.dispose()
-    this.trashPortals.dispose()
     for (const d of this.roomClearFloorDisposers) {
       d()
     }

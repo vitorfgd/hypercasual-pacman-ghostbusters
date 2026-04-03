@@ -30,6 +30,11 @@ import {
   DOOR_SLAM_SHUT_SEC,
   DOOR_TRIGGER_HALF_X,
   DOOR_TRIGGER_HALF_Z,
+  DOOR_APPROACH_CELL_WORLD,
+  DOOR_APPROACH_ONE_CELL_BAND,
+  DOOR_PREFETCH_FACE_DOT_MIN,
+  DOOR_PREFETCH_MAX_ABS_X,
+  DOUBLE_DOOR_VISUAL_BASELINE_XZ,
   DOUBLE_DOOR_VISUAL_SCALE_XZ,
   DOUBLE_DOOR_VISUAL_SCALE_Y,
   DOUBLE_DOOR_VISUAL_Z_NUDGE,
@@ -323,6 +328,24 @@ export class DoorUnlockSystem {
     return this.swing[doorIndex]
   }
 
+  /**
+   * Full auto-open sequence progress 0…1 (anticipation + swing), wall-clock.
+   * Room blackout uses this so the fade starts as soon as opening is triggered, not when swing leaves 0.
+   */
+  getDoorRevealProgress01(doorIndex: number): number {
+    if (doorIndex < 0 || doorIndex >= DOOR_COUNT) return 1
+    if (this.passed[doorIndex]) return 1
+    const at = DOOR_AUTO_OPEN_ANTICIPATE_SEC
+    const dur = DOOR_AUTO_OPEN_DURATION_SEC
+    const total = at + dur
+    const te = this.doorAutoOpenElapsed[doorIndex]
+    if (te >= 0) {
+      return Math.min(1, te / total)
+    }
+    if (this.swing[doorIndex] >= 1 - 1e-4) return 1
+    return 0
+  }
+
   getDoorOpeningElapsed(doorIndex: number): number | null {
     if (doorIndex < 0 || doorIndex >= DOOR_COUNT) return null
     const s = this.swing[doorIndex]
@@ -452,7 +475,8 @@ export class DoorUnlockSystem {
 
       if (
         this.swing[i]! < 1 - 1e-4 &&
-        this.playerInDoorPushZone(i, player)
+        (this.playerInDoorPushZone(i, player) ||
+          this.playerPrefetchOpenUnlockedDoor(i, player))
       ) {
         this.doorAutoOpenElapsed[i] = 0
         this.pushPulseRemain[i] = DOOR_LIGHT_PUSH_PULSE_SEC
@@ -519,6 +543,36 @@ export class DoorUnlockSystem {
     )
   }
 
+  /**
+   * Unlocked door: start the same auto-open as the push zone when the player stands ~one grid
+   * step out, on centerline, and faces the doorway (no need to rub the threshold).
+   */
+  private playerPrefetchOpenUnlockedDoor(
+    i: number,
+    p: DoorPlayerSample,
+  ): boolean {
+    if (p.facingX === undefined || p.facingZ === undefined) return false
+    const zDoor = getDoorBlockerZ(i)
+    if (Math.abs(p.x) > DOOR_PREFETCH_MAX_ABS_X + p.radius * 0.25) {
+      return false
+    }
+    const dzPlane = Math.abs(p.z - zDoor)
+    if (
+      Math.abs(dzPlane - DOOR_APPROACH_CELL_WORLD) >
+      DOOR_APPROACH_ONE_CELL_BAND + p.radius * 0.35
+    ) {
+      return false
+    }
+    const dx = -p.x
+    const dz = zDoor - p.z
+    const len = Math.hypot(dx, dz)
+    if (len < 0.06) return false
+    const ux = dx / len
+    const uz = dz / len
+    const dot = p.facingX * ux + p.facingZ * uz
+    return dot >= DOOR_PREFETCH_FACE_DOT_MIN
+  }
+
   /** Normalized swing 0…1 maps linearly to panel angle (easing is applied to swing itself over time). */
   private applySwingPose(doorIndex: number, swing01: number): void {
     const lp = this.leftPivots[doorIndex]
@@ -551,13 +605,15 @@ export class DoorUnlockSystem {
       content.name = 'doorFallbackContent'
       const barrierW = DOOR_HALF * 2 + 0.06
       const half = barrierW * 0.25
+      const leafW =
+        half * 2.1 * (DOUBLE_DOOR_VISUAL_SCALE_XZ / DOUBLE_DOOR_VISUAL_BASELINE_XZ)
       const lp = new ThreeGroup()
       lp.position.set(-half * 2, 0, 0)
-      const lm = this.createFallbackPanel(half * 2.1)
+      const lm = this.createFallbackPanel(leafW)
       lp.add(lm)
       const rp = new ThreeGroup()
       rp.position.set(half * 2, 0, 0)
-      const rm = this.createFallbackPanel(half * 2.1)
+      const rm = this.createFallbackPanel(leafW)
       rp.add(rm)
       content.add(lp)
       content.add(rp)
@@ -744,4 +800,10 @@ export type DoorPlayerSample = {
   z: number
   radius: number
   vz: number
+  /**
+   * Horizontal facing (matches `PlayerController` yaw: −sin, −cos on XZ).
+   * When set, unlocked doors can open from ~one cell away while facing them.
+   */
+  facingX?: number
+  facingZ?: number
 }

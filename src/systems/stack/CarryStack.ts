@@ -1,11 +1,14 @@
 import type { GameItem } from '../../core/types/GameItem.ts'
 
+/** No hard item limit — encumbrance uses `STACK_ENCUMBRANCE_REFERENCE_ITEMS` in `stackWeightConfig`. */
+export const UNLIMITED_STACK_MAX = Infinity
+
 export class CarryStack {
   private readonly items: GameItem[] = []
   private max: number
   private readonly onChange?: () => void
 
-  constructor(max: number, onChange?: () => void) {
+  constructor(max: number = UNLIMITED_STACK_MAX, onChange?: () => void) {
     this.max = max
     this.onChange = onChange
   }
@@ -16,6 +19,12 @@ export class CarryStack {
 
   /** Raises cap; never below current carried count */
   setMaxCapacity(max: number): void {
+    if (!Number.isFinite(max)) {
+      if (this.max === UNLIMITED_STACK_MAX) return
+      this.max = UNLIMITED_STACK_MAX
+      this.onChange?.()
+      return
+    }
     const n = Math.max(this.items.length, Math.max(1, Math.floor(max)))
     if (n === this.max) return
     this.max = n
@@ -23,7 +32,7 @@ export class CarryStack {
   }
 
   canPush(): boolean {
-    return this.items.length < this.max
+    return !Number.isFinite(this.max) || this.items.length < this.max
   }
 
   push(item: GameItem): boolean {

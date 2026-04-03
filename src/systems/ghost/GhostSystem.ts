@@ -23,14 +23,28 @@ import {
   BOSS_SEEK_SPEED,
 } from '../boss/bossRoomConfig.ts'
 import {
+  createGhostGridNavState,
+  getGhostGridBoundsAt,
+  resetGhostGridNavState,
+  stepGhostGridNav,
+  type GhostGridNavMode,
+  type GhostGridNavState,
+} from './ghostGridNav.ts'
+import {
+  GHOST_CHASE_RAMP_DOWN_SEC,
+  GHOST_CHASE_RAMP_UP_SEC,
   GHOST_CHASE_SPEED,
+  GHOST_CHASE_WINDUP_SEC,
   GHOST_COLLISION_RADIUS,
   GHOST_DEPOSIT_EXCLUSION_PADDING,
   GHOST_DIRECTION_SMOOTH_CHASE,
-  GHOST_DIRECTION_SMOOTH_FRIGHT,
   GHOST_DIRECTION_SMOOTH_WANDER,
   GHOST_FACING_TURN_DEFAULT,
   GHOST_FACING_TURN_FRIGHT,
+  GHOST_GRID_CHASE_SPEED,
+  GHOST_GRID_FRIGHT_SPEED,
+  GHOST_GRID_HUNT_SPEED,
+  GHOST_GRID_WANDER_SPEED,
   GHOST_FRIGHT_SPEED,
   GHOST_HUNT_ABORT_RANGE,
   GHOST_HUNT_CONE_LOST_BREAK_SEC,
@@ -46,7 +60,6 @@ import {
   GHOST_ROOM_PURGE_SHRINK_SEC,
   randomSpawnChaseGraceSec,
   GHOST_STEERING_ACCEL_CHASE,
-  GHOST_STEERING_ACCEL_FRIGHT,
   GHOST_STEERING_ACCEL_WANDER,
   GHOST_WANDER_SPEED,
   GHOST_VISION_COOLDOWN_SEC,
@@ -67,6 +80,8 @@ import {
   type GhostSpawnRole,
   type GhostSpawnSpec,
 } from './ghostConfig.ts'
+import type { DoorUnlockSystem } from '../doors/DoorUnlockSystem.ts'
+import { DOOR_COUNT } from '../doors/doorLayout.ts'
 import { ROOMS } from '../world/mansionRoomData.ts'
 
 /** One shared mesh (ghost spawns were each allocating a full geometry — costly on door open). */
@@ -126,34 +141,46 @@ export type GhostHitResult =
   | { kind: 'none' }
   | { kind: 'hit'; ghostX: number; ghostZ: number }
 
+export type GhostEatResult =
+  | { kind: 'none' }
+  | { kind: 'eat'; ghostX: number; ghostZ: number }
+
+/** When a door opens, instantiate map ghosts over several frames to avoid a single-frame hitch. */
+const MAP_GHOST_SPAWN_BUDGET_PER_FRAME = 5
+
 export class GhostSystem {
   private readonly ghosts: Ghost[] = []
   private readonly ghostGroup: Group
   private readonly worldCollision: WorldCollision
   private readonly ghostGltf: GhostGltfTemplate | null
+  private readonly doorUnlock: DoorUnlockSystem
   private ghostAnimTime = 0
   /** Run-wide modifier (e.g. Spectral bargain). Applied after per-room `speedMul`. */
   private runtimeSpeedMul = 1
 
   private readonly spawnsByRoom: readonly (readonly GhostSpawnSpec[])[]
   private readonly spawnedRoomIndices = new Set<number>()
+  /** Deferred `Ghost` construction for rooms unlocked via doors (not room 1 at init). */
+  private readonly pendingMapSpawnSpecs: GhostSpawnSpec[] = []
 
   constructor(
     ghostGroup: Group,
     worldCollision: WorldCollision,
     spawnsByRoom: readonly (readonly GhostSpawnSpec[])[],
     ghostGltf: GhostGltfTemplate | null = null,
+    doorUnlock: DoorUnlockSystem,
   ) {
     this.ghostGroup = ghostGroup
     this.worldCollision = worldCollision
     this.ghostGltf = ghostGltf
+    this.doorUnlock = doorUnlock
     this.spawnsByRoom = spawnsByRoom
     this.spawnGhostsForRoom(1)
   }
 
   /**
    * Instantiate map ghosts for `ROOM_{roomIndex}` once (when that room unlocks).
-   * Room 1 is spawned at construction.
+   * Room 1 is spawned synchronously at construction; deeper rooms are queued to spread cost.
    */
   spawnGhostsForRoom(roomIndex: number): void {
     if (roomIndex < 1 || this.spawnedRoomIndices.has(roomIndex)) return
@@ -164,10 +191,30 @@ export class GhostSystem {
       return
     }
     this.spawnedRoomIndices.add(roomIndex)
+    if (roomIndex === 1) {
+      for (const s of specs) {
+        this.ghosts.push(
+          new Ghost(this.ghostGroup, this.worldCollision, s, this.ghostGltf),
+        )
+      }
+      return
+    }
     for (const s of specs) {
+      this.pendingMapSpawnSpecs.push(s)
+    }
+  }
+
+  private flushPendingMapSpawns(): void {
+    let n = 0
+    while (
+      n < MAP_GHOST_SPAWN_BUDGET_PER_FRAME &&
+      this.pendingMapSpawnSpecs.length > 0
+    ) {
+      const s = this.pendingMapSpawnSpecs.shift()!
       this.ghosts.push(
         new Ghost(this.ghostGroup, this.worldCollision, s, this.ghostGltf),
       )
+      n++
     }
   }
 
@@ -243,9 +290,10 @@ export class GhostSystem {
     playerPos: Vector3,
     playerCarryingRelic: boolean,
     gateCinematicRoamOnly = false,
+    powerModeActive = false,
   ): void {
+    this.flushPendingMapSpawns()
     this.ghostAnimTime += dt
-    const frightened = false
     const hub = ROOMS.SAFE_CENTER.bounds
     const playerInSafeCenter =
       playerPos.x >= hub.minX &&
@@ -253,15 +301,21 @@ export class GhostSystem {
       playerPos.z >= hub.minZ &&
       playerPos.z <= hub.maxZ
     for (const g of this.ghosts) {
+      const doorIdx = g.getRoomIndex() - 1
+      const visionConeEntranceDoorOpen =
+        doorIdx >= 0 &&
+        doorIdx < DOOR_COUNT &&
+        this.doorUnlock.isDoorSouthernAccessGranted(doorIdx)
       g.update(
         dt,
         realDt,
         playerPos,
-        frightened,
+        powerModeActive,
         this.ghostAnimTime,
         playerInSafeCenter,
         playerCarryingRelic,
         gateCinematicRoamOnly,
+        visionConeEntranceDoorOpen,
         this.runtimeSpeedMul,
       )
       if (
@@ -269,7 +323,10 @@ export class GhostSystem {
         !g.isGateClearFading() &&
         !g.isBossGhost()
       ) {
-        g.updateVulnerableAppearance(false, this.ghostAnimTime)
+        g.updateVulnerableAppearance(
+          powerModeActive,
+          this.ghostAnimTime,
+        )
       }
     }
     for (let i = this.ghosts.length - 1; i >= 0; i--) {
@@ -279,7 +336,6 @@ export class GhostSystem {
         this.ghosts.splice(i, 1)
       }
     }
-    this.separateOverlappingGhosts()
   }
 
   /**
@@ -331,6 +387,32 @@ export class GhostSystem {
   }
 
   /**
+   * Power mode: overlap eats a ghost (temporary disappearance + respawn). Boss ghosts are immune.
+   */
+  tryEatGhost(
+    playerPos: Vector3,
+    playerRadius: number,
+    powerModeActive: boolean,
+  ): GhostEatResult {
+    if (!powerModeActive) return { kind: 'none' }
+    for (const g of this.ghosts) {
+      if (g.isBossGhost()) continue
+      if (g.isEaten() || g.isRoomClearPurging() || g.isGateClearFading()) continue
+      const r = playerRadius + g.collisionRadius
+      const r2 = r * r
+      const gx = g.root.position.x
+      const gz = g.root.position.z
+      const dx = playerPos.x - gx
+      const dz = playerPos.z - gz
+      if (dx * dx + dz * dz <= r2) {
+        g.markEaten()
+        return { kind: 'eat', ghostX: gx, ghostZ: gz }
+      }
+    }
+    return { kind: 'none' }
+  }
+
+  /**
    * After a successful damage hit: that ghost backs off and roams so it does not stay clipped on the player.
    */
   onGhostHitLandedAt(
@@ -355,39 +437,11 @@ export class GhostSystem {
   }
 
   dispose(): void {
+    this.pendingMapSpawnSpecs.length = 0
     for (const g of this.ghosts) {
       g.destroy()
     }
     this.ghosts.length = 0
-  }
-
-  /** Push ghost centers apart so multiple chasers do not stack on the player. */
-  private separateOverlappingGhosts(): void {
-    const list = this.ghosts.filter(
-      (g) =>
-        !g.isEaten() && !g.isRoomClearPurging() && !g.isGateClearFading(),
-    )
-    for (let i = 0; i < list.length; i++) {
-      for (let j = i + 1; j < list.length; j++) {
-        const a = list[i]!
-        const b = list[j]!
-        let dx = b.root.position.x - a.root.position.x
-        let dz = b.root.position.z - a.root.position.z
-        const minD = (a.collisionRadius + b.collisionRadius) * 1.125
-        let dist = Math.hypot(dx, dz)
-        if (dist >= minD || dist < 1e-7) continue
-        dx /= dist
-        dz /= dist
-        const push = (minD - dist) * 0.52
-        a.root.position.x -= dx * push
-        a.root.position.z -= dz * push
-        b.root.position.x += dx * push
-        b.root.position.z += dz * push
-      }
-    }
-    for (const g of list) {
-      g.resolveAgainstWalls()
-    }
   }
 }
 
@@ -435,6 +489,10 @@ class Ghost {
   private chaseLockout = 0
   /** While > 0, ghost only roams (no chase from detect or relic). New spawns / post-eat respawn. */
   private spawnChaseGraceRemain = 0
+  /** 0…1 — eases into full chase/hunt speed (see `GHOST_CHASE_RAMP_*`). */
+  private chaseThrottle = 0
+  /** After entering chase, brief period of wander-only grid before chase steering/speed ramp. */
+  private chaseWindupRemain = 0
   /** Smoothed desired direction (unit XZ) — reduces jittery heading changes */
   private smoothedTx = 0
   private smoothedTz = 1
@@ -448,6 +506,9 @@ class Ghost {
   private visionDebugLine: Line | null = null
   private visionConeMesh: Mesh | null = null
   private readonly role: GhostSpawnRole
+
+  /** Pac-Man-style cell movement in room interiors, hub, and corridors (same bounds as player grid). */
+  private readonly gridNav: GhostGridNavState = createGhostGridNavState()
 
   constructor(
     ghostGroup: Group,
@@ -557,6 +618,7 @@ class Ghost {
     this.fadeBaseScale = this.root.scale.x
     this.fadeBaseY = this.root.position.y
     this.velocity.set(0, 0, 0)
+    resetGhostGridNavState(this.gridNav)
   }
 
   beginRoomClearPurge(): void {
@@ -565,6 +627,7 @@ class Ghost {
     if (this.roomClearPurgeRemain > 0) return
     this.roomClearPurgeRemain = GHOST_ROOM_PURGE_SHRINK_SEC
     this.velocity.set(0, 0, 0)
+    resetGhostGridNavState(this.gridNav)
   }
 
   /** Returns true once when shrink finished; `GhostSystem` then calls `destroy()`. */
@@ -586,6 +649,7 @@ class Ghost {
     this.respawnRemaining = 0
     this.velocity.set(0, 0, 0)
     this.chaseLockout = 0
+    resetGhostGridNavState(this.gridNav)
   }
 
   /**
@@ -593,6 +657,7 @@ class Ghost {
    */
   disengageAfterHit(playerPos: Vector3): void {
     this.state = 'wander'
+    this.chaseWindupRemain = 0
     this.chaseLockout = GHOST_POST_HIT_CHASE_LOCKOUT_SEC
     this.pickWanderTimer()
     const px = this.root.position.x
@@ -611,6 +676,7 @@ class Ghost {
     this.wanderAngle = Math.atan2(az, ax)
     this.root.position.x += ax * GHOST_POST_HIT_SEPARATION
     this.root.position.z += az * GHOST_POST_HIT_SEPARATION
+    resetGhostGridNavState(this.gridNav)
     this.resolveWallCollision()
     const disengage = GHOST_POST_HIT_DISENGAGE_SPEED * this.speedMul
     this.velocity.x += ax * disengage
@@ -793,11 +859,12 @@ class Ghost {
     dt: number,
     realDt: number,
     playerPos: Vector3,
-    frightened: boolean,
+    powerModeActive: boolean,
     timeSec: number,
     playerInSafeCenter: boolean,
     relicCarried: boolean,
     cinematicRoamOnly: boolean,
+    visionConeEntranceDoorOpen: boolean,
     globalSpeedMul = 1,
   ): void {
     if (this.gateClearFadeRemain > 0) {
@@ -859,11 +926,14 @@ class Ghost {
         this.velocity.set(0, 0, 0)
         this.state = 'wander'
         this.chaseLockout = 0
+        this.chaseWindupRemain = 0
+        this.chaseThrottle = 0
         this.pickWanderTimer()
         this.spawnChaseGraceRemain = randomSpawnChaseGraceSec()
         this.resetSkin()
         this.smoothedTx = 0
         this.smoothedTz = 1
+        resetGhostGridNavState(this.gridNav)
       }
       return
     }
@@ -886,16 +956,22 @@ class Ghost {
     const dz = playerPos.z - pz
     const dist = Math.hypot(dx, dz)
 
+    const frightened = powerModeActive && !this.isBossGhost()
+
     if (this.chaseLockout > 0) {
       this.chaseLockout -= dt
     }
     if (this.spawnChaseGraceRemain > 0) {
       this.spawnChaseGraceRemain -= dt
     }
+    if (this.state === 'chase' && this.chaseWindupRemain > 0) {
+      this.chaseWindupRemain = Math.max(0, this.chaseWindupRemain - realDt)
+    }
     const canHuntPlayer = this.spawnChaseGraceRemain <= 0
     const allowChase = canHuntPlayer && !cinematicRoamOnly
     if (cinematicRoamOnly && this.state === 'chase') {
       this.state = 'wander'
+      this.chaseWindupRemain = 0
       this.huntBurstRemain = 0
       this.pickWanderTimer()
       this.wanderAngle = Math.random() * Math.PI * 2
@@ -921,6 +997,7 @@ class Ghost {
     } else if (playerInSafeCenter && !relicCarried) {
       if (this.state === 'chase') {
         this.state = 'wander'
+        this.chaseWindupRemain = 0
         this.huntBurstRemain = 0
         this.visionCooldownRemain = 0
         this.pickWanderTimer()
@@ -935,6 +1012,9 @@ class Ghost {
       tz = Math.sin(this.wanderAngle)
       targetSpeed = GHOST_WANDER_SPEED
     } else if (relicCarried && allowChase) {
+      if (this.state !== 'chase') {
+        this.chaseWindupRemain = GHOST_CHASE_WINDUP_SEC
+      }
       this.state = 'chase'
       if (dist > 1e-4) {
         const inv = 1 / dist
@@ -949,6 +1029,7 @@ class Ghost {
     } else if (relicCarried && !allowChase) {
       if (this.state === 'chase') {
         this.state = 'wander'
+        this.chaseWindupRemain = 0
         this.huntBurstRemain = 0
         this.pickWanderTimer()
         this.wanderAngle = Math.random() * Math.PI * 2
@@ -967,6 +1048,7 @@ class Ghost {
         if (this.huntBurstRemain <= 0) {
           this.huntBurstRemain = 0
           this.state = 'wander'
+          this.chaseWindupRemain = 0
           this.visionCooldownRemain = GHOST_VISION_COOLDOWN_SEC
           this.pickWanderTimer()
           this.wanderAngle = Math.random() * Math.PI * 2
@@ -983,6 +1065,7 @@ class Ghost {
         if (this.huntConeLostAccum >= GHOST_HUNT_CONE_LOST_BREAK_SEC) {
           this.huntBurstRemain = 0
           this.state = 'wander'
+          this.chaseWindupRemain = 0
           this.visionCooldownRemain = GHOST_VISION_COOLDOWN_SEC
           this.pickWanderTimer()
           this.wanderAngle = Math.random() * Math.PI * 2
@@ -996,6 +1079,7 @@ class Ghost {
       if (hunting && dist > GHOST_HUNT_ABORT_RANGE) {
         this.huntBurstRemain = 0
         this.state = 'wander'
+        this.chaseWindupRemain = 0
         this.visionCooldownRemain = GHOST_VISION_COOLDOWN_SEC
         this.pickWanderTimer()
         this.wanderAngle = Math.random() * Math.PI * 2
@@ -1010,6 +1094,7 @@ class Ghost {
           this.visionCooldownRemain <= 0 &&
           sawPlayer
         ) {
+          this.chaseWindupRemain = GHOST_CHASE_WINDUP_SEC
           this.state = 'chase'
           this.huntBurstRemain =
             GHOST_HUNT_DURATION_MIN +
@@ -1043,52 +1128,66 @@ class Ghost {
       }
     }
 
+    const chaseAiActive =
+      this.state === 'chase' && this.chaseWindupRemain <= 0
+
+    if (!frightened && chaseAiActive) {
+      targetSpeed =
+        GHOST_WANDER_SPEED +
+        (targetSpeed - GHOST_WANDER_SPEED) * this.chaseThrottle
+    }
+
     targetSpeed *= this.speedMul * globalSpeedMul
+    void (tx + tz)
 
-    const rawLen = Math.hypot(tx, tz)
-    if (rawLen > 1e-5) {
-      tx /= rawLen
-      tz /= rawLen
-    }
-
-    let dirSmooth = GHOST_DIRECTION_SMOOTH_WANDER
+    const roomBounds = getGhostGridBoundsAt(px, pz)
+    let gridMode: GhostGridNavMode
     if (frightened) {
-      dirSmooth = GHOST_DIRECTION_SMOOTH_FRIGHT
-    } else if (
-      this.state === 'chase' &&
-      (relicCarried || this.huntBurstRemain > 0)
-    ) {
-      dirSmooth = GHOST_DIRECTION_SMOOTH_CHASE
-    }
-    const dirK = 1 - Math.exp(-dirSmooth * dt)
-    this.smoothedTx += (tx - this.smoothedTx) * dirK
-    this.smoothedTz += (tz - this.smoothedTz) * dirK
-    const sl = Math.hypot(this.smoothedTx, this.smoothedTz)
-    if (sl > 1e-5) {
-      this.smoothedTx /= sl
-      this.smoothedTz /= sl
+      gridMode = 'fright'
+    } else if (chaseAiActive) {
+      gridMode = 'chase'
+    } else {
+      gridMode = 'idle'
     }
 
-    const desiredVx = this.smoothedTx * targetSpeed
-    const desiredVz = this.smoothedTz * targetSpeed
-
-    let steerAccel = GHOST_STEERING_ACCEL_WANDER
+    let gridSpeed: number
     if (frightened) {
-      steerAccel = GHOST_STEERING_ACCEL_FRIGHT
-    } else if (
-      this.state === 'chase' &&
-      (relicCarried || this.huntBurstRemain > 0)
-    ) {
-      steerAccel = GHOST_STEERING_ACCEL_CHASE
+      gridSpeed = GHOST_GRID_FRIGHT_SPEED
+    } else if (chaseAiActive) {
+      const peak =
+        this.huntBurstRemain > 0
+          ? GHOST_GRID_HUNT_SPEED
+          : GHOST_GRID_CHASE_SPEED
+      gridSpeed =
+        GHOST_GRID_WANDER_SPEED +
+        (peak - GHOST_GRID_WANDER_SPEED) * this.chaseThrottle
+    } else {
+      gridSpeed = GHOST_GRID_WANDER_SPEED
     }
-    const k = 1 - Math.exp(-steerAccel * dt)
-    this.velocity.x += (desiredVx - this.velocity.x) * k
-    this.velocity.z += (desiredVz - this.velocity.z) * k
+    gridSpeed *= this.speedMul * globalSpeedMul
 
-    this.scratch.set(this.velocity.x * dt, 0, this.velocity.z * dt)
-    this.root.position.add(this.scratch)
-
+    const gStep = stepGhostGridNav(
+      this.gridNav,
+      px,
+      pz,
+      dt,
+      gridSpeed,
+      roomBounds,
+      gridMode,
+      playerPos.x,
+      playerPos.z,
+      this.worldCollision,
+      this.collisionRadius,
+      Math.random,
+    )
+    this.root.position.x = gStep.x
+    this.root.position.z = gStep.z
+    this.velocity.x = gStep.vx
+    this.velocity.z = gStep.vz
+    this.smoothedTx = gStep.fx
+    this.smoothedTz = gStep.fz
     this.resolveWallCollision()
+    this.applyEdgeNudge(targetSpeed)
 
     /**
      * Face toward smoothed intent (not raw velocity). Wall resolution only moves position;
@@ -1108,8 +1207,7 @@ class Ghost {
     /** Run clip during pulse flee and during chase; idle only for calm wander. */
     const chaseAnim =
       frightened ||
-      (this.state === 'chase' &&
-        (relicCarried || this.huntBurstRemain > 0))
+      (chaseAiActive && (relicCarried || this.huntBurstRemain > 0))
     const anim = this.root.userData.updateGhostAnimation as
       | ((
           dt: number,
@@ -1123,6 +1221,7 @@ class Ghost {
 
     if (this.visionConeMesh) {
       const show =
+        visionConeEntranceDoorOpen &&
         !this.eaten &&
         this.roomClearPurgeRemain <= 0 &&
         this.gateClearFadeRemain <= 0
@@ -1130,8 +1229,7 @@ class Ghost {
       if (show) {
         const mat = this.visionConeMesh.material as MeshBasicMaterial
         const chasing =
-          this.state === 'chase' &&
-          (relicCarried || this.huntBurstRemain > 0)
+          chaseAiActive && (relicCarried || this.huntBurstRemain > 0)
         mat.opacity = chasing
           ? GHOST_VISION_CONE_OPACITY_CHASE
           : GHOST_VISION_CONE_OPACITY
@@ -1159,7 +1257,20 @@ class Ghost {
       g.attributes.position!.needsUpdate = true
     }
 
-    this.applyEdgeNudge(targetSpeed)
+    if (frightened) {
+      this.chaseThrottle = 0
+    } else if (chaseAiActive) {
+      this.chaseThrottle = Math.min(
+        1,
+        this.chaseThrottle + realDt / GHOST_CHASE_RAMP_UP_SEC,
+      )
+    } else {
+      this.chaseThrottle = Math.max(
+        0,
+        this.chaseThrottle - realDt / GHOST_CHASE_RAMP_DOWN_SEC,
+      )
+    }
+
     this.excludeFromSafeCenterRoom()
     this.resolveWallCollision()
   }

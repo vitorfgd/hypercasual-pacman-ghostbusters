@@ -14,6 +14,8 @@ export type WispItem = ItemCore & {
   type: 'wisp'
   /** Color variation for glow / zone read */
   hue: number
+  /** When set, this wisp counts toward that room’s grid cleanliness and reveal rules. */
+  spawnRoomId?: RoomId
 }
 
 export type RelicItem = ItemCore & {
@@ -34,6 +36,13 @@ export type GemItem = ItemCore & {
   gemColor: GemColor
 }
 
+/** Pac-Man-style power pickup — activates temporary ghost-vulnerable mode. */
+export type PowerPelletItem = ItemCore & {
+  kind: 'collectible'
+  type: 'power_pellet'
+  spawnRoomId?: RoomId
+}
+
 /** Room junk — seven GLB variants; mesh variant drives floor + stack shape. */
 export type ClutterVariant = 0 | 1 | 2 | 3 | 4 | 5 | 6
 
@@ -47,4 +56,4 @@ export type ClutterItem = ItemCore & {
   haunted: boolean
 }
 
-export type GameItem = WispItem | RelicItem | GemItem | ClutterItem
+export type GameItem = WispItem | RelicItem | GemItem | PowerPelletItem | ClutterItem

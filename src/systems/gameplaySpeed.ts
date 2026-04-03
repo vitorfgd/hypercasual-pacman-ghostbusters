@@ -1,27 +1,36 @@
 /**
- * Player vs ghost: base speed is tuned so open-field kiting is possible while wandering.
- * Ghost **chase** (relic / vision hunt) is intentionally faster than the player — threat is
- * avoidance and LOS, not footraces.
+ * Player vs ghost: arcade pacing — readable speeds, small chase advantage.
+ * Grid ghosts: wander < player < chase/hunt (chase ramps up over `GHOST_CHASE_RAMP_UP_SEC`).
  * All values: world units/sec (XZ).
  */
 
-/** Default max horizontal speed at full stick (before upgrades & pulse mult). */
-export const PLAYER_BASE_MAX_SPEED = 10.5
+/** Default max grid / run speed (before upgrades & pulse mult). Deliberate, not slippery. */
+export const PLAYER_BASE_MAX_SPEED = 8.0
 
 /**
- * Brief multiplier when the stick goes from idle → active (tighter initial response).
+ * Brief multiplier when the stick goes from idle → active — keep subtle for grid control.
  */
-export const PLAYER_START_BOOST_MULT = 1.14
-export const PLAYER_START_BOOST_DURATION_SEC = 0.12
+export const PLAYER_START_BOOST_MULT = 1.05
+export const PLAYER_START_BOOST_DURATION_SEC = 0.08
 
-/** Ghost patrol speed (NORMAL wander) — slower, calmer roam */
-export const GHOST_WANDER_SPEED = 3.55 * 1.08
+const P = PLAYER_BASE_MAX_SPEED
 
-/** Ghost chase when pursuing relic carrier — above player max; tuned for reaction time. */
-export const GHOST_CHASE_SPEED = 14.5
+/** Hub / corridor steering (non-grid). Slower than player when roaming. */
+export const GHOST_WANDER_SPEED = P * 0.68
 
-/** Vision-cone hunt burst — fast but readable; LOS must be kept or hunt breaks. */
-export const GHOST_HUNT_SPEED = 17.5
+/** Chase — a bit below base player max so grid escapes read; upgrades still widen the gap. */
+export const GHOST_CHASE_SPEED = P * 0.93
 
-/** Ghost flee speed in FRIGHTENED (power mode) — slightly slower than chase, still readable */
-export const GHOST_FRIGHT_SPEED = 5.15 * 1.08
+/** Vision hunt — small bump over chase, still under a full sprint feel. */
+export const GHOST_HUNT_SPEED = P * 0.96
+
+/** Power mode flee — clearly below player so you can catch them. */
+export const GHOST_FRIGHT_SPEED = P * 0.72
+
+/**
+ * Grid (Pac-Man-style): same ratios as steering path; primary balance for rooms.
+ */
+export const GHOST_GRID_WANDER_SPEED = P * 0.68
+export const GHOST_GRID_CHASE_SPEED = P * 0.93
+export const GHOST_GRID_HUNT_SPEED = P * 0.96
+export const GHOST_GRID_FRIGHT_SPEED = P * 0.72

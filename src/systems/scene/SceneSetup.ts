@@ -35,11 +35,9 @@ export type SceneContents = {
 
 export function createScene(
   playerGltfTemplate: PlayerGltfTemplate | null = null,
-  /** Mixed into procedural floor decor — new value each run. */
-  runSeed = 0,
 ): SceneContents {
   const scene = new Scene()
-  const ground = createMansionGround(runSeed)
+  const ground = createMansionGround()
   scene.add(ground)
 
   const playerRoot = new Group()

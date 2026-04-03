@@ -1,6 +1,8 @@
 import type { Group, PerspectiveCamera } from 'three'
 import { Vector3 } from 'three'
 import {
+  CAMERA_POWER_MODE_PULL_Y,
+  CAMERA_POWER_MODE_PULL_Z,
   CAMERA_EXTRA_ZOOM_HEAVY,
   CAMERA_HEAVY_STACK_FILL,
   CAMERA_OFFSET_BASE,
@@ -56,6 +58,9 @@ export class CameraRig {
   private mode: CameraMode
   private readonly otsLookSmoothed = new Vector3()
   private otsLookInitialized = false
+  /** 0…1 — power mode pulls camera slightly for feedback. */
+  private powerBlend = 0
+  private powerBlendTarget = 0
 
   constructor(
     camera: PerspectiveCamera,
@@ -88,6 +93,11 @@ export class CameraRig {
     this.otsLookInitialized = false
   }
 
+  /** Call from `Game` while Pac-Man-style power mode is active. */
+  setPowerModeActive(active: boolean): void {
+    this.powerBlendTarget = active ? 1 : 0
+  }
+
   /** Instant follow target (same as `update` goal, without per-frame smoothing) — for cinematics. */
   getDesiredCameraPosition(out: Vector3): void {
     if (this.mode === 'top_down') {
@@ -101,10 +111,12 @@ export class CameraRig {
     this.target.getWorldPosition(playerPos)
     const fill = Math.max(0, Math.min(1, this.getStackFillRatio()))
     const zoom = stackZoomMul(fill)
+    const py = this.powerBlend * CAMERA_POWER_MODE_PULL_Y
+    const pz = this.powerBlend * CAMERA_POWER_MODE_PULL_Z
     offsetWithZoom.set(
       CAMERA_OFFSET_BASE.x,
-      CAMERA_OFFSET_BASE.y + zoom * CAMERA_STACK_ZOOM_Y,
-      CAMERA_OFFSET_BASE.z + zoom * CAMERA_STACK_ZOOM_Z,
+      CAMERA_OFFSET_BASE.y + zoom * CAMERA_STACK_ZOOM_Y + py,
+      CAMERA_OFFSET_BASE.z + zoom * CAMERA_STACK_ZOOM_Z + pz,
     )
     out.copy(playerPos).add(offsetWithZoom)
   }
@@ -116,14 +128,17 @@ export class CameraRig {
     this.target.getWorldPosition(playerPos)
     const fill = Math.max(0, Math.min(1, this.getStackFillRatio()))
     const zoom = stackZoomMul(fill)
-    const dist = CAMERA_OTS_DISTANCE + zoom * 0.11
+    const dist =
+      CAMERA_OTS_DISTANCE + zoom * 0.11 + this.powerBlend * 0.38
     const yaw = this.getFacingYaw()
     const sn = Math.sin(yaw)
     const cs = Math.cos(yaw)
+    /** Behind player along facing; forward on XZ is (-sn,-cs) to match look-at + PlayerController yaw. */
     const bx = sn * dist
     const bz = cs * dist
-    const rx = cs * CAMERA_OTS_SHOULDER_OFFSET
-    const rz = -sn * CAMERA_OTS_SHOULDER_OFFSET
+    /** Lateral offset perpendicular to forward — sign matches “camera on player’s right”. */
+    const rx = -cs * CAMERA_OTS_SHOULDER_OFFSET
+    const rz = sn * CAMERA_OTS_SHOULDER_OFFSET
     out.set(
       playerPos.x + bx + rx,
       playerPos.y + CAMERA_OTS_HEIGHT,
@@ -146,6 +161,9 @@ export class CameraRig {
   }
 
   update(dt: number): void {
+    const pk = 1 - Math.exp(-5.5 * dt)
+    this.powerBlend += (this.powerBlendTarget - this.powerBlend) * pk
+
     if (this.mode === 'top_down') {
       this.getDesiredTopDown(desired)
       const k = 1 - Math.exp(-this.smooth * dt)

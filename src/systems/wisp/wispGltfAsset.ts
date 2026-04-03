@@ -2,13 +2,9 @@ import {
   AnimationClip,
   AnimationMixer,
   Box3,
-  Color,
   Group,
   LoopRepeat,
   Mesh,
-  MeshBasicMaterial,
-  MeshPhysicalMaterial,
-  MeshStandardMaterial,
   SkinnedMesh,
   type Object3D,
   Vector3,
@@ -80,40 +76,6 @@ export async function loadWispPickupGltf(url: string): Promise<boolean> {
   }
 }
 
-function tintWispMaterials(root: Group, hue: number): void {
-  const tint = new Color().setHSL(hue, 0.52, 0.62)
-  const emTint = new Color().setHSL(hue, 0.58, 0.52)
-  root.traverse((o) => {
-    if (!(o instanceof Mesh) && !(o instanceof SkinnedMesh)) return
-    o.castShadow = false
-    o.receiveShadow = false
-    const mats = Array.isArray(o.material) ? o.material : [o.material]
-    for (const mat of mats) {
-      if (mat instanceof MeshStandardMaterial || mat instanceof MeshPhysicalMaterial) {
-        const lum = mat.color.r + mat.color.g + mat.color.b
-        if (lum < 0.06) {
-          mat.color.copy(tint)
-        } else {
-          mat.color.lerp(tint, 0.38)
-        }
-        mat.emissive.lerp(emTint, 0.55)
-        mat.emissiveIntensity = Math.max(mat.emissiveIntensity ?? 0, 0.65)
-        if (mat.opacity < 0.02) {
-          mat.opacity = 1
-          mat.transparent = false
-        }
-        mat.depthWrite = !mat.transparent || mat.opacity >= 0.98
-      } else if (mat instanceof MeshBasicMaterial) {
-        mat.color.lerp(tint, 0.55)
-        if (mat.opacity < 0.02) {
-          mat.opacity = 1
-          mat.transparent = false
-        }
-      }
-    }
-  })
-}
-
 /** GLTF often wraps the rig in a single child. */
 function mixerRootForGltfClone(root: Group): Object3D {
   if (root.children.length === 1) {
@@ -139,15 +101,13 @@ export type CloneWispFromGltfOpts = {
 }
 
 export function cloneWispPickupFromGltf(
-  hue: number,
+  _hue: number,
   opts?: CloneWispFromGltfOpts,
 ): Group {
   const proto = wispPrototype!
   const root = cloneSkeletonSafe(proto) as Group
   root.name = 'wispSoulPickup'
   root.userData.wispGltf = true
-
-  tintWispMaterials(root, hue)
 
   root.updateMatrixWorld(true)
   const box = new Box3().setFromObject(root)

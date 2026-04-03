@@ -10,7 +10,7 @@ export type PickupIdleState = {
   spinRadPerSec: number
 }
 
-/** Visual-only idle motion — only adjusts Y + spin so magnet pull on XZ still works. */
+/** Visual-only idle motion — only adjusts Y + spin; XZ stays fixed for pickup placement. */
 export type PickupMotionProfile = 'wisp' | 'pellet'
 
 export function attachPickupIdleMotion(

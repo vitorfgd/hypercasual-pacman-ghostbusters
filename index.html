@@ -42,7 +42,7 @@
         <div id="hud-hit-flash" class="hud-hit-flash" aria-hidden="true"></div>
         <div id="hud-top" class="hud-top" aria-live="polite">
           <div class="hud-main-row">
-            <span id="hud-carry" class="hud-stat hud-stat--carry">0 / 10</span>
+            <span id="hud-carry" class="hud-stat hud-stat--carry">0</span>
             <span
               id="hud-camera-hint"
               class="hud-stat hud-stat--cam"
@@ -85,14 +85,15 @@
         <div id="hud-bottom" class="hud-bottom" aria-live="polite">
           <div id="hud-spawn" class="hud-spawn"></div>
         </div>
-        <div id="hud-overload" class="hud-overload hidden" aria-live="polite">
-          <div class="hud-overload-label">OVERLOAD</div>
-          <div class="hud-overload-amount"></div>
-        </div>
         <div id="hud-deposit-toast" class="deposit-toast hidden" aria-live="polite">
           <div class="deposit-amount"></div>
           <div class="deposit-hint"></div>
         </div>
+        <pre
+          id="nav-debug-hud"
+          class="nav-debug-hud"
+          aria-label="Movement debug"
+        ></pre>
       </div>
     </div>
     <script type="module" src="/src/main.ts"></script>

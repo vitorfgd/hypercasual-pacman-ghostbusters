@@ -32,11 +32,14 @@ export function segmentIntersectWallAabbs(
 
 /**
  * World wall collision: circle vs static AABBs + soft outer clamp.
+ *
+ * Base slabs (`mansionWalls`) include door jambs and corridor sides; those fight the arcade
+ * grid inside rooms. The player passes `ignoreBaseWallColliders` while inside a room floor
+ * so only **door extras** (locked / swinging leaves) still apply.
  */
 export class WorldCollision {
   private readonly base: readonly AabbXZ[]
-  /** Built in `setExtraColliders` — avoids per-entity `[...base, ...extra]` allocs in hot paths. */
-  private mergedForResolve: readonly AabbXZ[] | null = null
+  private extra: readonly AabbXZ[] = []
 
   constructor(boxes: readonly AabbXZ[] = MANSION_WALL_COLLIDERS) {
     this.base = boxes
@@ -44,12 +47,24 @@ export class WorldCollision {
 
   /** Door blockers while locked — replaced each sync. */
   setExtraColliders(boxes: AabbXZ[]): void {
-    this.mergedForResolve =
-      boxes.length === 0 ? this.base : [...this.base, ...boxes]
+    this.extra = boxes
   }
 
-  resolveCircleXZ(x: number, z: number, radius: number): { x: number; z: number } {
-    const boxes = this.mergedForResolve ?? this.base
+  private allWallBoxes(): readonly AabbXZ[] {
+    return this.extra.length === 0 ? this.base : [...this.base, ...this.extra]
+  }
+
+  /**
+   * @param ignoreBaseWallColliders When true, only `extra` (doors) are solid — use on the
+   *   player inside `RoomSystem.getRoomAt` so room cells are not nudged by jamb geometry.
+   */
+  resolveCircleXZ(
+    x: number,
+    z: number,
+    radius: number,
+    ignoreBaseWallColliders = false,
+  ): { x: number; z: number } {
+    const boxes = ignoreBaseWallColliders ? this.extra : this.allWallBoxes()
     let o = resolveCircleVsAabbs(x, z, radius, boxes)
     const m = MANSION_WORLD_HALF - radius
     o = {
@@ -67,7 +82,7 @@ export class WorldCollision {
     z1: number,
     samples = 10,
   ): boolean {
-    const boxes = this.mergedForResolve ?? this.base
+    const boxes = this.allWallBoxes()
     return !segmentIntersectWallAabbs(x0, z0, x1, z1, boxes, samples)
   }
 }

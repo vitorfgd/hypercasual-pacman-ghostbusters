@@ -145,7 +145,7 @@ export class DepositController {
       zone !== null &&
       this.sessionSnapshot === null &&
       this.stack.count > 0 &&
-      (!this.wasInside || this.stack.count >= this.stack.maxCapacity)
+      !this.wasInside
     ) {
       this.beginDepositSession(zone)
     }

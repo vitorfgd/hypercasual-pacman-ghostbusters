@@ -4,6 +4,7 @@ import {
   createClutterPickupMesh,
   createGemPickupMesh,
   createPelletStackMesh,
+  createPowerPelletPickupMesh,
   createRelicPickupMesh,
   createWispPickupMesh,
 } from '../../themes/pellet/pelletMeshes.ts'
@@ -14,6 +15,9 @@ export function createPickupMesh(item: GameItem): Object3D {
   }
   if (item.type === 'gem') {
     return createGemPickupMesh(item.gemColor)
+  }
+  if (item.type === 'power_pellet') {
+    return createPowerPelletPickupMesh()
   }
   if (item.type === 'clutter') {
     return createClutterPickupMesh(item.clutterVariant)

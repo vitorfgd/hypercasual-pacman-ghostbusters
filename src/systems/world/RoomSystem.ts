@@ -8,35 +8,41 @@ import {
   type RoomDef,
   type RoomId,
 } from './mansionRoomData.ts'
+import { resolveGridBoundsAt } from '../grid/gridBoundsResolve.ts'
+import { ROOM_GRID_COLS, ROOM_GRID_ROWS } from '../grid/gridConfig.ts'
+import { boundsKey, cellCenterWorld } from '../grid/roomGridGeometry.ts'
+
+function findBoundsByKey(key: string): RoomBounds | null {
+  for (const r of ROOM_LIST) {
+    if (boundsKey(r.bounds) === key) return r.bounds
+  }
+  for (const b of CORRIDOR_BOUNDS) {
+    if (boundsKey(b) === key) return b
+  }
+  return null
+}
+
+/** Previous-frame grid cell; used so nav bounds match room grid when physics nudges into a door strip. */
+export type GridNavContext = {
+  boundsKey: string
+  atRow: number
+  atCol: number
+}
 
 export type AreaId = RoomId | 'CORRIDOR'
 
-/**
- * Single entry point for room/area queries (player, enemies, spawning, AI).
- * Stateless except optional RNG for random room picks.
- * Per-room cleanliness (0–100%) is tracked by `RoomCleanlinessSystem` using `getRoomAt` / clutter `spawnRoomId`.
- *
- * `configureRoomAccess` wires north-chain **door unlock** state (see `DoorUnlockSystem.canAccessRoomForSpawning`).
- */
 export class RoomSystem {
   private readonly random: () => number
-  /** Set from `Game` after doors exist — used for clutter visibility / locked-room rules. */
   private roomAccess: ((roomId: RoomId) => boolean) | null = null
 
   constructor(random: () => number = Math.random) {
     this.random = random
   }
 
-  /**
-   * Call once when `DoorUnlockSystem` is ready. Determines which `ROOM_*` interiors are reachable.
-   */
   configureRoomAccess(canEnterRoom: (roomId: RoomId) => boolean): void {
     this.roomAccess = canEnterRoom
   }
 
-  /**
-   * Whether gameplay may show pickups / spawns in this room (doors before this room index must be passable).
-   */
   isRoomAccessibleForGameplay(roomId: RoomId): boolean {
     if (this.roomAccess === null) {
       return !roomId.startsWith('ROOM_')
@@ -44,7 +50,6 @@ export class RoomSystem {
     return this.roomAccess(roomId)
   }
 
-  /** Room interior hit-test; corridors return null. */
   getRoomAt(x: number, z: number): RoomId | null {
     for (const r of ROOM_LIST) {
       const b = r.bounds
@@ -55,7 +60,6 @@ export class RoomSystem {
     return null
   }
 
-  /** Room if inside an interior, else `CORRIDOR` if in a door gap, else null. */
   getAreaAt(x: number, z: number): AreaId | null {
     const room = this.getRoomAt(x, z)
     if (room !== null) return room
@@ -100,6 +104,72 @@ export class RoomSystem {
     return ROOMS[roomId].bounds
   }
 
+  getGridBoundsAt(x: number, z: number): RoomBounds {
+    return resolveGridBoundsAt(x, z)
+  }
+
+  getNavGridBounds(
+    x: number,
+    z: number,
+    nav: GridNavContext | null,
+  ): RoomBounds {
+    const primary = this.getGridBoundsAt(x, z)
+    const sticky =
+      nav !== null && nav.boundsKey !== ''
+        ? findBoundsByKey(nav.boundsKey)
+        : null
+
+    const stickyCC =
+      sticky !== null && nav !== null
+        ? cellCenterWorld(
+            sticky,
+            nav.atRow,
+            nav.atCol,
+            ROOM_GRID_ROWS,
+            ROOM_GRID_COLS,
+          )
+        : null
+
+    const distToSticky =
+      stickyCC !== null
+        ? Math.hypot(x - stickyCC.x, z - stickyCC.z)
+        : Infinity
+
+    const narrow = (b: RoomBounds) => b.maxX - b.minX < 7
+    const full = (b: RoomBounds) => !narrow(b)
+
+    const STICKY_R = 3.35
+    const HARD_SWITCH_R = 4.25
+
+    if (sticky !== null && nav !== null && stickyCC !== null) {
+      // Prefer the current logical region while still reasonably near its cell center.
+      if (distToSticky <= STICKY_R) {
+        return sticky
+      }
+
+      // If raw says corridor / narrow strip, keep sticky unless we've clearly moved away.
+      if (narrow(primary) && distToSticky <= HARD_SWITCH_R) {
+        return sticky
+      }
+
+      // Only switch to another full room once we're clearly away from the old logical cell.
+      if (
+        full(primary) &&
+        boundsKey(primary) !== nav.boundsKey &&
+        distToSticky >= HARD_SWITCH_R
+      ) {
+        return primary
+      }
+
+      // Default to sticky while in the ambiguous zone.
+      if (distToSticky < HARD_SWITCH_R) {
+        return sticky
+      }
+    }
+
+    return primary
+  }
+
   roomCenter(roomId: RoomId): { x: number; z: number } {
     return roomCenterFromData(roomId)
   }
@@ -108,17 +178,14 @@ export class RoomSystem {
     return ROOMS[roomId].type === 'safe'
   }
 
-  /** Wisps only in `normal` rooms (not safe center). */
   allowsWispSpawns(roomId: RoomId): boolean {
     return ROOMS[roomId].type === 'normal'
   }
 
-  /** Enemies only outside the safe room. */
   allowsEnemySpawns(roomId: RoomId): boolean {
     return ROOMS[roomId].type === 'normal'
   }
 
-  /** All non-safe room ids (wisps, enemies). */
   getSpawnEligibleRoomIds(): RoomId[] {
     return ROOM_LIST.filter((r) => r.type === 'normal').map((r) => r.id)
   }
@@ -128,9 +195,6 @@ export class RoomSystem {
     return ids[Math.floor(this.random() * ids.length)]!
   }
 
-  /**
-   * Random subset of spawn-eligible rooms. If `count` exceeds unique normals, repeats with replacement.
-   */
   pickRandomSpawnRooms(count: number, unique = true): RoomId[] {
     const pool = this.getSpawnEligibleRoomIds()
     if (count <= 0) return []

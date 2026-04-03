@@ -1,43 +1,45 @@
-import type { ClutterItem } from '../../core/types/GameItem.ts'
 import { roomIndexFromId } from '../doors/doorLayout.ts'
 import type { RoomId } from './mansionRoomData.ts'
-import { cleanlinessPercentPerClutter } from './roomCleanlinessConfig.ts'
+import { cleanlinessPercentPerGridWisp } from './roomCleanlinessConfig.ts'
 import { doorIndexToOpenWhenRoomCleared } from './roomCleanlinessLayout.ts'
 
 export type RoomCleanlinessSystemOptions = {
   onRoomCleared: (roomId: RoomId, doorIndex: number | null) => void
+  /** Per-room total grid wisps (from `planAllRoomGrids`); drives % per pickup. */
+  wispTotalsByRoom: ReadonlyMap<RoomId, number>
 }
 
 /**
- * Tracks 0–100% cleanliness per `ROOM_*`. Progress only from clutter whose
- * `spawnRoomId` matches that room (see `ClutterItem.spawnRoomId`).
+ * Tracks 0–100% cleanliness per `ROOM_*` from collecting grid wisps in that room.
  */
 export class RoomCleanlinessSystem {
   private readonly progress = new Map<RoomId, number>()
   private readonly cleared = new Set<RoomId>()
   private readonly onRoomCleared: RoomCleanlinessSystemOptions['onRoomCleared']
+  private readonly wispTotalsByRoom: ReadonlyMap<RoomId, number>
 
   constructor(opts: RoomCleanlinessSystemOptions) {
     this.onRoomCleared = opts.onRoomCleared
+    this.wispTotalsByRoom = opts.wispTotalsByRoom
   }
 
-  registerClutterCollected(item: ClutterItem): void {
-    const room = item.spawnRoomId
-    if (!isTrackableRoom(room)) return
-    if (this.cleared.has(room)) return
+  registerGridWispCollected(roomId: RoomId): void {
+    if (!isTrackableRoom(roomId)) return
+    if (this.cleared.has(roomId)) return
 
-    const idx = roomIndexFromId(room)
+    const idx = roomIndexFromId(roomId)
     if (idx === null || idx < 1) return
-    const cur = this.progress.get(room) ?? 0
-    const next = Math.min(
-      100,
-      cur + cleanlinessPercentPerClutter(idx),
-    )
-    this.progress.set(room, next)
+    const total = this.wispTotalsByRoom.get(roomId) ?? 0
+    const step = cleanlinessPercentPerGridWisp(total)
+    if (step <= 0) return
+
+    const cur = this.progress.get(roomId) ?? 0
+    const next = Math.min(100, cur + step)
+    this.progress.set(roomId, next)
 
     if (next >= 100 - 1e-5) {
-      this.cleared.add(room)
-      this.onRoomCleared(room, doorIndexToOpenWhenRoomCleared(room))
+      this.cleared.add(roomId)
+      this.onRoomCleared(roomId, doorIndexToOpenWhenRoomCleared(roomId))
     }
   }
 

@@ -2,11 +2,7 @@ import { PLAYER_MAX_LIVES } from '../../juice/juiceConfig.ts'
 import type { PlayerController } from '../player/PlayerController.ts'
 import type { CarryStack } from '../stack/CarryStack.ts'
 import { RunUpgradeState } from './runUpgradeState.ts'
-import {
-  INITIAL_STACK_CAPACITY,
-  MAX_SPEED_UPGRADE_LEVELS,
-  speedForLevel,
-} from './upgradeConfig.ts'
+import { MAX_SPEED_UPGRADE_LEVELS, speedForLevel } from './upgradeConfig.ts'
 
 export type RunUpgradeOffer = {
   id: string
@@ -67,22 +63,6 @@ const DEFINITIONS: readonly UpgradeDef[] = [
     },
   },
   {
-    id: 'bag-expansion',
-    title: 'Bag expansion',
-    description: 'Carry one more item in your stack.',
-    stackable: true,
-    isEligible: (s) => s.canTakeCapacity(),
-    apply: ({ state, stack }) => {
-      state.capacityLevel += 1
-      stack.setMaxCapacity(INITIAL_STACK_CAPACITY + state.capacityLevel)
-      return {
-        bannerSubtitle: 'MORE BAG SPACE',
-        floatText: `Carry ${state.maxCapacitySlots} slots`,
-        floatClass: 'float-hud--level-up',
-      }
-    },
-  },
-  {
     id: 'steady-hands',
     title: 'Steady hands',
     description: 'Lose fewer items when a ghost hits you.',
@@ -118,54 +98,6 @@ const DEFINITIONS: readonly UpgradeDef[] = [
     },
   },
   {
-    id: 'magnet-band',
-    title: 'Wide magnet',
-    description: 'Vacuum pulls pickups from farther away.',
-    stackable: true,
-    maxStacks: 4,
-    isEligible: (s) => s.magnetRangeStacks < 4,
-    apply: ({ state }) => {
-      state.magnetRangeStacks += 1
-      return {
-        bannerSubtitle: 'WIDER MAGNET',
-        floatText: 'Pickup reach increased',
-        floatClass: 'float-hud--level-up',
-      }
-    },
-  },
-  {
-    id: 'vacuum-pull',
-    title: 'Stronger pull',
-    description: 'Items slide toward you faster in the outer band.',
-    stackable: true,
-    maxStacks: 4,
-    isEligible: (s) => s.magnetPullStacks < 4,
-    apply: ({ state }) => {
-      state.magnetPullStacks += 1
-      return {
-        bannerSubtitle: 'STRONGER PULL',
-        floatText: 'Snappier vacuum',
-        floatClass: 'float-hud--level-up',
-      }
-    },
-  },
-  {
-    id: 'portal-tug',
-    title: 'Portal tug',
-    description: 'Trash portals pull you in harder when carrying items.',
-    stackable: true,
-    maxStacks: 4,
-    isEligible: (s) => s.trashSuctionStacks < 4,
-    apply: ({ state }) => {
-      state.trashSuctionStacks += 1
-      return {
-        bannerSubtitle: 'PORTAL TUG',
-        floatText: 'Heavier portal pull',
-        floatClass: 'float-hud--level-up',
-      }
-    },
-  },
-  {
     id: 'echo-bait',
     title: 'Echo bait',
     description: 'Haunted clutter is a bit more common (more ghosts, more risk).',
@@ -194,22 +126,6 @@ const DEFINITIONS: readonly UpgradeDef[] = [
       return {
         bannerSubtitle: 'SPECTRAL BARGAIN',
         floatText: 'Slower ghosts · spookier clutter',
-        floatClass: 'float-hud--level-up',
-      }
-    },
-  },
-  {
-    id: 'scavenger',
-    title: 'Scavenger',
-    description: 'Vacuum scattered drops (after ghost hits) more aggressively.',
-    stackable: true,
-    maxStacks: 4,
-    isEligible: (s) => s.scavengerStacks < 4,
-    apply: ({ state }) => {
-      state.scavengerStacks += 1
-      return {
-        bannerSubtitle: 'SCAVENGER',
-        floatText: 'Stronger recall on drops',
         floatClass: 'float-hud--level-up',
       }
     },
@@ -265,22 +181,12 @@ function stackCountFor(
   switch (def.id) {
     case 'swift-stride':
       return state.speedLevel
-    case 'bag-expansion':
-      return state.capacityLevel
     case 'steady-hands':
       return Math.round(state.ghostHitLossReduction / 0.09)
     case 'light-footing':
       return state.encumbranceReliefStacks
-    case 'magnet-band':
-      return state.magnetRangeStacks
-    case 'vacuum-pull':
-      return state.magnetPullStacks
-    case 'portal-tug':
-      return state.trashSuctionStacks
     case 'echo-bait':
       return Math.round(state.hauntedChanceBonus / 0.045)
-    case 'scavenger':
-      return state.scavengerStacks
     default:
       return 0
   }

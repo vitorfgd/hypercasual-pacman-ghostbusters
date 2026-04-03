@@ -7,6 +7,10 @@ function itemColors(item: GameItem): { color: Color; emissive: Color } {
     const c = new Color().setHSL(item.hue, 0.62, 0.55)
     return { color: c, emissive: c.clone().multiplyScalar(0.85) }
   }
+  if (item.type === 'power_pellet') {
+    const c = new Color(0x66eeff)
+    return { color: c, emissive: new Color(0x99ffff) }
+  }
   if (item.type === 'relic') {
     const c = new Color().setHSL(item.hue, 0.65, 0.52)
     return { color: c, emissive: new Color().setHSL(item.hue + 0.02, 0.75, 0.48) }

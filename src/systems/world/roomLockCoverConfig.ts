@@ -13,6 +13,8 @@ export const ROOM_LOCK_COVER_HEIGHT = 20
 export const ROOM_LOCK_COVER_HORIZONTAL_PAD = 0.12
 
 /**
- * Legacy name — blackout opacity is driven by door swing (`RoomLockCoverSystem`), not sink timing.
+ * Legacy name — blackout opacity follows door reveal time (`DoorUnlockSystem.getDoorRevealProgress01`).
+ * Shell uses `transparent: true` always so `opacity` actually fades (opaque materials ignore it in Three.js).
  */
 export const ROOM_LOCK_COVER_FADE_DELAY_SEC = 0.08
+

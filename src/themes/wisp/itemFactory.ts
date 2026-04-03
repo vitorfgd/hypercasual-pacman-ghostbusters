@@ -3,20 +3,28 @@ import type {
   ClutterVariant,
   GemColor,
   GemItem,
+  PowerPelletItem,
   RelicItem,
   WispItem,
 } from '../../core/types/GameItem.ts'
 import type { RoomId } from '../../systems/world/mansionRoomData.ts'
 import type { ZoneTone } from '../../systems/sources/sourceTypes.ts'
 
-export function createWispItem(hue: number, value: number): WispItem {
-  return {
-    id: crypto.randomUUID(),
+export function createWispItem(
+  hue: number,
+  value: number,
+  stableId?: string,
+  spawnRoomId?: RoomId,
+): WispItem {
+  const item: WispItem = {
+    id: stableId ?? crypto.randomUUID(),
     kind: 'collectible',
     type: 'wisp',
     hue,
     value,
   }
+  if (spawnRoomId !== undefined) item.spawnRoomId = spawnRoomId
+  return item
 }
 
 /** High-value timed pickup (arrow points to it while it exists in the world). */
@@ -40,6 +48,20 @@ export function createGemItem(gemColor: GemColor): GemItem {
     gemColor,
     value: 6,
   }
+}
+
+export function createPowerPelletItem(
+  stableId?: string,
+  spawnRoomId?: RoomId,
+): PowerPelletItem {
+  const item: PowerPelletItem = {
+    id: stableId ?? crypto.randomUUID(),
+    kind: 'collectible',
+    type: 'power_pellet',
+    value: 25,
+  }
+  if (spawnRoomId !== undefined) item.spawnRoomId = spawnRoomId
+  return item
 }
 
 export function createClutterItem(

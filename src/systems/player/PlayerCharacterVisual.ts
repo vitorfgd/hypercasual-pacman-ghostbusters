@@ -14,6 +14,7 @@ import {
   SphereGeometry,
 } from 'three'
 import { clone as cloneSkinnedHierarchy } from 'three/examples/jsm/utils/SkeletonUtils.js'
+import { STACK_ENCUMBRANCE_REFERENCE_ITEMS } from '../stack/stackWeightConfig.ts'
 import type { PlayerGltfTemplate } from './playerGltfAsset.ts'
 
 /** World units / sec — matches previous procedural “moving” threshold */
@@ -21,6 +22,7 @@ const MOVE_SPEED_THRESH = 0.35
 const GLB_CROSSFADE_SEC = 0.26
 /** Model scale — GLB rigs are often authored huge; keep small vs level geometry */
 const PLAYER_GLB_SCALE = 0.2
+const PLAYER_VISUAL_HOVER_Y = 0.08
 /**
  * Rig forward often opposes game forward (−Z velocity); π flips so walk matches move direction.
  */
@@ -41,7 +43,6 @@ export type PlayerCharacterAnimState = {
   /** Velocity X (world) for lateral lean */
   velX: number
   itemsCarried: number
-  maxCarry: number
   /** Ghost pulse (auto timed) — strong shirt / skin glow */
   powerMode?: boolean
   /** Ghost hit i-frames — blink read */
@@ -119,6 +120,7 @@ export class PlayerCharacterVisual {
   constructor(gltfTemplate?: PlayerGltfTemplate | null) {
     this.root = new Group()
     this.root.name = 'playerCharacter'
+    this.root.position.y = PLAYER_VISUAL_HOVER_Y
 
     this.stackAnchor = new Object3D()
     this.stackAnchor.name = 'stackAnchor'
@@ -384,21 +386,18 @@ export class PlayerCharacterVisual {
         mat.emissive.copy(snap.emissive).lerp(new Color(0xc9a020), 0.55)
         mat.emissiveIntensity = snap.emissiveIntensity + 0.4
       } else {
-        const carryT = state.maxCarry > 0 ? state.itemsCarried / state.maxCarry : 0
-        const ember = carryT >= 0.5 ? (carryT - 0.5) / 0.5 : 0
-        const fullPulse =
-          carryT >= 1
-            ? 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(state.timeSec * 9.2))
-            : 1
         mat.color.copy(snap.color)
-        mat.emissive.copy(snap.emissive).lerp(new Color(0xff5522), ember * 0.4)
-        mat.emissiveIntensity = (snap.emissiveIntensity + ember * 0.5) * fullPulse
+        mat.emissive.copy(snap.emissive)
+        mat.emissiveIntensity = snap.emissiveIntensity
       }
     }
 
-    const { timeSec, speed, velX, itemsCarried, maxCarry } = state
+    const { timeSec, speed, velX, itemsCarried } = state
     const moving = speed > MOVE_SPEED_THRESH
-    const carryT = maxCarry > 0 ? itemsCarried / maxCarry : 0
+    const carryT = Math.min(
+      1,
+      itemsCarried / Math.max(1, STACK_ENCUMBRANCE_REFERENCE_ITEMS),
+    )
 
     let bob =
       Math.sin(timeSec * 2.2) * 0.012 +
@@ -422,7 +421,7 @@ export class PlayerCharacterVisual {
     if (!this.shirtMat || !this.shirtColorSnap || !this.skinMat || !this.skinColorSnap) {
       return
     }
-    const { timeSec, speed, velX, itemsCarried, maxCarry } = state
+    const { timeSec, speed, velX, itemsCarried } = state
     const power = state.powerMode === true
     const invuln = state.ghostInvuln === true
 
@@ -430,7 +429,10 @@ export class PlayerCharacterVisual {
     const shirtColorSnap = this.shirtColorSnap
     const skinMat = this.skinMat
     const skinColorSnap = this.skinColorSnap
-    const carryT = maxCarry > 0 ? itemsCarried / maxCarry : 0
+    const carryT = Math.min(
+      1,
+      itemsCarried / Math.max(1, STACK_ENCUMBRANCE_REFERENCE_ITEMS),
+    )
 
     if (invuln) {
       const blink = 0.5 + 0.5 * Math.sin(timeSec * 14)
@@ -452,11 +454,8 @@ export class PlayerCharacterVisual {
       skinMat.emissiveIntensity = 0.26
     } else {
       shirtMat.color.copy(shirtColorSnap)
-      const ember = carryT >= 0.5 ? (carryT - 0.5) / 0.5 : 0
-      const fullPulse = carryT >= 1 ? 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(timeSec * 9.2)) : 1
       shirtMat.emissive.setHex(0x1a4060)
-      shirtMat.emissive.lerp(new Color(0xff5522), ember * 0.75)
-      shirtMat.emissiveIntensity = (0.12 + ember * 0.75) * fullPulse
+      shirtMat.emissiveIntensity = 0.12
       skinMat.color.copy(skinColorSnap)
       skinMat.emissive.setHex(0x000000)
       skinMat.emissiveIntensity = 0
