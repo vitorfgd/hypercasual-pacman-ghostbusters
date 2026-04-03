@@ -363,9 +363,6 @@ export const GHOST_POST_HIT_CHASE_LOCKOUT_SEC = 1.65
 
 // --- Power mode: eating ghosts ---
 
-/** Money granted when the player eats a ghost during power mode */
-export const GHOST_EAT_MONEY_REWARD = 38
-
 /** Visual shrink duration when captured (before hide + respawn timer). */
 export const GHOST_EAT_SHRINK_SEC = 0.38
 

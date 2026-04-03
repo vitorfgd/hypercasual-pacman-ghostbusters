@@ -75,7 +75,7 @@ function createBurstFleckMesh(item: GameItem): Mesh {
   return mesh
 }
 
-function createRelicGoldFleckMesh(): Mesh {
+function createRelicAccentFleckMesh(): Mesh {
   const r = 0.15 + Math.random() * 0.11
   const mesh = new Mesh(
     new SphereGeometry(r, 10, 8),
@@ -93,7 +93,7 @@ function createRelicGoldFleckMesh(): Mesh {
   return mesh
 }
 
-/** Gold celebratory burst when the relic is picked up (reuses `updateGhostHitBursts`). */
+/** Celebratory burst when the relic is picked up (reuses `updateGhostHitBursts`). */
 export function spawnRelicCollectBurst(
   parent: Group,
   origin: Vector3,
@@ -101,7 +101,7 @@ export function spawnRelicCollectBurst(
   const n = 16
   const out: GhostHitBurstParticle[] = []
   for (let i = 0; i < n; i++) {
-    const mesh = createRelicGoldFleckMesh()
+    const mesh = createRelicAccentFleckMesh()
     mesh.position.copy(origin)
     mesh.position.y += 0.45 + Math.random() * 0.35
     const ang = Math.random() * Math.PI * 2

@@ -83,12 +83,12 @@ export class DepositZoneFeedback {
   }
 
   /**
-   * Normal deposit complete — scales flash / zone pulse with stack size and payout.
+   * Normal deposit complete — scales flash / zone pulse with stack size and batch strength.
    */
-  triggerDepositComplete(itemCount: number, payoutCredits: number): void {
+  triggerDepositComplete(itemCount: number, depositStrength: number): void {
     this.burstRingStrong = false
     const sizeS = Math.min(1, itemCount / 11)
-    const valueS = Math.min(1, payoutCredits / 95)
+    const valueS = Math.min(1, depositStrength / 95)
     const punch = 0.28 + sizeS * 0.55 + valueS * 0.45
     this.flashTDur = FLASH_SEC * (0.82 + punch * 0.55)
     this.flashT = this.flashTDur

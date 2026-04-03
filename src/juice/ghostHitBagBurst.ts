@@ -9,7 +9,8 @@ import {
   GHOST_HIT_SCATTER_R_SPREAD,
 } from '../systems/ghost/ghostConfig.ts'
 
-const GOLDEN = 2.39996322972865332
+/** Even angular step for ring scatter (avoids clumping). */
+const PHI_STEP = 2.39996322972865332
 
 /**
  * Drops every lost stack item into the world in a tight burst (chaotic arcs).
@@ -26,7 +27,7 @@ export function spawnGhostHitDroppedItems(
   for (let i = 0; i < n; i++) {
     const it = items[i]!
     const ring = GHOST_HIT_SCATTER_R_MIN + Math.random() * GHOST_HIT_SCATTER_R_SPREAD
-    const ang = i * GOLDEN + (Math.random() - 0.5) * 1.15
+    const ang = i * PHI_STEP + (Math.random() - 0.5) * 1.15
     const jitterR = (Math.random() - 0.5) * 0.35
     const x = px + Math.cos(ang) * (ring + jitterR)
     const z = pz + Math.sin(ang) * (ring + jitterR)

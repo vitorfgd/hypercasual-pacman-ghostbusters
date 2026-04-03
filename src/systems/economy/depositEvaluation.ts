@@ -2,8 +2,10 @@ import type { GameItem } from '../../core/types/GameItem.ts'
 import { applyDepositBatchScaling } from './depositScaling.ts'
 
 export type DepositEval = {
-  credits: number
-  baseCredits: number
+  /** Scaled batch total used for overload visuals and feedback intensity. */
+  batchTotal: number
+  /** Sum of item `value` before batch multiplier. */
+  baseSum: number
   batchMultiplier: number
   itemCount: number
 }
@@ -18,17 +20,12 @@ function sumItemValues(items: GameItem[]): number {
 
 export function evaluateDeposit(items: GameItem[]): DepositEval {
   const n = items.length
-  const baseCredits = sumItemValues(items)
-  const scaled = applyDepositBatchScaling(baseCredits, n)
+  const baseSum = sumItemValues(items)
+  const scaled = applyDepositBatchScaling(baseSum, n)
   return {
-    credits: scaled.credits,
-    baseCredits,
+    batchTotal: scaled.batchTotal,
+    baseSum,
     batchMultiplier: scaled.batchMultiplier,
     itemCount: n,
   }
-}
-
-/** HUD / planning: expected payout if you banked the current stack now. */
-export function previewCarryPayout(items: readonly GameItem[]): number {
-  return evaluateDeposit([...items]).credits
 }

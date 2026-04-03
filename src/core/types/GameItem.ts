@@ -19,9 +19,9 @@ export type WispItem = ItemCore & {
 export type RelicItem = ItemCore & {
   kind: 'collectible'
   type: 'relic'
-  /** Gold tint (Three.js HSL hue) */
+  /** Warm metal tint (Three.js HSL hue) */
   hue: number
-  /** Which relic GLB mesh: `0` = calice, `1` = coin */
+  /** Which relic GLB mesh: `0` = calice, `1` = round variant */
   relicVariant: 0 | 1
 }
 
@@ -41,7 +41,7 @@ export type ClutterItem = ItemCore & {
   kind: 'collectible'
   type: 'clutter'
   clutterVariant: ClutterVariant
-  /** Room this instance was spawned in; cleanliness only credits this room. */
+  /** Room this instance was spawned in; cleanliness only counts this room. */
   spawnRoomId: RoomId
   /** When true, vacuuming spawns a ghost instead of stacking (see `CollectionSystem`). */
   haunted: boolean

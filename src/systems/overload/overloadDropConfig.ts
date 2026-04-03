@@ -5,7 +5,7 @@
 /** Minimum items in one deposit to trigger overload (large stack path) */
 export const OVERLOAD_STACK_THRESHOLD = 7
 
-/** Extra credits: floor(depositCredits * (OVERLOAD_BONUS_MULT - 1)) */
+/** Extra batch weight: floor(depositBatchTotal * (OVERLOAD_BONUS_MULT - 1)) */
 export const OVERLOAD_BONUS_MULT = 1.35
 
 /** Applied to overload bonus portion when Perfect */

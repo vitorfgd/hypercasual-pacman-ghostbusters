@@ -23,8 +23,6 @@ export class RunUpgradeState {
   trashSuctionStacks = 0
   /** Pull multiplier for items with recover state (dropped after ghost hit). */
   scavengerStacks = 0
-  /** Times "lucky find" cash upgrade was taken (scales payout). */
-  luckyFindStacks = 0
   /** One-time room-clear utility. */
   respiteCharmTaken = false
 
@@ -43,7 +41,6 @@ export class RunUpgradeState {
     this.magnetPullStacks = 0
     this.trashSuctionStacks = 0
     this.scavengerStacks = 0
-    this.luckyFindStacks = 0
     this.respiteCharmTaken = false
     this.takenOnceIds.clear()
   }

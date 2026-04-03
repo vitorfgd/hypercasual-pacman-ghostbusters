@@ -69,8 +69,17 @@ import {
 } from './ghostConfig.ts'
 import { ROOMS } from '../world/mansionRoomData.ts'
 
-/** Floor sector matching `playerInVisionCone` (range + half-angle, opening along local +Z). */
-function createGhostVisionConeMesh(): Mesh {
+/** One shared mesh (ghost spawns were each allocating a full geometry — costly on door open). */
+let sharedGhostVisionConeGeometry: BufferGeometry | null = null
+
+/** Call from `Game.dispose` after ghosts are torn down — shared cone geometry is not per-ghost. */
+export function disposeSharedGhostVisionConeGeometry(): void {
+  sharedGhostVisionConeGeometry?.dispose()
+  sharedGhostVisionConeGeometry = null
+}
+
+function getSharedGhostVisionConeGeometry(): BufferGeometry {
+  if (sharedGhostVisionConeGeometry) return sharedGhostVisionConeGeometry
   const R = GHOST_VISION_RANGE
   const half = GHOST_VISION_HALF_ANGLE_RAD
   const segs = GHOST_VISION_CONE_SEGMENTS
@@ -90,6 +99,12 @@ function createGhostVisionConeMesh(): Mesh {
   geom.setAttribute('position', new Float32BufferAttribute(positions, 3))
   geom.setIndex(indices)
   geom.computeVertexNormals()
+  sharedGhostVisionConeGeometry = geom
+  return geom
+}
+
+/** Floor sector matching `playerInVisionCone` (range + half-angle, opening along local +Z). */
+function createGhostVisionConeMesh(): Mesh {
   const mat = new MeshBasicMaterial({
     color: GHOST_VISION_CONE_COLOR,
     transparent: true,
@@ -97,10 +112,11 @@ function createGhostVisionConeMesh(): Mesh {
     depthWrite: false,
     side: DoubleSide,
   })
-  const mesh = new Mesh(geom, mat)
+  const mesh = new Mesh(getSharedGhostVisionConeGeometry(), mat)
   mesh.name = 'ghostVisionCone'
   mesh.renderOrder = 3
   mesh.frustumCulled = false
+  mesh.userData.sharedGhostGeometry = true
   return mesh
 }
 

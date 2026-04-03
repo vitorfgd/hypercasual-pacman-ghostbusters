@@ -1,6 +1,6 @@
 /**
  * Double doors: rooms unlock the **next** threshold when cleanliness hits 100%.
- * Doors do not auto-open — the player pushes them. Values below tune swing feel.
+ * Contact in the push band triggers one smooth eased open. Values below tune timing & collision.
  */
 
 /** Fallback procedural door panel height when GLB is missing. */
@@ -20,13 +20,30 @@ export const DOUBLE_DOOR_VISUAL_SCALE_Y = 1.1
 export const DOUBLE_DOOR_VISUAL_Z_NUDGE = -0.36
 
 /**
- * Stylized door frame point light (one per door, no shadows, short range).
- * Communicates locked / unlocked / passed + push feedback without darkening the scene.
+ * Focused door spotlight — narrow cone, aimed at threshold + ground in front (local door space).
+ * Communicates locked / unlocked / passed + push feedback; range keeps beam off far walls.
  */
-export const DOOR_LIGHT_POS_Y = 2.52
-export const DOOR_LIGHT_POS_Z = 0.1
-/** Tight falloff — doorway only, not whole rooms. */
-export const DOOR_LIGHT_DISTANCE = 9
+export const DOOR_SPOT_POS_X = 0
+export const DOOR_SPOT_POS_Y = 2.92
+/** Slightly “in front” of the plane (toward +Z local = hub / approach side). */
+export const DOOR_SPOT_POS_Z = 0.72
+/** Aim: doorway center horizontally, low for floor catch, forward into threshold. */
+export const DOOR_SPOT_TARGET_X = 0
+export const DOOR_SPOT_TARGET_Y = 0.2
+export const DOOR_SPOT_TARGET_Z = 0.4
+/** Full cone apex angle (radians); medium-narrow beam. */
+export const DOOR_SPOT_ANGLE = Math.PI / 6.2
+export const DOOR_SPOT_PENUMBRA = 0.38
+export const DOOR_SPOT_DISTANCE = 12
+export const DOOR_SPOT_DECAY = 2
+/**
+ * Only enable the fixture when the player is within this corridor band (cheap culling).
+ */
+export const DOOR_SPOT_ACTIVE_Z_HALF = 16
+export const DOOR_SPOT_ACTIVE_X_HALF = 7.5
+/** Default off — N doors × shadow maps is costly. When true, small maps + soft radius. */
+export const DOOR_SPOT_SHADOW_ENABLED = false
+export const DOOR_SPOT_SHADOW_MAP_SIZE = 512
 
 /** Subtle warm neutral mixed into unlocked state for readability (0 = off). */
 export const DOOR_LIGHT_BASE_WARM_MIX = 0.12
@@ -45,16 +62,16 @@ export const DOOR_LIGHT_UNLOCKED_INTENSITY = 5.2
 /** Red → green when `unlockDoor` runs (seconds). */
 export const DOOR_LIGHT_UNLOCK_TRANSITION_SEC = 0.42
 
-/** After player crosses — one-way; dim cool neutral. */
-export const DOOR_LIGHT_PASSED_COLOR = 0xaab8cc
-export const DOOR_LIGHT_PASSED_INTENSITY = 1.5
-
 export const DOOR_LIGHT_PUSH_PULSE_SEC = 0.12
 export const DOOR_LIGHT_PUSH_PULSE_MUL = 1.32
 export const DOOR_LIGHT_PUSH_VEL_THRESHOLD = 0.14
 
 /** Max swing angle (radians) when open amount = 1. */
 export const DOOR_MAX_SWING_RAD = 1.12
+
+/** One-shot open: brief hold, then full swing over this duration (ease-out cubic). */
+export const DOOR_AUTO_OPEN_ANTICIPATE_SEC = 0.05
+export const DOOR_AUTO_OPEN_DURATION_SEC = 0.52
 
 /**
  * Normalized swing (0…1) at which passage counts as clear for spawns, clutter, and collision gap.
@@ -90,26 +107,9 @@ export const ROOM_CLEAR_DOOR_CINE_APPROACH_SEC = 1.05
 export const ROOM_CLEAR_DOOR_CINE_HOLD_SEC = 1.05
 export const ROOM_CLEAR_DOOR_CINE_RETURN_SEC = 0.55
 
-/** Push strength: how fast normalized swing accelerates from player movement into the door. */
-export const DOOR_PUSH_STRENGTH = 2.45
-
-/** Angular damping per second (heavy doors). */
-export const DOOR_SWING_DAMPING = 5.2
-
-/**
- * Below this normalized swing, extra “static friction” must be overcome before the door budges.
- */
-export const DOOR_STATIC_FRICTION_THRESHOLD = 0.045
-
-/** Minimum push impulse (combined axes) to overcome static friction. */
-export const DOOR_STATIC_BREAK_SPEED = 0.65
-
-/** Half-width (X) and depth (Z) of the region where door reacts to the player body. */
+/** Half-width (X) and depth (Z) — player enters this band to trigger one-shot open. */
 export const DOOR_PUSH_ZONE_HALF_X = 1.05
 export const DOOR_PUSH_ZONE_HALF_Z = 0.55
-
-/** Optional extra resistance near 0 swing (multiplier on effective push). */
-export const DOOR_OPENING_RESISTANCE = 0.42
 
 /** Boss / progression seal: same door plane thickness as collider slab. */
 export const DOOR_COLLIDER_THICKNESS = 0.2

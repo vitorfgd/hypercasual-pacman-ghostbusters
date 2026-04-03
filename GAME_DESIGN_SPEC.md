@@ -6,7 +6,7 @@ This document describes **how the game works in the current codebase** (TypeScri
 
 ## 1. High-level concept
 
-- **Genre**: **3D** hypercasual loop on **XZ**: move, fill a **stack** with pickups, **bank** at per-room **trash portals** for money, **clear rooms** by collecting **clutter** to raise **cleanliness**, and **avoid ghosts** that strip part of the stack on contact.
+- **Genre**: **3D** hypercasual loop on **XZ**: move, fill a **stack** with pickups, **bank** at per-room **trash portals** to clear the haul, **clear rooms** by collecting **clutter** to raise **cleanliness**, and **avoid ghosts** that strip part of the stack on contact.
 - **World**: **Safe hub** (`SAFE_CENTER`) and a **linear chain** of five normal rooms (`ROOM_1` … `ROOM_5`) toward **−Z**, separated by **narrow door thresholds**. All playable rooms use the **same square footprint** (`ROOM_HALF = 8` → **16×16** world units on XZ); see `docs/MANSION_ENVIRONMENT_SPEC.md`. **Gates** along the chain start **locked** except the hub↔first-room passage; opening is driven by **room clears**, not a separate currency grind on doors.
 - **Camera**: **Top-down follow** (default) or **over-the-shoulder** (toggle **C**); movement in OTS mode is **camera-relative** on the ground plane.
 
@@ -36,10 +36,10 @@ When **`ROOM_k`** reaches 100% cleanliness (`Game.ts` → `onRoomCleared`):
 - **`DoorUnlockSystem`**: **`DOOR_COUNT` = 5** gate indices. **`DOOR_HUB_STARTS_FULLY_OPEN`**: passage **0** (hub south wall) is **open at start**. Deeper passages **1…4** open when **`ROOM_1`…`ROOM_4`** respectively reach full cleanliness and the unlock flow runs.
 - **`canAccessRoomForSpawning`**: wisps, relic spawn, clutter instantiation require **all doors before that room’s index** to be passable — so **content in deeper rooms is gated** by the chain.
 
-### 2.4 Economy (money)
+### 2.4 Deposits (trash portals)
 
-- **Depositing** items in a **trash portal disc** (`TrashPortalSystem` + `DepositController`) runs **arc flights** and **adds money** via `evaluateDeposit` / overload rules.
-- Money is shown on the HUD (`#hud-money`). **Spend sinks** for money in this build are **not** the same as older “pay pad / door gold” designs — **doors open from cleanliness**, not from spending cash on a door price.
+- **Depositing** items in a **trash portal disc** (`TrashPortalSystem` + `DepositController`) runs **arc flights** and **batch scaling** via `evaluateDeposit` / overload rules (visual feedback only — no spendable balance).
+- **Doors open from cleanliness**, not from a separate resource on doors.
 
 ### 2.5 Other progression-adjacent systems
 
@@ -56,7 +56,7 @@ When **`ROOM_k`** reaches 100% cleanliness (`Game.ts` → `onRoomCleared`):
 - **`PLAYER_MAX_LIVES`** = **3** (`juiceConfig.ts`). Shown as **♥♥♥** in `#hud-lives`.
 - Each time a **ghost contact** deals damage (same gate as stack loss: not during i-frames / cinematic / disarmed): **lose 1 life**, full-screen **−1** impact (`spawnLifeLostImpact`), strong screen shake, hearts update. **Stack loss** still applies as before.
 - **Traps** do **not** remove lives (only stack fraction / slow).
-- At **0 lives**: **`gameOver`** = true → animation loop **stops**, **Run Failed** full-screen summary (`runFailedOverlay.ts`): rooms cleared, clutter collected, money, time survived, list of upgrade titles chosen; **Retry** disposes the session and **remounts** the game via `mountGame` (no instant reload). If remount fails, falls back to `location.reload()`.
+- At **0 lives**: **`gameOver`** = true → animation loop **stops**, **Run Failed** full-screen summary (`runFailedOverlay.ts`): rooms cleared, clutter collected, time survived, list of upgrade titles chosen; **Retry** disposes the session and **remounts** the game via `mountGame` (no instant reload). If remount fails, falls back to `location.reload()`.
 
 ### 3.2 Other situations (no life loss)
 
@@ -125,7 +125,7 @@ Simplified order in `Game`’s tick:
 
 1. **Input**: Joystick (canvas) + keyboard; optional **camera-relative** remap for OTS (`applyOtsCameraRelativeMove`).
 2. **Player**: Velocity, knockback decay, wall collision, **trap** slow/damage.
-3. **World**: Doors, mansion visibility, **room cleanliness** HUD, **ghost** AI, **items**, **stack** visual, **deposit**, **wisp/relic** spawns, **camera** rig, **gate cinematic**, **money** HUD, **collection**.
+3. **World**: Doors, mansion visibility, **room cleanliness** HUD, **ghost** AI, **items**, **stack** visual, **deposit**, **wisp/relic** spawns, **camera** rig, **gate cinematic**, **collection**.
 
 ---
 
@@ -165,9 +165,9 @@ Types include **wisp**, **relic**, **gem**, **clutter** — see `core/types/Game
 
 | Region | Content |
 |--------|---------|
-| **Top** | Carry **count / max**, **camera hint** (`C · far/near`), **lives** (hearts), **money** |
+| **Top** | Carry **count / max**, **camera hint** (`C · far/near`), **lives** (hearts) |
 | | **Room cleanliness** bar + title (when in a trackable room) |
-| **Bottom** | **Toss & cash in** when at max stack; **spawn** hint area |
+| **Bottom** | **Spawn** hint area (bag auto-clears at max when not on a trash portal) |
 | Overlays | Hit flash, overload, deposit toast |
 
 ---
@@ -209,5 +209,5 @@ Vite, Three.js, `src/main.ts` → `Game`. GLB assets under `public/` with proced
 2. **Stack**, ghost **hit** strips stack **and** costs **1 life**; at **0 lives**, **Run Failed** summary + **Retry** (remount).
 3. **Clutter** → **room %** → **clear** → **pick 1 of 3 upgrades** → **gate** or **ghost purge**.
 4. **Ghosts**: wander / chase (relic + vision hunt), **compact cone + LOS**, **high chase speeds**, contact damage, room clear removes/fades.
-5. **Trash portal** deposits → **money** + overload presentation.
-6. **HUD**: carry, **lives**, money, **room cleanliness**, toss at max stack.
+5. **Trash portal** deposits → batch / overload presentation.
+6. **HUD**: carry, **lives**, **room cleanliness**; bag auto-clears at max (or deposits in trash portal).

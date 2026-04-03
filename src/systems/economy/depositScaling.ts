@@ -1,6 +1,6 @@
 /**
- * Batch risk/reward: larger deposits multiply payout superlinearly so holding a
- * bigger stack before banking is disproportionately better (and riskier if hit).
+ * Batch risk/reward: larger deposits multiply the batch total superlinearly so
+ * holding a bigger stack before banking spikes feedback harder (and is riskier if hit).
  */
 
 /** Linear term on (n−1) — each extra pellet adds this much relative lift */
@@ -19,12 +19,12 @@ export function depositBatchMultiplier(itemCount: number): number {
 }
 
 export function applyDepositBatchScaling(
-  baseCredits: number,
+  baseSum: number,
   itemCount: number,
-): { credits: number; batchMultiplier: number } {
+): { batchTotal: number; batchMultiplier: number } {
   const m = depositBatchMultiplier(itemCount)
   return {
-    credits: Math.max(0, Math.floor(baseCredits * m)),
+    batchTotal: Math.max(0, Math.floor(baseSum * m)),
     batchMultiplier: m,
   }
 }

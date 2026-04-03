@@ -10,7 +10,6 @@ import {
 } from '../systems/deposit/DepositController.ts'
 import { DepositFlightAnimator } from '../systems/deposit/DepositFlightAnimator.ts'
 import { DepositZoneFeedback } from '../systems/deposit/DepositZoneFeedback.ts'
-import { Economy } from '../systems/economy/Economy.ts'
 import {
   evaluateDeposit,
   type DepositEval,
@@ -76,6 +75,7 @@ import {
   type PlayerGltfTemplate,
 } from '../systems/player/playerGltfAsset.ts'
 import { disposeGhostSharedGeometry } from '../systems/ghost/createGhostVisual.ts'
+import { disposeSharedGhostVisionConeGeometry } from '../systems/ghost/GhostSystem.ts'
 import { GhostSystem } from '../systems/ghost/GhostSystem.ts'
 import type { AreaId } from '../systems/world/RoomSystem.ts'
 import { RoomSystem } from '../systems/world/RoomSystem.ts'
@@ -122,9 +122,7 @@ import {
   OVERLOAD_STACK_THRESHOLD,
   PERFECT_OVERLOAD_BONUS_MULT,
 } from '../systems/overload/overloadDropConfig.ts'
-import { MoneyHud } from '../juice/MoneyHud.ts'
 import {
-  spawnBagFullBanner,
   spawnFloatingHudText,
   spawnRoomClearedBanner,
 } from '../juice/floatingHud.ts'
@@ -203,7 +201,6 @@ export class Game {
   private readonly collection: CollectionSystem
   private readonly depositController: DepositController
   private readonly depositFlight: DepositFlightAnimator
-  private readonly economy: Economy
   private readonly depositFeedback: DepositZoneFeedback
   private readonly playerCharacter: PlayerCharacterVisual
   private readonly doorUnlock: DoorUnlockSystem
@@ -240,7 +237,6 @@ export class Game {
   private lastTime = performance.now()
   private elapsedSec = 0
   private hudSpawn: HTMLElement | null = null
-  private readonly moneyHud: MoneyHud | null
   private readonly gameViewport: HTMLElement
   private readonly velScratch = new Vector3()
   /** Ground-plane camera forward for OTS movement (XZ only). */
@@ -252,13 +248,11 @@ export class Game {
   private readonly hudRoomCleanFill: HTMLElement | null
   private readonly hudRoomCleanPct: HTMLElement | null
   private readonly hudRoomCleanTitle: HTMLElement | null
-  private readonly hudMoneyEl: HTMLElement | null
   private readonly hudDepositToastEl: HTMLElement | null
   private readonly depositToastAmountEl: HTMLElement | null
   private readonly depositToastHintEl: HTMLElement | null
   private readonly hudOverloadEl: HTMLElement | null
   private readonly hudOverloadAmountEl: HTMLElement | null
-  private readonly hudDisposeBagBtn: HTMLButtonElement | null
   private readonly hudCameraHintEl: HTMLElement | null
   private readonly hudLivesWrap: HTMLElement | null
   private lives = PLAYER_MAX_LIVES
@@ -385,7 +379,6 @@ export class Game {
     this.burstGroup.renderOrder = 50
     this.scene.add(this.burstGroup)
 
-    const hudMoney = host.querySelector<HTMLElement>('#hud-money')
     const hudCarry = host.querySelector<HTMLElement>('#hud-carry')
     const hudDepositToast = host.querySelector<HTMLElement>(
       '#hud-deposit-toast',
@@ -402,15 +395,11 @@ export class Game {
     this.hudRoomCleanFill = host.querySelector('#hud-room-clean-fill')
     this.hudRoomCleanPct = host.querySelector('#hud-room-clean-pct')
     this.hudRoomCleanTitle = host.querySelector('#hud-room-clean-title')
-    this.hudMoneyEl = hudMoney
     this.hudDepositToastEl = hudDepositToast
     this.depositToastAmountEl = depositAmountEl
     this.depositToastHintEl = depositHintEl
     this.hudOverloadEl = hudOverload
     this.hudOverloadAmountEl = hudOverloadAmount
-    this.hudDisposeBagBtn = host.querySelector<HTMLButtonElement>(
-      '#hud-dispose-bag',
-    )
     this.hudCameraHintEl = host.querySelector<HTMLElement>('#hud-camera-hint')
     this.hudLivesWrap = host.querySelector<HTMLElement>('#hud-lives')
     this.hudStackHum = host.querySelector('#hud-stack-hum')
@@ -445,12 +434,6 @@ export class Game {
     this.syncCameraModeHud()
     this.syncLivesHud()
 
-    this.economy = new Economy()
-    this.moneyHud = hudMoney
-      ? new MoneyHud(hudMoney, () => this.economy.money)
-      : null
-    this.moneyHud?.sync()
-
     this.stackVisual = new StackVisual(stackAnchor)
     this.stack = new CarryStack(INITIAL_STACK_CAPACITY, () => {
       this.stackVisual.sync(this.stack.getSnapshot(), this.stack.maxCapacity)
@@ -471,11 +454,14 @@ export class Game {
       scene: this.scene,
       worldCollision: this.worldCollision,
       onDoorPassageCleared: (doorIndex) => {
-        this.syncClutterRoomAccessibilityFromDoors()
-        const nextRoom = doorIndex + 1
-        if (nextRoom >= 1 && nextRoom <= NORMAL_ROOM_COUNT) {
-          this.ghostSystem.spawnGhostsForRoom(nextRoom)
-        }
+        /** Next frame: avoids a same-frame hitch when the door swing + collision sync already ran. */
+        requestAnimationFrame(() => {
+          this.syncClutterRoomAccessibilityFromDoors()
+          const nextRoom = doorIndex + 1
+          if (nextRoom >= 1 && nextRoom <= NORMAL_ROOM_COUNT) {
+            this.ghostSystem.spawnGhostsForRoom(nextRoom)
+          }
+        })
       },
       onDoorSlamShut: (_doorIndex: number) => {
         this.triggerDepositScreenShake(false)
@@ -583,7 +569,6 @@ export class Game {
             state: this.runUpgrades,
             stack: this.stack,
             player: this.player,
-            economy: this.economy,
             lives: this.lives,
             random: this.runRandom,
           })
@@ -591,7 +576,6 @@ export class Game {
           this.runStatUpgradesPicked.push({ id: offer.id, title: offer.title })
           this.lives = res.lives
           this.syncLivesHud()
-          this.moneyHud?.sync()
           this.syncRunUpgradeModifiers()
           this.completeRoomClearAfterChoice(roomId, doorIndex, idx, res)
         }
@@ -641,7 +625,6 @@ export class Game {
       player: this.player,
       stack: this.stack,
       stackVisual: this.stackVisual,
-      economy: this.economy,
       flight: this.depositFlight,
       resolveDepositZone: () => null,
       evaluateOverload: (snapshot) => {
@@ -674,14 +657,11 @@ export class Game {
                   flightIndex * TRASH_PORTAL_COMBO_PER_CHAIN,
                 )
               : 0
-          if (combo > 0) {
-            this.economy.addMoney(combo)
-          }
           this.depositFeedback.triggerItem()
           spawnFloatingHudText(
             this.gameViewport,
-            `+$${item.value + combo}`,
-            'float-hud--coin',
+            `+${item.value + combo}`,
+            'float-hud--pickup',
             {
               topPct: 58 + this.runRandom() * 16,
               leftPct: 40 + this.runRandom() * 20,
@@ -694,15 +674,6 @@ export class Game {
       onDepositPresentationComplete: (items, ev, ol) => {
         this.runDepositPresentationUi(items, ev, ol)
       },
-    })
-
-    this.hudDisposeBagBtn?.addEventListener('click', (e) => {
-      e.preventDefault()
-      e.stopPropagation()
-      this.tryStartBagDispose()
-    })
-    this.hudDisposeBagBtn?.addEventListener('pointerdown', (e) => {
-      e.stopPropagation()
     })
 
     /** Precompile materials (scene). */
@@ -954,7 +925,6 @@ export class Game {
             {
               roomsCleared: this.runStatRoomsCleared,
               clutterCollected: this.runStatClutterCollected,
-              money: this.economy.money,
               timeSec: this.elapsedSec,
               upgrades: this.runStatUpgradesPicked.map((u) => ({
                 title: u.title,
@@ -1052,14 +1022,13 @@ export class Game {
 
       const maxCap = this.stack.maxCapacity
       const atMax = maxCap > 0 && this.stack.count >= maxCap
-      if (this.hudDisposeBagBtn) {
-        const show = atMax && !this.bagDisposeInFlight
-        this.hudDisposeBagBtn.classList.toggle('hud-dispose-bag--visible', show)
-        this.hudDisposeBagBtn.disabled = !show
-      }
-      if (atMax && !this.wasAtMaxCapacity) {
-        spawnBagFullBanner(this.gameViewport)
-        playJuiceSound('pickup')
+      if (
+        atMax &&
+        !this.wasAtMaxCapacity &&
+        !inTrashPortal &&
+        !this.bagDisposeInFlight
+      ) {
+        this.tryStartBagDispose()
       }
       this.wasAtMaxCapacity = atMax
 
@@ -1083,7 +1052,6 @@ export class Game {
       } else {
         this.cameraRig.update(dt)
       }
-      this.moneyHud?.update(dt)
       this.itemWorld.updateCollectEffects(dt)
       this.updateBagThrow(dt)
       this.stackVisual.update(dt)
@@ -1219,7 +1187,6 @@ export class Game {
       {
         roomsCleared: this.runStatRoomsCleared,
         clutterCollected: this.runStatClutterCollected,
-        money: this.economy.money,
         timeSec: this.elapsedSec,
         upgrades: this.runStatUpgradesPicked.map((u) => ({
           title: u.title,
@@ -1700,23 +1667,15 @@ export class Game {
     } else {
       this.depositFeedback.triggerDepositComplete(
         items.length,
-        ev.credits + ol.overloadBonus,
+        ev.batchTotal + ol.overloadBonus,
       )
     }
-    const totalPayout = ev.credits + ol.overloadBonus
-    const hudMoney = this.hudMoneyEl
-    if (hudMoney) {
-      hudMoney.classList.remove('money-bump', 'money-bump-big')
-      void hudMoney.offsetWidth
-      const heavy =
-        !ol.overloadActive && (items.length >= 7 || totalPayout >= 65)
-      hudMoney.classList.add(heavy ? 'money-bump-big' : 'money-bump')
-    }
+    const totalBatch = ev.batchTotal + ol.overloadBonus
     const hudOverload = this.hudOverloadEl
     const hudOverloadAmount = this.hudOverloadAmountEl
     if (hudOverload && hudOverloadAmount && ol.overloadActive) {
       if (this.overloadHudTimer) clearTimeout(this.overloadHudTimer)
-      hudOverloadAmount.textContent = `+$${totalPayout}`
+      hudOverloadAmount.textContent = `+${totalBatch}`
       hudOverload.classList.toggle('hud-overload--perfect', ol.perfect)
       hudOverload.classList.remove('hidden')
       hudOverload.classList.add('visible')
@@ -1755,7 +1714,7 @@ export class Game {
     perfect: boolean,
   ): number {
     if (!active) return 0
-    let extra = Math.floor(ev.credits * (OVERLOAD_BONUS_MULT - 1))
+    let extra = Math.floor(ev.batchTotal * (OVERLOAD_BONUS_MULT - 1))
     if (perfect) {
       extra = Math.floor(extra * PERFECT_OVERLOAD_BONUS_MULT)
     }
@@ -1799,9 +1758,15 @@ export class Game {
     this.burstSpawnScratch.copy(start)
     this.burstSpawnScratch.y += 0.2
     this.burstParticles.push(
-      ...spawnBagDisposeBurst(this.burstGroup, this.burstSpawnScratch, 22, {
+      ...spawnBagDisposeBurst(this.burstGroup, this.burstSpawnScratch, 30, {
         intense: true,
       }),
+    )
+    spawnFloatingHudText(
+      this.gameViewport,
+      'Clearing bag',
+      'float-hud--pickup',
+      { topPct: 58, leftPct: 50, durationSec: 0.7 },
     )
     playJuiceSound('deposit_complete', { pitch: 1.15 })
     this.gameViewport.classList.add('game-viewport--glow-ecto')
@@ -1882,7 +1847,6 @@ export class Game {
       ov.active,
       ov.perfect,
     )
-    this.economy.addMoney(ev.credits + overloadBonus)
     this.runDepositPresentationUi(snapshot, ev, {
       overloadActive: ov.active,
       perfect: ov.perfect,
@@ -1918,7 +1882,7 @@ export class Game {
     ev: DepositEval,
     overload?: DepositPresentationOverload,
   ): void {
-    const total = ev.credits + (overload?.overloadBonus ?? 0)
+    const total = ev.batchTotal + (overload?.overloadBonus ?? 0)
     const stackJackpot =
       !overload?.overloadActive &&
       ev.itemCount >= 2 &&
@@ -1929,29 +1893,29 @@ export class Game {
       'deposit-amount--stack-jackpot',
     )
     if (overload?.overloadActive) {
-      amountEl.textContent = total > 0 ? `+$${total}` : '$0'
+      amountEl.textContent = total > 0 ? `+${total}` : '0'
       amountEl.classList.add('deposit-amount--overload')
       if (overload.perfect) amountEl.classList.add('deposit-amount--overload-perfect')
     } else {
-      amountEl.textContent = ev.credits > 0 ? `+$${ev.credits}` : '$0'
+      amountEl.textContent = ev.batchTotal > 0 ? `+${ev.batchTotal}` : '0'
       if (stackJackpot) amountEl.classList.add('deposit-amount--stack-jackpot')
     }
 
     const riskLine =
       !overload?.overloadActive && ev.batchMultiplier > 1.02
-        ? `Stack bonus ×${ev.batchMultiplier.toFixed(2)} (base $${ev.baseCredits})`
+        ? `Stack bonus ×${ev.batchMultiplier.toFixed(2)} (base ${ev.baseSum})`
         : ''
 
     if (overload?.overloadActive) {
       hintEl.style.display = 'block'
       hintEl.textContent = overload.perfect
         ? 'Perfect overload — maximum burst'
-        : 'Overload drop — bonus credits'
+        : 'Overload drop — extra batch weight'
       return
     }
     if (riskLine) {
       hintEl.style.display = 'block'
-      hintEl.textContent = `${riskLine} — bigger stacks pay more`
+      hintEl.textContent = `${riskLine} — bigger stacks clear harder`
       return
     }
     hintEl.textContent = ''
@@ -2017,6 +1981,7 @@ export class Game {
     this.trapField.dispose()
     this.playerTrail.dispose()
     this.ghostSystem.dispose()
+    disposeSharedGhostVisionConeGeometry()
     disposeGhostGltfTemplate(this.ghostGltfTemplate)
     this.stackVisual.dispose()
     this.playerCharacter.dispose()

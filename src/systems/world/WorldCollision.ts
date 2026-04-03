@@ -35,7 +35,8 @@ export function segmentIntersectWallAabbs(
  */
 export class WorldCollision {
   private readonly base: readonly AabbXZ[]
-  private extra: AabbXZ[] = []
+  /** Built in `setExtraColliders` — avoids per-entity `[...base, ...extra]` allocs in hot paths. */
+  private mergedForResolve: readonly AabbXZ[] | null = null
 
   constructor(boxes: readonly AabbXZ[] = MANSION_WALL_COLLIDERS) {
     this.base = boxes
@@ -43,12 +44,12 @@ export class WorldCollision {
 
   /** Door blockers while locked — replaced each sync. */
   setExtraColliders(boxes: AabbXZ[]): void {
-    this.extra = boxes
+    this.mergedForResolve =
+      boxes.length === 0 ? this.base : [...this.base, ...boxes]
   }
 
   resolveCircleXZ(x: number, z: number, radius: number): { x: number; z: number } {
-    const boxes =
-      this.extra.length === 0 ? this.base : [...this.base, ...this.extra]
+    const boxes = this.mergedForResolve ?? this.base
     let o = resolveCircleVsAabbs(x, z, radius, boxes)
     const m = MANSION_WORLD_HALF - radius
     o = {
@@ -66,8 +67,7 @@ export class WorldCollision {
     z1: number,
     samples = 10,
   ): boolean {
-    const boxes =
-      this.extra.length === 0 ? this.base : [...this.base, ...this.extra]
+    const boxes = this.mergedForResolve ?? this.base
     return !segmentIntersectWallAabbs(x0, z0, x1, z1, boxes, samples)
   }
 }

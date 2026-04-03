@@ -6,7 +6,7 @@ export type FloatingHudTextOpts = {
   topPct?: number
 }
 
-/** Short-lived floating text in the viewport (e.g. +1, +$4). */
+/** Short-lived floating text in the viewport (e.g. +1, pickup toasts). */
 export function spawnFloatingHudText(
   viewport: HTMLElement,
   text: string,
@@ -35,34 +35,6 @@ export function spawnFloatingHudText(
     el.classList.add('float-hud--out')
     setTimeout(() => el.remove(), 220)
   }, dur * 1000)
-}
-
-const BAG_FULL_BANNER_SEC = 2.55
-
-/** Max-capacity warning: large two-line banner (stronger than generic float text). */
-export function spawnBagFullBanner(viewport: HTMLElement): void {
-  const el = document.createElement('div')
-  el.className = 'float-hud float-hud--bag-full'
-  el.style.left = '50%'
-  el.style.top = '16%'
-
-  const title = document.createElement('div')
-  title.className = 'float-hud__bag-full-title'
-  title.textContent = 'BAG FULL'
-
-  const sub = document.createElement('div')
-  sub.className = 'float-hud__bag-full-sub'
-  sub.textContent = 'TOSS IT!'
-
-  el.append(title, sub)
-  viewport.appendChild(el)
-  requestAnimationFrame(() => {
-    el.classList.add('float-hud--show')
-  })
-  setTimeout(() => {
-    el.classList.add('float-hud--out')
-    setTimeout(() => el.remove(), 280)
-  }, BAG_FULL_BANNER_SEC * 1000)
 }
 
 const ROOM_CLEARED_SEC = 3.15

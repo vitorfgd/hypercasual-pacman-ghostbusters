@@ -5,7 +5,8 @@ import {
   Group as ThreeGroup,
   Mesh,
   MeshStandardMaterial,
-  PointLight,
+  Object3D,
+  SpotLight,
 } from 'three'
 import type { WorldCollision } from '../world/WorldCollision.ts'
 import type { AabbXZ } from '../world/collisionXZ.ts'
@@ -13,23 +14,20 @@ import { DOOR_HALF } from '../world/mansionGeometry.ts'
 import type { RoomId } from '../world/mansionRoomData.ts'
 import { DOOR_COUNT, getDoorBlockerZ, roomIndexFromId } from './doorLayout.ts'
 import {
+  DOOR_AUTO_OPEN_ANTICIPATE_SEC,
+  DOOR_AUTO_OPEN_DURATION_SEC,
   DOOR_COLLIDER_THICKNESS,
   DOOR_CROSS_Z_EPS,
   DOOR_EXIT_SOUTH_MARGIN,
   DOOR_LEAF_COLLIDER_SLICES,
   DOOR_MAX_SWING_RAD,
   DOOR_MIN_SWING_TO_REGISTER_CROSS,
-  DOOR_OPENING_RESISTANCE,
   DOOR_PASS_CLOSE_DELAY_SEC,
   DOOR_PASSAGE_CLEAR_SWING,
-  DOOR_PUSH_STRENGTH,
   DOOR_PUSH_ZONE_HALF_X,
   DOOR_PUSH_ZONE_HALF_Z,
   DOOR_RETREAT_CANCEL_MARGIN,
   DOOR_SLAM_SHUT_SEC,
-  DOOR_STATIC_BREAK_SPEED,
-  DOOR_STATIC_FRICTION_THRESHOLD,
-  DOOR_SWING_DAMPING,
   DOOR_TRIGGER_HALF_X,
   DOOR_TRIGGER_HALF_Z,
   DOUBLE_DOOR_VISUAL_SCALE_XZ,
@@ -37,21 +35,29 @@ import {
   DOUBLE_DOOR_VISUAL_Z_NUDGE,
   DOOR_LIGHT_BASE_WARM_COLOR,
   DOOR_LIGHT_BASE_WARM_MIX,
-  DOOR_LIGHT_DISTANCE,
   DOOR_LIGHT_LOCKED_COLOR,
   DOOR_LIGHT_LOCKED_FLICKER_AMP,
   DOOR_LIGHT_LOCKED_FLICKER_HZ,
   DOOR_LIGHT_LOCKED_INTENSITY,
-  DOOR_LIGHT_PASSED_COLOR,
-  DOOR_LIGHT_PASSED_INTENSITY,
-  DOOR_LIGHT_POS_Y,
-  DOOR_LIGHT_POS_Z,
   DOOR_LIGHT_PUSH_PULSE_MUL,
   DOOR_LIGHT_PUSH_PULSE_SEC,
-  DOOR_LIGHT_PUSH_VEL_THRESHOLD,
   DOOR_LIGHT_UNLOCK_TRANSITION_SEC,
   DOOR_LIGHT_UNLOCKED_COLOR,
   DOOR_LIGHT_UNLOCKED_INTENSITY,
+  DOOR_SPOT_ACTIVE_X_HALF,
+  DOOR_SPOT_ACTIVE_Z_HALF,
+  DOOR_SPOT_ANGLE,
+  DOOR_SPOT_DECAY,
+  DOOR_SPOT_DISTANCE,
+  DOOR_SPOT_PENUMBRA,
+  DOOR_SPOT_POS_X,
+  DOOR_SPOT_POS_Y,
+  DOOR_SPOT_POS_Z,
+  DOOR_SPOT_SHADOW_ENABLED,
+  DOOR_SPOT_SHADOW_MAP_SIZE,
+  DOOR_SPOT_TARGET_X,
+  DOOR_SPOT_TARGET_Y,
+  DOOR_SPOT_TARGET_Z,
   GATE_PANEL_HEIGHT,
 } from './doorUnlockConfig.ts'
 import { tryCloneDoubleDoorVisual } from './doubleDoorGltfAsset.ts'
@@ -62,11 +68,6 @@ export type DoorUnlockSystemOptions = {
   onDoorPassageCleared?: (doorIndex: number) => void
   /** Fired once when a progression door begins its slam shut (impact frame). */
   onDoorSlamShut?: (doorIndex: number) => void
-}
-
-function easeHeavy(t: number): number {
-  const u = Math.max(0, Math.min(1, t))
-  return u * u * (3 - 2 * u)
 }
 
 function easeInQuad(t: number): number {
@@ -126,8 +127,13 @@ function circleIntersectsDoorTrigger(
   return dx * dx + dz * dz <= radius * radius + 1e-5
 }
 
+function easeOutCubic(t: number): number {
+  const u = Math.max(0, Math.min(1, t))
+  return 1 - (1 - u) ** 3
+}
+
 /**
- * Double doors: unlock on cleanliness, push to open, forward-only via trigger + delayed slam.
+ * Double doors: unlock on cleanliness, contact triggers one eased open, forward-only slam.
  */
 export class DoorUnlockSystem {
   private readonly worldCollision: WorldCollision
@@ -143,7 +149,14 @@ export class DoorUnlockSystem {
   private readonly bossTrapped = new Set<number>()
 
   private readonly swing: number[] = Array.from({ length: DOOR_COUNT }, () => 0)
-  private readonly swingVel: number[] = Array.from({ length: DOOR_COUNT }, () => 0)
+  /**
+   * -1 = idle / not auto-opening; >=0 seconds since contact triggered one-shot open (includes
+   * anticipation + eased swing).
+   */
+  private readonly doorAutoOpenElapsed: number[] = Array.from(
+    { length: DOOR_COUNT },
+    () => -1,
+  )
   private readonly passageNotified: boolean[] = Array.from(
     { length: DOOR_COUNT },
     () => false,
@@ -185,7 +198,7 @@ export class DoorUnlockSystem {
     () => null,
   )
 
-  private readonly doorPointLights: (PointLight | null)[] = Array.from(
+  private readonly doorSpotLights: (SpotLight | null)[] = Array.from(
     { length: DOOR_COUNT },
     () => null,
   )
@@ -198,14 +211,9 @@ export class DoorUnlockSystem {
     { length: DOOR_COUNT },
     () => 0,
   )
-  private readonly prevSwingVel: number[] = Array.from(
-    { length: DOOR_COUNT },
-    () => 0,
-  )
 
   private readonly colLocked = new Color(DOOR_LIGHT_LOCKED_COLOR)
   private readonly colUnlocked = new Color(DOOR_LIGHT_UNLOCKED_COLOR)
-  private readonly colPassed = new Color(DOOR_LIGHT_PASSED_COLOR)
   private readonly colWarm = new Color(DOOR_LIGHT_BASE_WARM_COLOR)
   private readonly scratchDoorRgb = new Color()
 
@@ -222,7 +230,7 @@ export class DoorUnlockSystem {
     }
 
     this.syncColliders()
-    this.syncDoorPointLights(0, 0)
+    this.syncDoorSpotlights(0, 0, null)
   }
 
   unlockDoor(doorIndex: number): void {
@@ -277,7 +285,7 @@ export class DoorUnlockSystem {
       this.bossTrapped.add(doorIndex)
       this.keyUnlocked[doorIndex] = false
       this.swing[doorIndex] = 0
-      this.swingVel[doorIndex] = 0
+      this.doorAutoOpenElapsed[doorIndex] = -1
       this.slamRemain[doorIndex] = null
       this.pendingCloseRemain[doorIndex] = null
       this.commitsForward[doorIndex] = false
@@ -406,17 +414,58 @@ export class DoorUnlockSystem {
 
       if (this.bossTrapped.has(i)) continue
       if (this.passed[i]) continue
-      if (!this.isKeyUnlocked(i)) continue
 
-      this.applyPushForDoor(i, dt, player)
-      const v = this.swingVel[i]!
-      const s = this.swing[i]!
-      const nextS = Math.max(0, Math.min(1, s + v * dt))
-      this.swing[i] = nextS
-      this.swingVel[i] = v * Math.exp(-DOOR_SWING_DAMPING * dt)
-      this.applySwingPose(i, nextS)
+      if (!this.keyUnlocked[i]) {
+        this.doorAutoOpenElapsed[i] = -1
+        this.swing[i] = 0
+        this.applySwingPose(i, 0)
+        continue
+      }
 
-      if (nextS >= DOOR_PASSAGE_CLEAR_SWING && !this.passageNotified[i]) {
+      const at = DOOR_AUTO_OPEN_ANTICIPATE_SEC
+      const dur = DOOR_AUTO_OPEN_DURATION_SEC
+
+      if (this.doorAutoOpenElapsed[i] >= 0) {
+        this.doorAutoOpenElapsed[i] += dt
+        const te = this.doorAutoOpenElapsed[i]
+        if (te < at) {
+          this.swing[i] = 0
+        } else {
+          let p = (te - at) / dur
+          if (p >= 1) {
+            this.swing[i] = 1
+            this.doorAutoOpenElapsed[i] = -1
+          } else {
+            this.swing[i] = easeOutCubic(p)
+          }
+        }
+        this.applySwingPose(i, this.swing[i]!)
+        if (
+          this.swing[i]! >= DOOR_PASSAGE_CLEAR_SWING &&
+          !this.passageNotified[i]
+        ) {
+          this.passageNotified[i] = true
+          this.onDoorPassageCleared?.(i)
+        }
+        continue
+      }
+
+      if (
+        this.swing[i]! < 1 - 1e-4 &&
+        this.playerInDoorPushZone(i, player)
+      ) {
+        this.doorAutoOpenElapsed[i] = 0
+        this.pushPulseRemain[i] = DOOR_LIGHT_PUSH_PULSE_SEC
+        this.swing[i] = 0
+        this.applySwingPose(i, 0)
+        continue
+      }
+
+      this.applySwingPose(i, this.swing[i]!)
+      if (
+        this.swing[i]! >= DOOR_PASSAGE_CLEAR_SWING &&
+        !this.passageNotified[i]
+      ) {
         this.passageNotified[i] = true
         this.onDoorPassageCleared?.(i)
       }
@@ -424,7 +473,7 @@ export class DoorUnlockSystem {
 
     this.lastPlayerZ = pz
     this.syncColliders()
-    this.syncDoorPointLights(dt, timeSec)
+    this.syncDoorSpotlights(dt, timeSec, player)
   }
 
   dispose(): void {
@@ -443,7 +492,7 @@ export class DoorUnlockSystem {
     if (this.passed[doorIndex]) return
     this.passed[doorIndex] = true
     this.keyUnlocked[doorIndex] = false
-    this.swingVel[doorIndex] = 0
+    this.doorAutoOpenElapsed[doorIndex] = -1
     this.commitsForward[doorIndex] = false
     this.pendingCloseRemain[doorIndex] = null
 
@@ -462,42 +511,20 @@ export class DoorUnlockSystem {
     }
   }
 
-  private applyPushForDoor(i: number, dt: number, p: DoorPlayerSample): void {
+  private playerInDoorPushZone(i: number, p: DoorPlayerSample): boolean {
     const zDoor = getDoorBlockerZ(i)
-    if (
-      Math.abs(p.x) > DOOR_PUSH_ZONE_HALF_X + p.radius ||
-      Math.abs(p.z - zDoor) > DOOR_PUSH_ZONE_HALF_Z + p.radius
-    ) {
-      return
-    }
-
-    const nz = p.z - zDoor
-    let toward = 0
-    if (nz > 0.04) toward = -p.vz
-    else if (nz < -0.04) toward = p.vz
-    else toward = Math.abs(p.vz)
-
-    toward = Math.max(0, toward)
-    if (toward < 1e-4) return
-
-    let mul = 1
-    const s = this.swing[i]!
-    if (s < DOOR_STATIC_FRICTION_THRESHOLD) {
-      if (toward < DOOR_STATIC_BREAK_SPEED) return
-      mul *= DOOR_OPENING_RESISTANCE
-    } else {
-      mul *= 1 - (1 - DOOR_OPENING_RESISTANCE) * (1 - s)
-    }
-
-    this.swingVel[i]! += toward * DOOR_PUSH_STRENGTH * mul * dt
+    return (
+      Math.abs(p.x) <= DOOR_PUSH_ZONE_HALF_X + p.radius &&
+      Math.abs(p.z - zDoor) <= DOOR_PUSH_ZONE_HALF_Z + p.radius
+    )
   }
 
+  /** Normalized swing 0…1 maps linearly to panel angle (easing is applied to swing itself over time). */
   private applySwingPose(doorIndex: number, swing01: number): void {
     const lp = this.leftPivots[doorIndex]
     const rp = this.rightPivots[doorIndex]
     if (!lp || !rp) return
-    const u = easeHeavy(swing01)
-    const ang = u * DOOR_MAX_SWING_RAD
+    const ang = swing01 * DOOR_MAX_SWING_RAD
     lp.rotation.y = ang
     rp.rotation.y = -ang
   }
@@ -541,42 +568,74 @@ export class DoorUnlockSystem {
 
     this.doorRoots[doorIndex] = g
     this.root.add(g)
-    this.attachDoorStylizedLight(g, doorIndex)
+    this.attachDoorSpotlight(g, doorIndex)
     this.applySwingPose(doorIndex, 0)
   }
 
-  /** Single state-driven point light above the doorway; no shadows. */
-  private attachDoorStylizedLight(g: ThreeGroup, doorIndex: number): void {
-    const L = new PointLight(0xffffff, 2, DOOR_LIGHT_DISTANCE, 2)
-    L.name = `doorStylizedPoint:${doorIndex}`
-    L.position.set(0, DOOR_LIGHT_POS_Y, DOOR_LIGHT_POS_Z)
-    L.castShadow = false
-    g.add(L)
-    this.doorPointLights[doorIndex] = L
+  /** Narrow spotlight above the frame, aimed at threshold + ground in front; state-driven. */
+  private attachDoorSpotlight(g: ThreeGroup, doorIndex: number): void {
+    const aim = new Object3D()
+    aim.name = `doorSpotAim:${doorIndex}`
+    aim.position.set(DOOR_SPOT_TARGET_X, DOOR_SPOT_TARGET_Y, DOOR_SPOT_TARGET_Z)
+    g.add(aim)
+
+    const S = new SpotLight(
+      0xffffff,
+      2,
+      DOOR_SPOT_DISTANCE,
+      DOOR_SPOT_ANGLE,
+      DOOR_SPOT_PENUMBRA,
+      DOOR_SPOT_DECAY,
+    )
+    S.name = `doorStylizedSpot:${doorIndex}`
+    S.position.set(DOOR_SPOT_POS_X, DOOR_SPOT_POS_Y, DOOR_SPOT_POS_Z)
+    S.target = aim
+    if (DOOR_SPOT_SHADOW_ENABLED) {
+      S.castShadow = true
+      S.shadow.mapSize.set(DOOR_SPOT_SHADOW_MAP_SIZE, DOOR_SPOT_SHADOW_MAP_SIZE)
+      S.shadow.radius = 3
+      S.shadow.bias = -0.00018
+      S.shadow.normalBias = 0.02
+    } else {
+      S.castShadow = false
+    }
+    g.add(S)
+    this.doorSpotLights[doorIndex] = S
   }
 
-  private syncDoorPointLights(dt: number, timeSec: number): void {
+  private syncDoorSpotlights(
+    dt: number,
+    timeSec: number,
+    player: DoorPlayerSample | null,
+  ): void {
     for (let i = 0; i < DOOR_COUNT; i++) {
-      const L = this.doorPointLights[i]
+      const L = this.doorSpotLights[i]
       if (!L) continue
+
+      const zDoor = getDoorBlockerZ(i)
+      const activeNearby =
+        player === null ||
+        (Math.abs(player.z - zDoor) < DOOR_SPOT_ACTIVE_Z_HALF &&
+          Math.abs(player.x) < DOOR_SPOT_ACTIVE_X_HALF)
 
       const passed = this.passed[i]
       const bossSeal = this.bossTrapped.has(i)
       const locked = !this.keyUnlocked[i] || bossSeal
-      const canInteract =
-        this.keyUnlocked[i] && !passed && !bossSeal
+
+      if (!activeNearby || passed) {
+        L.visible = false
+        L.intensity = 0
+        continue
+      }
+
+      L.visible = true
 
       let intensity = DOOR_LIGHT_LOCKED_INTENSITY
       let r: number
       let gCol: number
       let b: number
 
-      if (passed) {
-        intensity = DOOR_LIGHT_PASSED_INTENSITY
-        r = this.colPassed.r
-        gCol = this.colPassed.g
-        b = this.colPassed.b
-      } else if (locked) {
+      if (locked) {
         const flick =
           1 +
           DOOR_LIGHT_LOCKED_FLICKER_AMP *
@@ -607,15 +666,6 @@ export class DoorUnlockSystem {
         gCol = this.scratchDoorRgb.g
         b = this.scratchDoorRgb.b
       }
-
-      if (canInteract) {
-        const v = this.swingVel[i]!
-        const prev = this.prevSwingVel[i]!
-        if (v > DOOR_LIGHT_PUSH_VEL_THRESHOLD && v > prev) {
-          this.pushPulseRemain[i] = DOOR_LIGHT_PUSH_PULSE_SEC
-        }
-      }
-      this.prevSwingVel[i] = this.swingVel[i]!
 
       let pr = this.pushPulseRemain[i]
       if (pr > 0) {
@@ -652,7 +702,7 @@ export class DoorUnlockSystem {
     const t = DOOR_COLLIDER_THICKNESS
     const halfD = t * 0.5
     const span = DOOR_HALF * 0.98
-    const yawL = (s: number) => easeHeavy(s) * DOOR_MAX_SWING_RAD
+    const yawL = (s: number) => s * DOOR_MAX_SWING_RAD
     const hingeLX = -DOOR_HALF * 0.98
     const hingeRX = DOOR_HALF * 0.98
 

@@ -239,7 +239,7 @@ body {
     0 2px 12px rgba(0, 0, 0, 0.55);
 }
 
-/* Top HUD: capacity | money (one row) */
+/* Top HUD: capacity | camera | lives (one row) */
 .hud-top {
   position: absolute;
   top: env(safe-area-inset-top, 0);
@@ -328,114 +328,6 @@ body {
   color: #d8f4ff;
 }
 
-/* Full-width dispose CTA — only the button captures touches (see pointer-events). */
-.hud-dispose-wrap {
-  position: relative;
-  z-index: 12;
-  width: 100%;
-  max-width: min(560px, 100%);
-  margin-left: auto;
-  margin-right: auto;
-  margin-bottom: 6px;
-  pointer-events: none;
-}
-
-.hud-dispose-bag {
-  position: relative;
-  display: none;
-  width: 100%;
-  margin: 0;
-  padding: clamp(18px, 4.2vw, 24px) clamp(20px, 4vw, 28px);
-  min-height: 56px;
-  border: 2px solid rgba(255, 255, 255, 0.42);
-  border-radius: 18px;
-  cursor: pointer;
-  pointer-events: auto;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-  overflow: hidden;
-  font: 900 clamp(17px, 4.9vw, 28px) system-ui, sans-serif;
-  letter-spacing: 0.12em;
-  line-height: 1.12;
-  color: #031208;
-  text-shadow:
-    0 1px 0 rgba(255, 255, 255, 0.5),
-    0 0 22px rgba(180, 255, 220, 0.55);
-  background: linear-gradient(
-    180deg,
-    #7dffc4 0%,
-    #2ff0a4 32%,
-    #0cd488 100%
-  );
-  box-shadow:
-    0 0 0 1px rgba(100, 255, 190, 0.55),
-    0 0 28px rgba(0, 255, 170, 0.55),
-    0 6px 0 rgba(0, 110, 72, 0.55),
-    0 10px 36px rgba(0, 220, 140, 0.45),
-    0 16px 48px rgba(0, 160, 100, 0.3),
-    inset 0 2px 0 rgba(255, 255, 255, 0.5);
-  transform: scale(0.88);
-  opacity: 0;
-  transition:
-    transform 0.28s cubic-bezier(0.34, 1.55, 0.64, 1),
-    opacity 0.22s ease;
-}
-
-.hud-dispose-bag.hud-dispose-bag--visible {
-  display: block;
-  opacity: 1;
-  transform: scale(1);
-  animation: hudDisposeWobble 1.85s ease-in-out infinite;
-}
-
-.hud-dispose-bag:active {
-  transform: scale(0.94) translateY(2px);
-  box-shadow:
-    0 0 0 1px rgba(100, 255, 190, 0.45),
-    0 3px 0 rgba(0, 110, 72, 0.65),
-    0 6px 20px rgba(0, 180, 110, 0.35),
-    inset 0 2px 0 rgba(255, 255, 255, 0.35);
-}
-
-.hud-dispose-bag__glow {
-  position: absolute;
-  inset: -45%;
-  background: radial-gradient(
-    circle at 50% 28%,
-    rgba(255, 255, 255, 0.65) 0%,
-    transparent 52%
-  );
-  opacity: 0.5;
-  pointer-events: none;
-  animation: hudDisposeSheen 2.2s ease-in-out infinite;
-}
-
-.hud-dispose-bag__label {
-  position: relative;
-  z-index: 1;
-  display: block;
-}
-
-@keyframes hudDisposeWobble {
-  0%,
-  100% {
-    filter: brightness(1.06) saturate(1.18);
-  }
-  50% {
-    filter: brightness(1.22) saturate(1.35);
-  }
-}
-
-@keyframes hudDisposeSheen {
-  0%,
-  100% {
-    transform: translate(0, 0) rotate(0deg);
-  }
-  50% {
-    transform: translate(6%, -3%) rotate(8deg);
-  }
-}
-
 #game-viewport.game-viewport--glow-ecto {
   box-shadow:
     0 12px 40px rgba(0, 0, 0, 0.45),
@@ -472,7 +364,7 @@ body {
   display: flex;
   align-items: center;
   gap: 5px;
-  margin-left: 8px;
+  margin-left: auto;
   padding: 4px 10px;
   border-radius: 999px;
   background: rgba(40, 8, 12, 0.45);
@@ -1131,20 +1023,6 @@ body {
   color: rgba(190, 200, 225, 0.82);
 }
 
-.hud-stat--money {
-  margin-left: auto;
-  background: linear-gradient(
-    180deg,
-    rgba(55, 42, 28, 0.92) 0%,
-    rgba(28, 22, 14, 0.94) 100%
-  );
-  border: 1px solid rgba(255, 210, 130, 0.35);
-  color: #ffe8b8;
-  box-shadow:
-    inset 0 1px 0 rgba(255, 230, 190, 0.12),
-    0 2px 8px rgba(0, 0, 0, 0.35);
-}
-
 /* Ghost hit i-frames — subtle frame cue (with shirt blink on character) */
 #game-viewport.game-viewport--ghost-invuln::after {
   content: '';
@@ -1188,79 +1066,8 @@ body {
   transform: translate(-50%, -18px) scale(0.92);
 }
 
-.float-hud--coin {
-  color: #ffe566;
-}
-
 .float-hud--pickup {
   color: #b8f5c8;
-}
-
-/** Max bag capacity — hero banner (two-line). */
-.float-hud--bag-full {
-  z-index: 18;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: clamp(6px, 1.8vw, 12px);
-  width: min(96vw, 28rem);
-  max-width: min(96vw, 28rem);
-  text-align: center;
-}
-
-.float-hud__bag-full-title {
-  font: 900 clamp(34px, 11vw, 62px) system-ui, sans-serif;
-  line-height: 0.95;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #fff2c8;
-  -webkit-text-stroke: 1px rgba(40, 18, 0, 0.35);
-  text-shadow:
-    0 0 8px rgba(255, 240, 200, 1),
-    0 0 28px rgba(255, 160, 40, 0.95),
-    0 0 48px rgba(255, 90, 20, 0.55),
-    0 4px 0 rgba(80, 35, 0, 0.45),
-    0 6px 20px rgba(0, 0, 0, 0.65);
-  animation: bagFullTitlePop 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.float-hud__bag-full-sub {
-  font: 800 clamp(20px, 6vw, 34px) system-ui, sans-serif;
-  line-height: 1.05;
-  letter-spacing: 0.22em;
-  text-transform: uppercase;
-  color: #ffcc66;
-  text-shadow:
-    0 0 14px rgba(255, 200, 80, 0.9),
-    0 2px 10px rgba(0, 0, 0, 0.6);
-  animation: bagFullSubPop 0.6s cubic-bezier(0.22, 1, 0.36, 1) 0.08s both;
-}
-
-@keyframes bagFullTitlePop {
-  from {
-    opacity: 0;
-    letter-spacing: 0.2em;
-    filter: blur(4px);
-    transform: scale(0.82);
-  }
-  to {
-    opacity: 1;
-    letter-spacing: 0.08em;
-    filter: blur(0);
-    transform: scale(1);
-  }
-}
-
-@keyframes bagFullSubPop {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
 }
 
 .float-hud--bank-big {
@@ -1463,7 +1270,7 @@ body {
   outline-offset: 2px;
 }
 
-/* Bottom: spawn text + dispose CTA */
+/* Bottom: spawn hint */
 .hud-bottom {
   position: absolute;
   left: 12px;
@@ -1621,54 +1428,6 @@ body {
 
 #hud-deposit-toast.hidden {
   visibility: hidden;
-}
-
-#hud-money.money-bump {
-  animation: moneyBump 0.35s ease-out;
-}
-
-#hud-money.money-bump-big {
-  animation: moneyBumpBig 0.5s cubic-bezier(0.2, 0.9, 0.25, 1);
-}
-
-#hud-money.money-tick {
-  animation: moneyTick 0.12s ease-out;
-}
-
-@keyframes moneyBump {
-  0% {
-    transform: scale(1);
-  }
-  40% {
-    transform: scale(1.12);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-@keyframes moneyBumpBig {
-  0% {
-    transform: scale(1);
-  }
-  35% {
-    transform: scale(1.22);
-  }
-  100% {
-    transform: scale(1);
-  }
-}
-
-@keyframes moneyTick {
-  0% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.06);
-  }
-  100% {
-    transform: scale(1);
-  }
 }
 
 /* Floating joystick: only visible while dragging; does not intercept input */

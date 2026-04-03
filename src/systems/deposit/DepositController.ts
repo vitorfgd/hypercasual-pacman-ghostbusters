@@ -5,7 +5,6 @@ import {
   evaluateDeposit,
   type DepositEval,
 } from '../economy/depositEvaluation.ts'
-import type { Economy } from '../economy/Economy.ts'
 import {
   OVERLOAD_BONUS_MULT,
   OVERLOAD_FLIGHT_DURATION_MULT,
@@ -44,7 +43,6 @@ export type DepositControllerOptions = {
   player: PlayerController
   stack: CarryStack
   stackVisual: StackVisual
-  economy: Economy
   flight: DepositFlightAnimator
   /** Trash portal / room deposit disc — null when player is not in a deposit zone. */
   resolveDepositZone: DepositZoneResolver
@@ -69,7 +67,6 @@ export class DepositController {
   private readonly player: PlayerController
   private readonly stack: CarryStack
   private readonly stackVisual: StackVisual
-  private readonly economy: Economy
   private readonly flight: DepositFlightAnimator
   private readonly evaluateOverload?: (snapshot: readonly GameItem[]) => OverloadEvalResult
   private readonly onDepositPresentationComplete: DepositControllerOptions['onDepositPresentationComplete']
@@ -98,7 +95,6 @@ export class DepositController {
     this.player = opts.player
     this.stack = opts.stack
     this.stackVisual = opts.stackVisual
-    this.economy = opts.economy
     this.flight = opts.flight
     this.evaluateOverload = opts.evaluateOverload
     this.onDepositPresentationComplete = opts.onDepositPresentationComplete
@@ -146,41 +142,47 @@ export class DepositController {
 
     if (
       inside &&
-      !this.wasInside &&
-      this.stack.count > 0 &&
+      zone !== null &&
       this.sessionSnapshot === null &&
-      zone !== null
+      this.stack.count > 0 &&
+      (!this.wasInside || this.stack.count >= this.stack.maxCapacity)
     ) {
-      const snapshot = [...this.stack.getSnapshot()]
-      this.sessionSnapshot = snapshot
-      this.depositedIds.clear()
-      this.sessionDepositCenter.copy(zone.center)
-      this.sessionDepositRadius = zone.radius
-      const evo = this.evaluateOverload?.(snapshot) ?? {
-        overload: false,
-        perfect: false,
-      }
-      this.sessionOverload = {
-        active: evo.overload,
-        perfect: evo.perfect,
-        total: snapshot.length,
-      }
-      this.peelIndex = 0
-      this.onDepositSessionStart?.({
-        overload: evo.overload,
-        perfect: evo.perfect,
-        itemCount: snapshot.length,
-      })
-      this.tryPeelNext()
+      this.beginDepositSession(zone)
     }
 
     this.wasInside = inside
   }
 
+  private beginDepositSession(zone: { center: Vector3; radius: number }): void {
+    if (this.sessionSnapshot !== null) return
+    const snapshot = [...this.stack.getSnapshot()]
+    if (snapshot.length === 0) return
+    this.sessionSnapshot = snapshot
+    this.depositedIds.clear()
+    this.sessionDepositCenter.copy(zone.center)
+    this.sessionDepositRadius = zone.radius
+    const evo = this.evaluateOverload?.(snapshot) ?? {
+      overload: false,
+      perfect: false,
+    }
+    this.sessionOverload = {
+      active: evo.overload,
+      perfect: evo.perfect,
+      total: snapshot.length,
+    }
+    this.peelIndex = 0
+    this.onDepositSessionStart?.({
+      overload: evo.overload,
+      perfect: evo.perfect,
+      itemCount: snapshot.length,
+    })
+    this.tryPeelNext()
+  }
+
   private computeOverloadExtra(ev: DepositEval): number {
     const s = this.sessionOverload
     if (!s?.active) return 0
-    let extra = Math.floor(ev.credits * (OVERLOAD_BONUS_MULT - 1))
+    let extra = Math.floor(ev.batchTotal * (OVERLOAD_BONUS_MULT - 1))
     if (s.perfect) {
       extra = Math.floor(extra * PERFECT_OVERLOAD_BONUS_MULT)
     }
@@ -197,7 +199,6 @@ export class DepositController {
       this.depositedIds.clear()
       const ev = evaluateDeposit(snapshot)
       const overloadBonus = this.computeOverloadExtra(ev)
-      this.economy.addMoney(ev.credits + overloadBonus)
       const s = this.sessionOverload
       this.sessionOverload = null
       this.peelIndex = 0
@@ -266,12 +267,8 @@ export class DepositController {
     const snapshot = this.sessionSnapshot
     this.sessionSnapshot = null
 
-    const completed = snapshot.filter((it) => this.depositedIds.has(it.id))
     const remaining = snapshot.filter((it) => !this.depositedIds.has(it.id))
 
-    const ev = evaluateDeposit(completed)
-    const overloadBonus = this.computeOverloadExtra(ev)
-    this.economy.addMoney(ev.credits + overloadBonus)
     this.stack.replaceItems(remaining)
     this.depositedIds.clear()
     this.sessionOverload = null

@@ -27,7 +27,7 @@ export function showRelicBankedCelebration(
   }, RELIC_BANKED_SEC * 1000)
 }
 
-/** Brief gold sparkles at screen center (DOM). */
+/** Brief sparkle burst at screen center (DOM). */
 export function spawnRelicScreenSparkBurst(viewport: HTMLElement): void {
   const n = 16
   for (let i = 0; i < n; i++) {

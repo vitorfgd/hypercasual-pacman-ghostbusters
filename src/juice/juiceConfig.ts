@@ -86,8 +86,5 @@ export const GHOST_HIT_SLOW_MO_SCALE = 0.38
 /** Dropped stack items (ghost / traps) vanish after this if not picked up. */
 export const STACK_DROP_RECOVERY_TTL_SEC = 3.6
 export const STACK_DROP_SCATTER_RADIUS = 2.1
-/** Money HUD count-up speed (higher = snappier) */
-export const MONEY_DISPLAY_LERP = 10
-
-/** Floating +1 / money pop */
+/** Floating pickup / banner text duration */
 export const FLOAT_TEXT_SEC = 0.85

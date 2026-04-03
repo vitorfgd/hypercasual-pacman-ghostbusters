@@ -8,7 +8,6 @@ export type JuiceSoundId =
   | 'pickup'
   | 'deposit_item'
   | 'deposit_complete'
-  | 'money_tick'
   | 'overload_impact'
   | 'ghost_hit'
   | 'ghost_pulse'
@@ -43,8 +42,6 @@ function baseFrequencyHz(id: JuiceSoundId): number {
       return 520
     case 'deposit_complete':
       return 640
-    case 'money_tick':
-      return 1100
     case 'overload_impact':
       return 180
     case 'ghost_hit':

@@ -16,7 +16,7 @@ import {
 import { clone as cloneSkeletonSafe } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { publicAsset } from '../../core/publicAsset.ts'
 
-/** `0` = calice, `1` = coin — matches `RelicItem.relicVariant` */
+/** `0` = calice, `1` = round relic mesh — matches `RelicItem.relicVariant` */
 export type RelicVariantIndex = 0 | 1
 
 export const RELIC_GLTF_URLS: readonly [string, string] = [
@@ -100,7 +100,7 @@ export async function loadRelicGltfs(
   return anyOk
 }
 
-function tintRelicGold(root: Group, hue: number): void {
+function tintRelicMesh(root: Group, hue: number): void {
   const tint = new Color().setHSL(hue, 0.62, 0.52)
   const emTint = new Color().setHSL(hue + 0.02, 0.72, 0.48)
   root.traverse((o) => {
@@ -177,7 +177,7 @@ export function cloneRelicFromGltf(
   root.userData.relicGltf = true
   root.userData.relicVariant = variant
 
-  tintRelicGold(root, hue)
+  tintRelicMesh(root, hue)
 
   root.updateMatrixWorld(true)
   const box = new Box3().setFromObject(root)

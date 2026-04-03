@@ -1,5 +1,4 @@
 import { PLAYER_MAX_LIVES } from '../../juice/juiceConfig.ts'
-import type { Economy } from '../economy/Economy.ts'
 import type { PlayerController } from '../player/PlayerController.ts'
 import type { CarryStack } from '../stack/CarryStack.ts'
 import { RunUpgradeState } from './runUpgradeState.ts'
@@ -19,9 +18,7 @@ export type ApplyRunUpgradeContext = {
   state: RunUpgradeState
   stack: CarryStack
   player: PlayerController
-  economy: Economy
   lives: number
-  /** Per-run RNG (e.g. lucky-find cash jitter). */
   random: () => number
 }
 
@@ -231,32 +228,14 @@ const DEFINITIONS: readonly UpgradeDef[] = [
     }),
   },
   {
-    id: 'lucky-find',
-    title: 'Lucky find',
-    description: 'A pile of loose cash.',
-    stackable: true,
-    maxStacks: 5,
-    isEligible: (s) => s.luckyFindStacks < 5,
-    apply: ({ state, economy, random }) => {
-      const tier = state.luckyFindStacks
-      state.luckyFindStacks += 1
-      const amt = 55 + tier * 14 + Math.floor(random() * 18)
-      economy.addMoney(amt)
-      return {
-        bannerSubtitle: 'BONUS CASH',
-        floatText: `+$${amt}`,
-        floatClass: 'float-hud--coin',
-      }
-    },
-  },
-  {
     id: 'respite-charm',
     title: 'Respite charm',
-    description: 'Once per run: heal a heart, or gain cash if you are full.',
+    description:
+      'Once per run: restore a heart if possible; otherwise steady your grip on the haul.',
     stackable: false,
     isEligible: (s) => !s.respiteCharmTaken,
     apply: (ctx) => {
-      const { state, economy } = ctx
+      const { state } = ctx
       state.respiteCharmTaken = true
       if (ctx.lives < PLAYER_MAX_LIVES) {
         return {
@@ -266,12 +245,14 @@ const DEFINITIONS: readonly UpgradeDef[] = [
           floatClass: 'float-hud--level-up',
         }
       }
-      const cash = 72
-      economy.addMoney(cash)
+      state.ghostHitLossReduction = Math.min(
+        0.4,
+        state.ghostHitLossReduction + 0.12,
+      )
       return {
         bannerSubtitle: 'RESPITE',
-        floatText: `+$${cash} (full health)`,
-        floatClass: 'float-hud--coin',
+        floatText: 'Steadier grip (full health)',
+        floatClass: 'float-hud--level-up',
       }
     },
   },
@@ -300,8 +281,6 @@ function stackCountFor(
       return Math.round(state.hauntedChanceBonus / 0.045)
     case 'scavenger':
       return state.scavengerStacks
-    case 'lucky-find':
-      return state.luckyFindStacks
     default:
       return 0
   }

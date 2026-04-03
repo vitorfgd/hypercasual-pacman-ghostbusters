@@ -108,7 +108,7 @@ function createProceduralRelicPickupMesh(hue: number): Group {
   return root
 }
 
-/** Larger gold relic — calice or coin GLB when loaded, else octahedron + halo. */
+/** Larger floor relic — calice or round GLB when loaded, else octahedron + halo. */
 export function createRelicPickupMesh(
   hue: number,
   variant: RelicVariantIndex,
@@ -203,7 +203,7 @@ function gemPalette(c: GemColor): { core: Color; emissive: Color } {
   }
 }
 
-/** Faceted gem — distinct from wisps (spheres) and relics (gold). */
+/** Faceted gem — distinct from wisps (spheres) and relics (warm metal). */
 /** Subtle emissive so props stay readable under moon + ambient (not mud-brown). */
 function clutterEmissive(color: Color): { emissive: Color; emissiveIntensity: number } {
   return {

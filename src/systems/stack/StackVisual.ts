@@ -34,7 +34,7 @@ const HIT_REACT_DECAY = 13.5
  */
 export class StackVisual {
   private readonly anchor: Object3D
-  /** Null while the bag mesh is flying in a dispose toss. */
+  /** Null while the bag mesh is flying in an auto-clear arc. */
   private bag: Group | null = null
   private fitScale = 1
   private prevIds: string[] = []
