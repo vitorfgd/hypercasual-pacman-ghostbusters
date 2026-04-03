@@ -1,4 +1,5 @@
 import {
+  BoxGeometry,
   Color,
   Group,
   Mesh,
@@ -7,7 +8,17 @@ import {
   SphereGeometry,
   type Object3D,
 } from 'three'
-import type { GameItem, GemColor } from '../../core/types/GameItem.ts'
+import type {
+  ClutterVariant,
+  GameItem,
+  GemColor,
+} from '../../core/types/GameItem.ts'
+import {
+  cloneClutterPickupFromGltf,
+  getClutterPickupPrototype,
+  CLUTTER_PICKUP_TARGET_MAX_DIM,
+  CLUTTER_STACK_TARGET_MAX_DIM,
+} from '../../systems/clutter/clutterGltfAsset.ts'
 import {
   cloneRelicFromGltf,
   getRelicPrototype,
@@ -190,6 +201,176 @@ function gemPalette(c: GemColor): { core: Color; emissive: Color } {
 }
 
 /** Faceted gem — distinct from wisps (spheres) and relics (gold). */
+function clutterMat(
+  variant: ClutterVariant,
+): { color: Color; roughness: number; metalness: number } {
+  switch (variant) {
+    case 0:
+      return {
+        color: new Color(0xe8e0d4),
+        roughness: 0.88,
+        metalness: 0.02,
+      }
+    case 1:
+      return {
+        color: new Color(0x7a7568),
+        roughness: 0.92,
+        metalness: 0.08,
+      }
+    case 2:
+      return {
+        color: new Color(0x5c5346),
+        roughness: 0.96,
+        metalness: 0.04,
+      }
+    case 3:
+      return {
+        color: new Color(0x9a9082),
+        roughness: 0.9,
+        metalness: 0.05,
+      }
+    case 4:
+      return {
+        color: new Color(0xb8a898),
+        roughness: 0.88,
+        metalness: 0.03,
+      }
+    case 5:
+      return {
+        color: new Color(0x6e665c),
+        roughness: 0.94,
+        metalness: 0.06,
+      }
+    default:
+      return {
+        color: new Color(0x7d7368),
+        roughness: 0.93,
+        metalness: 0.05,
+      }
+  }
+}
+
+/** Floor pickup — GLB when loaded, else procedural stand-ins. */
+export function createClutterPickupMesh(clutterVariant: ClutterVariant): Group {
+  if (getClutterPickupPrototype(clutterVariant)) {
+    return cloneClutterPickupFromGltf(clutterVariant)
+  }
+
+  const root = new Group()
+  root.name = 'clutterPickup'
+  root.userData.clutterPickup = true
+  root.userData.clutterVariant = clutterVariant
+  root.userData.clutterBaseScale = 1
+  const { color, roughness, metalness } = clutterMat(clutterVariant)
+
+  if (clutterVariant === 0) {
+    const geo = new BoxGeometry(0.44, 0.028, 0.34)
+    const mat = new MeshStandardMaterial({
+      color,
+      roughness,
+      metalness,
+    })
+    const paper = new Mesh(geo, mat)
+    paper.position.y = 0.014
+    paper.rotation.y = (Math.random() - 0.5) * 0.35
+    paper.castShadow = true
+    paper.receiveShadow = true
+    root.add(paper)
+  } else if (clutterVariant === 1) {
+    const s = 0.22
+    const geo = new BoxGeometry(s, s, s)
+    const mat = new MeshStandardMaterial({
+      color,
+      roughness,
+      metalness,
+    })
+    const cube = new Mesh(geo, mat)
+    cube.position.y = s * 0.5
+    cube.rotation.y = Math.random() * Math.PI * 2
+    cube.castShadow = true
+    cube.receiveShadow = true
+    root.add(cube)
+  } else if (clutterVariant === 2) {
+    const geo = new BoxGeometry(0.2, 0.14, 0.26)
+    const mat = new MeshStandardMaterial({
+      color,
+      roughness,
+      metalness,
+    })
+    const chunk = new Mesh(geo, mat)
+    chunk.position.y = 0.07
+    chunk.rotation.y = Math.random() * Math.PI * 2
+    chunk.rotation.z = (Math.random() - 0.5) * 0.5
+    chunk.castShadow = true
+    chunk.receiveShadow = true
+    root.add(chunk)
+  } else {
+    const geo = new BoxGeometry(0.2, 0.14, 0.26)
+    const mat = new MeshStandardMaterial({
+      color,
+      roughness,
+      metalness,
+    })
+    const chunk = new Mesh(geo, mat)
+    chunk.position.y = 0.07
+    chunk.rotation.y = Math.random() * Math.PI * 2
+    chunk.rotation.z = (Math.random() - 0.5) * 0.5
+    chunk.castShadow = true
+    chunk.receiveShadow = true
+    root.add(chunk)
+  }
+
+  /** Match previous GLB fit baseline (0.58) so fallback scales with `CLUTTER_PICKUP_TARGET_MAX_DIM`. */
+  const k = CLUTTER_PICKUP_TARGET_MAX_DIM / 0.58
+  root.scale.setScalar(k)
+  root.userData.clutterBaseScale = k
+
+  return root
+}
+
+function clutterStackDim(variant: ClutterVariant): number {
+  switch (variant) {
+    case 0:
+      return 0.05
+    case 1:
+      return 0.12
+    case 2:
+      return 0.09
+    default:
+      return 0.09
+  }
+}
+
+export function createClutterStackMesh(clutterVariant: ClutterVariant): Object3D {
+  if (getClutterPickupPrototype(clutterVariant)) {
+    return cloneClutterPickupFromGltf(clutterVariant, {
+      targetMaxDim: CLUTTER_STACK_TARGET_MAX_DIM,
+    })
+  }
+
+  const d = clutterStackDim(clutterVariant)
+  const { color, roughness, metalness } = clutterMat(clutterVariant)
+  let geo: BoxGeometry
+  if (clutterVariant === 0) {
+    geo = new BoxGeometry(d * 3.2, d * 0.45, d * 2.4)
+  } else if (clutterVariant === 1) {
+    geo = new BoxGeometry(d, d, d)
+  } else {
+    geo = new BoxGeometry(d * 0.9, d * 0.7, d * 1.1)
+  }
+  const mesh = new Mesh(
+    geo,
+    new MeshStandardMaterial({ color, roughness, metalness }),
+  )
+  mesh.castShadow = true
+  mesh.receiveShadow = true
+  mesh.userData.clutterVariant = clutterVariant
+  mesh.userData.clutterStackMesh = true
+  mesh.position.y = d * 0.55
+  mesh.rotation.y = Math.random() * Math.PI * 2
+  return mesh
+}
+
 export function createGemPickupMesh(gemColor: GemColor): Group {
   const root = new Group()
   root.name = 'gemPickup'
@@ -296,6 +477,9 @@ export function createPelletStackMesh(item: GameItem): Object3D {
   }
   if (item.type === 'gem') {
     return createGemStackMesh(item.gemColor)
+  }
+  if (item.type === 'clutter') {
+    return createClutterStackMesh(item.clutterVariant)
   }
   return createWispStackMesh(item.hue)
 }

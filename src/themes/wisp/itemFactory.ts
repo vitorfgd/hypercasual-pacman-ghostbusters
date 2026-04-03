@@ -1,4 +1,12 @@
-import type { GemColor, GemItem, RelicItem, WispItem } from '../../core/types/GameItem.ts'
+import type {
+  ClutterItem,
+  ClutterVariant,
+  GemColor,
+  GemItem,
+  RelicItem,
+  WispItem,
+} from '../../core/types/GameItem.ts'
+import type { RoomId } from '../../systems/world/mansionRoomData.ts'
 import type { ZoneTone } from '../../systems/sources/sourceTypes.ts'
 
 export function createWispItem(hue: number, value: number): WispItem {
@@ -31,6 +39,25 @@ export function createGemItem(gemColor: GemColor): GemItem {
     type: 'gem',
     gemColor,
     value: 6,
+  }
+}
+
+export function createClutterItem(
+  clutterVariant: ClutterVariant,
+  value: number,
+  spawnRoomId: RoomId,
+  haunted = false,
+  /** Stable id for pre-spawned clutter (omit for random UUID). */
+  stableId?: string,
+): ClutterItem {
+  return {
+    id: stableId ?? crypto.randomUUID(),
+    kind: 'collectible',
+    type: 'clutter',
+    clutterVariant,
+    spawnRoomId,
+    haunted,
+    value,
   }
 }
 

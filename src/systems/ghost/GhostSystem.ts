@@ -11,7 +11,6 @@ import { createGhostVisual } from './createGhostVisual.ts'
 import { MANSION_WORLD_HALF } from '../world/mansionGeometry.ts'
 import type { WorldCollision } from '../world/WorldCollision.ts'
 import {
-  DEFAULT_GHOST_SPAWNS,
   GHOST_CHASE_SPEED,
   GHOST_COLLISION_RADIUS,
   GHOST_DEPOSIT_EXCLUSION_PADDING,
@@ -29,6 +28,8 @@ import {
   GHOST_POST_HIT_SEPARATION,
   GHOST_EAT_SHRINK_SEC,
   GHOST_RESPAWN_AFTER_EAT_SEC,
+  GHOST_ROOM_PURGE_SHRINK_SEC,
+  randomSpawnChaseGraceSec,
   GHOST_STEERING_ACCEL_CHASE,
   GHOST_STEERING_ACCEL_FRIGHT,
   GHOST_STEERING_ACCEL_WANDER,
@@ -47,36 +48,48 @@ export type GhostHitResult =
   | { kind: 'none' }
   | { kind: 'hit'; ghostX: number; ghostZ: number }
 
-export type GhostEatResult =
-  | { kind: 'none' }
-  | { kind: 'eaten'; bodyColor: number; x: number; z: number }
-
 export class GhostSystem {
   private readonly ghosts: Ghost[] = []
-  private powerModeActive = false
-  private powerModeTimeSec = 0
+  private readonly ghostGroup: Group
+  private readonly worldCollision: WorldCollision
+  private readonly ghostGltf: GhostGltfTemplate | null
   private ghostAnimTime = 0
 
   constructor(
     ghostGroup: Group,
     worldCollision: WorldCollision,
-    spawns: readonly GhostSpawnSpec[] = DEFAULT_GHOST_SPAWNS,
+    spawns: readonly GhostSpawnSpec[] = [],
     ghostGltf: GhostGltfTemplate | null = null,
   ) {
+    this.ghostGroup = ghostGroup
+    this.worldCollision = worldCollision
+    this.ghostGltf = ghostGltf
     for (const s of spawns) {
-      this.ghosts.push(new Ghost(ghostGroup, worldCollision, s, ghostGltf))
+      this.ghosts.push(
+        new Ghost(this.ghostGroup, this.worldCollision, s, this.ghostGltf),
+      )
     }
   }
 
-  /** While true, ghosts are vulnerable (blue), player can eat them, and they cannot deal pellet-loss hits. */
-  setPowerMode(active: boolean, timeSec: number): void {
-    this.powerModeActive = active
-    this.powerModeTimeSec = timeSec
+  /** Runtime spawn (e.g. haunted clutter). Uses the same `Ghost` behavior as map spawns. */
+  spawnGhost(spec: GhostSpawnSpec): void {
+    this.ghosts.push(
+      new Ghost(this.ghostGroup, this.worldCollision, spec, this.ghostGltf),
+    )
+  }
+
+  /** Shrink away and remove all ghosts tied to `ROOM_{roomIndex}` (1…5). */
+  purgeGhostsForRoom(roomIndex: number): void {
+    for (const g of this.ghosts) {
+      if (g.getRoomIndex() === roomIndex) {
+        g.beginRoomClearPurge()
+      }
+    }
   }
 
   update(dt: number, playerPos: Vector3, playerCarryingRelic: boolean): void {
     this.ghostAnimTime += dt
-    const frightened = this.powerModeActive
+    const frightened = false
     const hub = ROOMS.SAFE_CENTER.bounds
     const playerInSafeCenter =
       playerPos.x >= hub.minX &&
@@ -92,7 +105,16 @@ export class GhostSystem {
         playerInSafeCenter,
         playerCarryingRelic,
       )
-      g.updateVulnerableAppearance(this.powerModeActive, this.powerModeTimeSec)
+      if (!g.isRoomClearPurging()) {
+        g.updateVulnerableAppearance(false, this.ghostAnimTime)
+      }
+    }
+    for (let i = this.ghosts.length - 1; i >= 0; i--) {
+      const g = this.ghosts[i]!
+      if (g.consumeDestroyAfterRoomPurge()) {
+        g.destroy()
+        this.ghosts.splice(i, 1)
+      }
     }
     this.separateOverlappingGhosts()
   }
@@ -106,7 +128,7 @@ export class GhostSystem {
     playerRadius: number,
   ): boolean {
     for (const g of this.ghosts) {
-      if (g.isEaten()) continue
+      if (g.isEaten() || g.isRoomClearPurging()) continue
       const needR =
         playerRadius + g.collisionRadius + GHOST_MELEE_REARM_PADDING
       const needR2 = needR * needR
@@ -120,39 +142,18 @@ export class GhostSystem {
   }
 
   /**
-   * First overlapping ghost is eaten. Only when `setPowerMode(true, …)` is active.
-   * Returns spawn position and body tint for gem drops.
-   */
-  tryEatGhost(playerPos: Vector3, playerRadius: number): GhostEatResult {
-    if (!this.powerModeActive) return { kind: 'none' }
-    for (const g of this.ghosts) {
-      if (g.isEaten()) continue
-      const r = playerRadius + g.collisionRadius
-      const r2 = r * r
-      const gx = g.root.position.x
-      const gz = g.root.position.z
-      const dx = playerPos.x - gx
-      const dz = playerPos.z - gz
-      if (dx * dx + dz * dz <= r2) {
-        g.markEaten()
-        return { kind: 'eaten', bodyColor: g.bodyColor, x: gx, z: gz }
-      }
-    }
-    return { kind: 'none' }
-  }
-
-  /**
    * Circle–circle overlap on XZ: `playerRadius + ghost.collisionRadius`.
-   * No damage while invulnerable (i-frames) or during power mode (ghosts flee harm).
+   * No damage while invulnerable (i-frames).
    */
   tryHitPlayer(
     playerPos: Vector3,
     playerRadius: number,
     invulnerable: boolean,
   ): GhostHitResult {
-    if (invulnerable || this.powerModeActive) return { kind: 'none' }
+    if (invulnerable) return { kind: 'none' }
     for (const g of this.ghosts) {
-      if (g.isEaten()) continue
+      if (g.isEaten() || g.isRoomClearPurging()) continue
+      if (!g.canDealContactDamage()) continue
       const r = playerRadius + g.collisionRadius
       const r2 = r * r
       const gx = g.root.position.x
@@ -176,7 +177,7 @@ export class GhostSystem {
   ): void {
     const eps2 = 0.28 * 0.28
     for (const g of this.ghosts) {
-      if (g.isEaten()) continue
+      if (g.isEaten() || g.isRoomClearPurging()) continue
       const dx = g.root.position.x - ghostX
       const dz = g.root.position.z - ghostZ
       if (dx * dx + dz * dz <= eps2) {
@@ -195,7 +196,9 @@ export class GhostSystem {
 
   /** Push ghost centers apart so multiple chasers do not stack on the player. */
   private separateOverlappingGhosts(): void {
-    const list = this.ghosts.filter((g) => !g.isEaten())
+    const list = this.ghosts.filter(
+      (g) => !g.isEaten() && !g.isRoomClearPurging(),
+    )
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
         const a = list[i]!
@@ -228,6 +231,8 @@ type SkinSnap = {
 
 class Ghost {
   readonly root: Group
+  /** `ROOM_1` … `ROOM_5` index — matches `GhostSpawnSpec.roomIndex`. */
+  readonly roomIndex: number
   /** Spawn body tint (hex); used for gem color when eaten. */
   readonly bodyColor: number
   /** Hit / wall radius — scales with room tier (larger ghosts in deeper rooms). */
@@ -247,11 +252,16 @@ class Ghost {
   private wanderTimer = 0
 
   private eaten = false
+  /** Room-cleared purge: shrink then remove (no respawn). */
+  private roomClearPurgeRemain = 0
+  private destroyAfterPurgePending = false
   /** >0 while scaling down after capture; respawn timer starts after shrink. */
   private eatShrinkRemaining = 0
   private respawnRemaining = 0
   /** While > 0, cannot transition wander → chase (after scoring a hit on the player). */
   private chaseLockout = 0
+  /** While > 0, ghost only roams (no chase from detect or relic). New spawns / post-eat respawn. */
+  private spawnChaseGraceRemain = 0
   /** Smoothed desired direction (unit XZ) — reduces jittery heading changes */
   private smoothedTx = 0
   private smoothedTz = 1
@@ -263,6 +273,7 @@ class Ghost {
     ghostGltf: GhostGltfTemplate | null,
   ) {
     this.worldCollision = worldCollision
+    this.roomIndex = spec.roomIndex
     this.spawnX = spec.x
     this.spawnZ = spec.z
     this.bodyColor = spec.color
@@ -273,6 +284,7 @@ class Ghost {
     this.root.position.set(spec.x, 0, spec.z)
     ghostGroup.add(this.root)
     this.pickWanderTimer()
+    this.spawnChaseGraceRemain = randomSpawnChaseGraceSec()
 
     this.materials = []
     this.skinSnap = []
@@ -298,6 +310,34 @@ class Ghost {
 
   isEaten(): boolean {
     return this.eaten
+  }
+
+  getRoomIndex(): number {
+    return this.roomIndex
+  }
+
+  isRoomClearPurging(): boolean {
+    return this.roomClearPurgeRemain > 0
+  }
+
+  beginRoomClearPurge(): void {
+    if (this.eaten) return
+    if (this.roomClearPurgeRemain > 0) return
+    this.roomClearPurgeRemain = GHOST_ROOM_PURGE_SHRINK_SEC
+    this.velocity.set(0, 0, 0)
+  }
+
+  /** Returns true once when shrink finished; `GhostSystem` then calls `destroy()`. */
+  consumeDestroyAfterRoomPurge(): boolean {
+    if (!this.destroyAfterPurgePending) return false
+    this.destroyAfterPurgePending = false
+    return true
+  }
+
+  /** False during spawn / respawn grace — no stack-loss contact yet (still roams). */
+  canDealContactDamage(): boolean {
+    if (this.eaten) return false
+    return this.spawnChaseGraceRemain <= 0
   }
 
   markEaten(): void {
@@ -386,6 +426,17 @@ class Ghost {
     playerInSafeCenter: boolean,
     relicCarried: boolean,
   ): void {
+    if (this.roomClearPurgeRemain > 0) {
+      this.roomClearPurgeRemain -= dt
+      const t = Math.max(0, this.roomClearPurgeRemain / GHOST_ROOM_PURGE_SHRINK_SEC)
+      this.root.scale.setScalar(Math.max(0.04, t))
+      if (this.roomClearPurgeRemain <= 0) {
+        this.roomClearPurgeRemain = 0
+        this.destroyAfterPurgePending = true
+      }
+      return
+    }
+
     if (this.eaten) {
       if (this.eatShrinkRemaining > 0) {
         this.eatShrinkRemaining -= dt
@@ -412,6 +463,7 @@ class Ghost {
         this.state = 'wander'
         this.chaseLockout = 0
         this.pickWanderTimer()
+        this.spawnChaseGraceRemain = randomSpawnChaseGraceSec()
         this.resetSkin()
         this.smoothedTx = 0
         this.smoothedTz = 1
@@ -428,6 +480,10 @@ class Ghost {
     if (this.chaseLockout > 0) {
       this.chaseLockout -= dt
     }
+    if (this.spawnChaseGraceRemain > 0) {
+      this.spawnChaseGraceRemain -= dt
+    }
+    const canHuntPlayer = this.spawnChaseGraceRemain <= 0
 
     let tx = 0
     let tz = 0
@@ -460,7 +516,7 @@ class Ghost {
       tx = Math.cos(this.wanderAngle)
       tz = Math.sin(this.wanderAngle)
       targetSpeed = GHOST_WANDER_SPEED
-    } else if (relicCarried) {
+    } else if (relicCarried && canHuntPlayer) {
       this.state = 'chase'
       if (dist > 1e-4) {
         const inv = 1 / dist
@@ -472,6 +528,20 @@ class Ghost {
         tz = 0
         targetSpeed = 0
       }
+    } else if (relicCarried && !canHuntPlayer) {
+      if (this.state === 'chase') {
+        this.state = 'wander'
+        this.pickWanderTimer()
+        this.wanderAngle = Math.random() * Math.PI * 2
+      }
+      this.wanderTimer -= dt
+      if (this.wanderTimer <= 0) {
+        this.wanderAngle = Math.random() * Math.PI * 2
+        this.pickWanderTimer()
+      }
+      tx = Math.cos(this.wanderAngle)
+      tz = Math.sin(this.wanderAngle)
+      targetSpeed = GHOST_WANDER_SPEED
     } else {
       const detectR2 = GHOST_DETECT_RADIUS * GHOST_DETECT_RADIUS
       const loseR2 = GHOST_LOSE_CHASE_RADIUS * GHOST_LOSE_CHASE_RADIUS
@@ -479,6 +549,7 @@ class Ghost {
       if (this.state === 'wander') {
         if (
           this.chaseLockout <= 0 &&
+          canHuntPlayer &&
           dist * dist <= detectR2
         ) {
           this.state = 'chase'

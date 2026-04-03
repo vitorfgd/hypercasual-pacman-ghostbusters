@@ -1,7 +1,7 @@
 import type { PerspectiveCamera } from 'three'
 import type { Scene } from 'three'
 import type { WebGLRenderer } from 'three'
-import { Group, Vector3 } from 'three'
+import { Group, Mesh, Vector3 } from 'three'
 import { CameraRig } from '../systems/camera/CameraRig.ts'
 import { CollectionSystem } from '../systems/collection/CollectionSystem.ts'
 import {
@@ -11,13 +11,20 @@ import {
 import { DepositFlightAnimator } from '../systems/deposit/DepositFlightAnimator.ts'
 import { DepositZoneFeedback } from '../systems/deposit/DepositZoneFeedback.ts'
 import { Economy } from '../systems/economy/Economy.ts'
-import type { DepositEval } from '../systems/economy/depositEvaluation.ts'
+import {
+  evaluateDeposit,
+  type DepositEval,
+} from '../systems/economy/depositEvaluation.ts'
 import {
   KeyboardMoveInput,
   mergeMoveInput,
 } from '../systems/input/KeyboardMoveInput.ts'
 import { TouchJoystick } from '../systems/input/TouchJoystick.ts'
 import { ItemWorld } from '../systems/items/ItemWorld.ts'
+import {
+  instantiatePrefilledClutter,
+  precomputeAllClutterPlacements,
+} from '../systems/clutter/clutterPrefill.ts'
 import { RoomWispSpawnSystem } from '../systems/wisp/RoomWispSpawnSystem.ts'
 import { SpecialRelicSpawnSystem } from '../systems/wisp/SpecialRelicSpawnSystem.ts'
 import type { PlayerCharacterVisual } from '../systems/player/PlayerCharacterVisual.ts'
@@ -29,9 +36,10 @@ import { createScene } from '../systems/scene/SceneSetup.ts'
 import type { HubTitleFloorLabelHandle } from '../systems/scene/hubTitleFloorLabel.ts'
 import { subscribeViewportResize } from '../systems/scene/resize.ts'
 import { CarryStack } from '../systems/stack/CarryStack.ts'
+import { disposeCarryBagClone } from '../systems/stack/bagGltfAsset.ts'
 import { StackVisual } from '../systems/stack/StackVisual.ts'
 import {
-  createGemItem,
+  createClutterItem,
   createRelicItem,
   createWispItem,
 } from '../themes/wisp/itemFactory.ts'
@@ -43,10 +51,20 @@ import {
 import { INITIAL_STACK_CAPACITY } from '../systems/upgrades/upgradeConfig.ts'
 import { spawnUpgradeSpendCoins } from '../systems/upgrades/upgradeSpendVfx.ts'
 import {
-  GHOST_EAT_MONEY_REWARD,
+  GHOST_COLLISION_RADIUS,
+  GHOST_HIT_DROP_RECOVER_CHANCE,
+  GHOST_HIT_DROP_KICK_H_MIN,
+  GHOST_HIT_DROP_KICK_H_SPREAD,
+  GHOST_HIT_DROP_POP_VY_MIN,
+  GHOST_HIT_DROP_POP_VY_SPREAD,
   GHOST_HIT_INVULN_SEC,
   GHOST_HIT_LOSS_MAX,
   GHOST_HIT_LOSS_MIN,
+  GHOST_HIT_SCATTER_R_MIN,
+  GHOST_HIT_SCATTER_R_SPREAD,
+  GHOST_HIT_VACUUM_DISABLE_SEC,
+  ghostRoomVisualMul,
+  pickGhostColorForRoomIndex,
 } from '../systems/ghost/ghostConfig.ts'
 import {
   disposeGhostGltfTemplate,
@@ -57,30 +75,32 @@ import {
   type PlayerGltfTemplate,
 } from '../systems/player/playerGltfAsset.ts'
 import { disposeGhostSharedGeometry } from '../systems/ghost/createGhostVisual.ts'
-import { gemColorForGhostBodyHex } from '../systems/ghost/ghostGemColor.ts'
 import { GhostSystem } from '../systems/ghost/GhostSystem.ts'
-import {
-  QuestSystem,
-  type QuestHudState,
-} from '../systems/quests/QuestSystem.ts'
 import type { AreaId } from '../systems/world/RoomSystem.ts'
-import type { RoomId } from '../systems/world/mansionRoomData.ts'
 import { RoomSystem } from '../systems/world/RoomSystem.ts'
+import { getDoorBlockerZ, roomIndexFromId } from '../systems/doors/doorLayout.ts'
+import { GATE_OPEN_TOTAL_SEC } from '../systems/doors/doorUnlockConfig.ts'
+import { RoomCleanlinessSystem } from '../systems/world/RoomCleanlinessSystem.ts'
+import type { RoomId } from '../systems/world/mansionRoomData.ts'
 import { WorldCollision } from '../systems/world/WorldCollision.ts'
-import { DEFAULT_DEPOSIT_ZONE_RADIUS } from '../systems/deposit/DepositZone.ts'
 import {
+  DEPOSIT_ARC_EASE,
   GHOST_HIT_SLOW_MO_SCALE,
   GHOST_HIT_SLOW_MO_SEC,
   STACK_DROP_RECOVERY_TTL_SEC,
   STACK_DROP_SCATTER_RADIUS,
 } from '../juice/juiceConfig.ts'
-import { PlayerMotionTrail } from '../juice/playerMotionTrail.ts'
-import { OVERLOAD_STACK_THRESHOLD } from '../systems/overload/overloadDropConfig.ts'
-import { MoneyHud } from '../juice/MoneyHud.ts'
 import {
-  celebrateHubQuestComplete,
-  celebrateRoomObjectiveComplete,
-} from '../juice/confettiHud.ts'
+  spawnBagDisposeBurst,
+  spawnBagLandImpact,
+} from '../juice/bagDisposeVfx.ts'
+import { PlayerMotionTrail } from '../juice/playerMotionTrail.ts'
+import {
+  OVERLOAD_BONUS_MULT,
+  OVERLOAD_STACK_THRESHOLD,
+  PERFECT_OVERLOAD_BONUS_MULT,
+} from '../systems/overload/overloadDropConfig.ts'
+import { MoneyHud } from '../juice/MoneyHud.ts'
 import { spawnFloatingHudText } from '../juice/floatingHud.ts'
 import { playJuiceSound } from '../juice/juiceSound.ts'
 import {
@@ -94,14 +114,29 @@ import {
   showRelicBankedCelebration,
   spawnRelicScreenSparkBurst,
 } from '../juice/relicHud.ts'
-import { GHOST_PULSE_SPEED_MULTIPLIER } from '../systems/ghostPulse/ghostPulseConfig.ts'
 import { PerfMonitor } from '../systems/debug/PerfMonitor.ts'
 import { DoorUnlockSystem } from '../systems/doors/DoorUnlockSystem.ts'
-import { stackWeightSpeedMultiplier } from '../systems/stack/stackWeightConfig.ts'
+import { RoomLockCoverSystem } from '../systems/world/RoomLockCoverSystem.ts'
+import {
+  computeStackWeight,
+  stackWeightDragMultiplier,
+  stackWeightSpeedMultiplier,
+} from '../systems/stack/stackWeightConfig.ts'
 import { TrapFieldSystem } from '../systems/traps/TrapFieldSystem.ts'
-import { RoomObjectiveRuntime } from '../systems/world/roomObjectives/RoomObjectiveRuntime.ts'
+import { TrashPortalSystem } from '../systems/trash/TrashPortalSystem.ts'
+import {
+  TRASH_PORTAL_COMBO_MAX,
+  TRASH_PORTAL_COMBO_PER_CHAIN,
+} from '../systems/trash/trashPortalConfig.ts'
 
 const DEPOSIT_TOAST_MS = 2800
+const BAG_THROW_SEC = 0.78
+
+function roomCleanHudLabel(roomId: RoomId): string {
+  if (roomId === 'SAFE_CENTER') return 'Safe'
+  const m = /^ROOM_(\d+)$/.exec(roomId)
+  return m ? `Room ${m[1]}` : roomId
+}
 
 function upgradeLevelUpBanner(kind: UpgradeSpendKind, newLevel: number): string {
   switch (kind) {
@@ -109,10 +144,6 @@ function upgradeLevelUpBanner(kind: UpgradeSpendKind, newLevel: number): string 
       return `Stack capacity — level ${newLevel}!`
     case 'speed':
       return `Speed — level ${newLevel}!`
-    case 'pulseFreq':
-      return `Hunt charge fill — level ${newLevel}!`
-    case 'pulseDuration':
-      return `Hunt charge drain — level ${newLevel}!`
   }
 }
 
@@ -138,7 +169,8 @@ export class Game {
   private readonly playerCharacter: PlayerCharacterVisual
   private readonly upgradeZones: UpgradeZoneSystem
   private readonly doorUnlock: DoorUnlockSystem
-  private readonly questSystem: QuestSystem
+  private readonly roomLockCovers: RoomLockCoverSystem
+  private readonly roomCleanliness: RoomCleanlinessSystem
   private readonly roomWispSpawns: RoomWispSpawnSystem
   private readonly specialRelicSpawns: SpecialRelicSpawnSystem
   private readonly relicFootArrow: ReturnType<typeof createSpecialRelicFootArrow>
@@ -146,16 +178,12 @@ export class Game {
   private readonly ghostGltfTemplate: GhostGltfTemplate | null
   private readonly playerGltfTemplate: PlayerGltfTemplate | null
   private readonly hubTitleFloorLabel: HubTitleFloorLabelHandle
-  /** Tracks pulse edge for one-shot SFX */
-  private prevGhostPulseActive = false
-  private powerTintEl: HTMLElement | null = null
-  private powerTimerEl: HTMLElement | null = null
-  private powerTimerFillEl: HTMLElement | null = null
-  private powerTimerTrackEl: HTMLElement | null = null
   private readonly burstGroup: Group
   private readonly burstParticles: GhostHitBurstParticle[] = []
   private readonly burstSpawnScratch = new Vector3()
   private ghostHitInvuln = 0
+  /** Real-time seconds; magnet pull off briefly after a ghost hit. */
+  private ghostVacuumDisabledRemain = 0
   private ghostDamageArmed = true
   private hitFlashEl: HTMLElement | null = null
   private hitFlashTimer: ReturnType<typeof setTimeout> | null = null
@@ -166,36 +194,55 @@ export class Game {
   private raf = 0
   private lastTime = performance.now()
   private elapsedSec = 0
-  /** 0–1 ghost pulse charge; fills outside safe room, drains while holding pulse. */
-  private pulseCharge = 0
-  private pulseHeld = false
   private hudSpawn: HTMLElement | null = null
   private readonly moneyHud: MoneyHud | null
   private readonly gameViewport: HTMLElement
   private readonly velScratch = new Vector3()
   private readonly playerPos = new Vector3()
-  private questHudRoot: HTMLElement | null = null
-  private lastPowerTintOn = false
-  private lastPulseBtnActive = false
-  private lastPulseBtnEmpty = false
-  private lastPowerTimerFill = -1
-  private lastPowerTimerLabel = ''
-  private readonly pulseBtnEl: HTMLButtonElement | null
   private lastGhostInvuln = false
   private readonly perf = new PerfMonitor()
+  private readonly hudRoomCleanWrap: HTMLElement | null
+  private readonly hudRoomCleanFill: HTMLElement | null
+  private readonly hudRoomCleanPct: HTMLElement | null
+  private readonly hudRoomCleanTitle: HTMLElement | null
+  private readonly hudMoneyEl: HTMLElement | null
+  private readonly hudDepositToastEl: HTMLElement | null
+  private readonly depositToastAmountEl: HTMLElement | null
+  private readonly depositToastHintEl: HTMLElement | null
+  private readonly hudOverloadEl: HTMLElement | null
+  private readonly hudOverloadAmountEl: HTMLElement | null
+  private readonly hudDisposeBagBtn: HTMLButtonElement | null
   private readonly trapField: TrapFieldSystem
-  private readonly roomObjectives: RoomObjectiveRuntime
+  private readonly trashPortals: TrashPortalSystem
   private readonly playerTrail: PlayerMotionTrail
   private ghostHitSlowMoRemain = 0
-  private hudRoomObjective: HTMLElement | null = null
   private hudStackVignette: HTMLElement | null = null
   private hudStackHum: HTMLElement | null = null
   private depositShakeTimer: ReturnType<typeof setTimeout> | null = null
   /** Edge-detect carry stack full (max slots) for one-shot HUD celebration. */
   private wasAtMaxCapacity = false
-  /** Hide north “welcome” banner after first exit from the gold deposit zone. */
+  private bagDisposeInFlight = false
+  private bagThrow: {
+    bag: Group
+    t: number
+    dur: number
+    start: Vector3
+    end: Vector3
+    mid: Vector3
+    scale0: Vector3
+    snapshot: GameItem[]
+    overload: { active: boolean; perfect: boolean }
+  } | null = null
+  /** Hide north welcome banner after first exit from the safe hub room. */
   private hubWelcomeHidden = false
-  private wasInDepositZone = false
+  private wasInSafeRoom = true
+
+  /** >0: gate-opening cinematic controls the camera; movement input ignored. */
+  private gateCinematicRemain = 0
+  private gateCinematicDoorIndex = 0
+  private readonly gateCineStartPos = new Vector3()
+  private readonly gateCineTargetPos = new Vector3()
+  private readonly gateCineLookAt = new Vector3()
 
   constructor(
     host: HTMLElement,
@@ -233,20 +280,29 @@ export class Game {
     const hudDepositToast = host.querySelector<HTMLElement>(
       '#hud-deposit-toast',
     )
-    const depositAmountEl = hudDepositToast?.querySelector<HTMLElement>(
-      '.deposit-amount',
-    )
-    const depositHintEl = hudDepositToast?.querySelector<HTMLElement>(
-      '.deposit-hint',
-    )
+    const depositAmountEl =
+      hudDepositToast?.querySelector<HTMLElement>('.deposit-amount') ?? null
+    const depositHintEl =
+      hudDepositToast?.querySelector<HTMLElement>('.deposit-hint') ?? null
+    const hudOverload = host.querySelector<HTMLElement>('#hud-overload')
+    const hudOverloadAmount =
+      hudOverload?.querySelector<HTMLElement>('.hud-overload-amount') ?? null
     this.hudSpawn = host.querySelector('#hud-spawn')
-    this.hudRoomObjective = host.querySelector('#hud-room-objective')
+    this.hudRoomCleanWrap = host.querySelector('#hud-room-clean')
+    this.hudRoomCleanFill = host.querySelector('#hud-room-clean-fill')
+    this.hudRoomCleanPct = host.querySelector('#hud-room-clean-pct')
+    this.hudRoomCleanTitle = host.querySelector('#hud-room-clean-title')
+    this.hudMoneyEl = hudMoney
+    this.hudDepositToastEl = hudDepositToast
+    this.depositToastAmountEl = depositAmountEl
+    this.depositToastHintEl = depositHintEl
+    this.hudOverloadEl = hudOverload
+    this.hudOverloadAmountEl = hudOverloadAmount
+    this.hudDisposeBagBtn = host.querySelector<HTMLButtonElement>(
+      '#hud-dispose-bag',
+    )
     this.hudStackVignette = host.querySelector('#hud-stack-vignette')
     this.hudStackHum = host.querySelector('#hud-stack-hum')
-    const hudOverload = host.querySelector<HTMLElement>('#hud-overload')
-    const hudOverloadAmount = hudOverload?.querySelector<HTMLElement>(
-      '.hud-overload-amount',
-    )
 
     this.camera = createCamera(
       host.clientWidth / Math.max(host.clientHeight, 1),
@@ -264,9 +320,7 @@ export class Game {
     this.player = new PlayerController(playerRoot, this.worldCollision)
     this.playerCharacter = playerCharacter
     this.cameraRig = new CameraRig(this.camera, playerRoot, () =>
-      this.stack.maxCapacity > 0
-        ? this.stack.count / this.stack.maxCapacity
-        : 0,
+      computeStackWeight(this.stack.count, this.stack.maxCapacity),
     )
 
     this.economy = new Economy()
@@ -277,7 +331,7 @@ export class Game {
 
     this.stackVisual = new StackVisual(stackAnchor)
     this.stack = new CarryStack(INITIAL_STACK_CAPACITY, () => {
-      this.stackVisual.sync(this.stack.getSnapshot())
+      this.stackVisual.sync(this.stack.getSnapshot(), this.stack.maxCapacity)
       if (hudCarry) {
         hudCarry.textContent = `${this.stack.count} / ${this.stack.maxCapacity}`
       }
@@ -285,21 +339,33 @@ export class Game {
     if (hudCarry) {
       hudCarry.textContent = `0 / ${INITIAL_STACK_CAPACITY}`
     }
+    this.stackVisual.sync(this.stack.getSnapshot(), this.stack.maxCapacity)
 
     this.itemWorld = new ItemWorld(pickupGroup, scene)
     this.itemWorld.prewarmWispPool(8)
+    this.itemWorld.prewarmClutterPool(3)
 
     this.doorUnlock = new DoorUnlockSystem({
       scene: this.scene,
-      player: this.player,
-      economy: this.economy,
       worldCollision: this.worldCollision,
-      camera: this.camera,
-      hostEl: this.hostEl,
+      onDoorPassageCleared: () => {
+        this.syncClutterRoomAccessibilityFromDoors()
+      },
     })
 
+    this.roomSystem.configureRoomAccess((roomId) =>
+      this.doorUnlock.canAccessRoomForSpawning(roomId),
+    )
+
+    this.roomLockCovers = new RoomLockCoverSystem(
+      this.scene,
+      this.roomSystem,
+      this.doorUnlock,
+    )
+
+    this.trashPortals = new TrashPortalSystem(this.roomSystem)
+
     this.trapField = new TrapFieldSystem(this.scene, this.roomSystem, Math.random, 6)
-    this.roomObjectives = new RoomObjectiveRuntime(this.roomSystem)
     this.playerTrail = new PlayerMotionTrail(this.scene)
 
     this.roomWispSpawns = new RoomWispSpawnSystem({
@@ -309,6 +375,18 @@ export class Game {
       createWisp: () => this.createRoomWisp(),
       canSpawnInRoom: (id) => this.doorUnlock.canAccessRoomForSpawning(id),
     })
+    const clutterPlacements = precomputeAllClutterPlacements(
+      this.roomSystem,
+      this.worldCollision,
+      Math.random,
+    )
+    instantiatePrefilledClutter(
+      clutterPlacements,
+      this.itemWorld,
+      (variant, value, spawnRoomId, haunted, stableId) =>
+        createClutterItem(variant, value, spawnRoomId, haunted, stableId),
+      (roomId) => this.roomSystem.isRoomAccessibleForGameplay(roomId),
+    )
     this.specialRelicSpawns = new SpecialRelicSpawnSystem({
       itemWorld: this.itemWorld,
       roomSystem: this.roomSystem,
@@ -325,30 +403,28 @@ export class Game {
     this.ghostSystem = new GhostSystem(
       ghostGroup,
       this.worldCollision,
-      undefined,
+      [],
       ghostGltfTemplate,
     )
+
+    this.roomCleanliness = new RoomCleanlinessSystem({
+      onRoomCleared: (roomId, doorIndex) => {
+        const idx = roomIndexFromId(roomId)
+        if (idx !== null && idx >= 1) {
+          this.ghostSystem.purgeGhostsForRoom(idx)
+        }
+        if (doorIndex !== null) {
+          this.beginGateOpeningCinematic(doorIndex)
+          this.doorUnlock.openDoorFully(doorIndex)
+        }
+      },
+    })
+
     if (this.hudSpawn) {
       this.hudSpawn.textContent = ''
     }
 
     this.hitFlashEl = host.querySelector('#hud-hit-flash')
-    this.powerTintEl = host.querySelector('#hud-power-tint')
-    this.powerTimerEl = host.querySelector('#hud-power-timer')
-    this.powerTimerFillEl = host.querySelector('#hud-power-timer-fill')
-    this.powerTimerTrackEl = host.querySelector('#hud-power-timer-track')
-    this.questHudRoot = host.querySelector('#hud-quest')
-    this.questSystem = new QuestSystem({
-      initialDelaySec: 2.8,
-      betweenQuestsDelaySec: 2.2,
-      onHud: (s) => this.syncQuestHud(s),
-      onQuestComplete: () => {
-        celebrateHubQuestComplete(this.gameViewport)
-      },
-      /** Cyan/blue gems drop in ROOM_3; require door index 2 open (hub→…→ROOM_3). */
-      isBlueGemRequired: () => this.doorUnlock.isDoorUnlocked(2),
-    })
-    this.questSystem.bootstrapFirstQuest(0)
     this.collection = new CollectionSystem()
 
     this.depositFeedback = new DepositZoneFeedback(
@@ -366,6 +442,7 @@ export class Game {
       stackVisual: this.stackVisual,
       economy: this.economy,
       flight: this.depositFlight,
+      resolveDepositZone: () => null,
       evaluateOverload: (snapshot) => {
         const largeStack = snapshot.length >= OVERLOAD_STACK_THRESHOLD
         const perfect = snapshot.length >= this.stack.maxCapacity
@@ -378,6 +455,10 @@ export class Game {
         this.overloadSession = null
       },
       onItemDepositLanded: (item, flightIndex) => {
+        this.trashPortals.pulsePortalItemLand(
+          this.playerPos.x,
+          this.playerPos.z,
+        )
         if (this.overloadSession?.active) {
           this.depositFeedback.triggerOverloadItemImpact(
             this.overloadSession.perfect,
@@ -385,10 +466,20 @@ export class Game {
           playJuiceSound('overload_impact')
           this.triggerDepositScreenShake(true)
         } else {
+          const combo =
+            flightIndex > 0
+              ? Math.min(
+                  TRASH_PORTAL_COMBO_MAX,
+                  flightIndex * TRASH_PORTAL_COMBO_PER_CHAIN,
+                )
+              : 0
+          if (combo > 0) {
+            this.economy.addMoney(combo)
+          }
           this.depositFeedback.triggerItem()
           spawnFloatingHudText(
             this.gameViewport,
-            `+$${item.value}`,
+            `+$${item.value + combo}`,
             'float-hud--coin',
             { topPct: 58 + Math.random() * 16, leftPct: 40 + Math.random() * 20 },
           )
@@ -397,79 +488,7 @@ export class Game {
         }
       },
       onDepositPresentationComplete: (items, ev, ol) => {
-        this.questSystem.onDepositItems(items, this.elapsedSec)
-        const relicItem = items.find((it) => it.type === 'relic')
-        if (relicItem) {
-          this.player.getPosition(this.playerPos)
-          this.burstSpawnScratch.copy(this.playerPos)
-          this.burstSpawnScratch.y += 0.42
-          this.burstParticles.push(
-            ...spawnRelicCollectBurst(
-              this.burstGroup,
-              this.burstSpawnScratch,
-            ),
-          )
-          showRelicBankedCelebration(this.gameViewport, relicItem.value)
-          spawnRelicScreenSparkBurst(this.gameViewport)
-          playJuiceSound('relic_collect')
-        }
-
-        if (ol.overloadActive) {
-          this.depositFeedback.triggerOverloadBurst(ol.perfect)
-        } else {
-          this.depositFeedback.triggerDepositComplete(
-            items.length,
-            ev.credits + ol.overloadBonus,
-          )
-        }
-        const totalPayout = ev.credits + ol.overloadBonus
-        if (hudMoney) {
-          hudMoney.classList.remove('money-bump', 'money-bump-big')
-          void hudMoney.offsetWidth
-          const heavy =
-            !ol.overloadActive &&
-            (items.length >= 7 || totalPayout >= 65)
-          hudMoney.classList.add(heavy ? 'money-bump-big' : 'money-bump')
-        }
-        if (
-          hudOverload &&
-          hudOverloadAmount &&
-          ol.overloadActive
-        ) {
-          if (this.overloadHudTimer) clearTimeout(this.overloadHudTimer)
-          hudOverloadAmount.textContent = `+$${totalPayout}`
-          hudOverload.classList.toggle('hud-overload--perfect', ol.perfect)
-          hudOverload.classList.remove('hidden')
-          hudOverload.classList.add('visible')
-          this.overloadHudTimer = setTimeout(() => {
-            hudOverload.classList.remove('visible', 'hud-overload--perfect')
-            hudOverload.classList.add('hidden')
-            this.overloadHudTimer = null
-          }, 2400)
-        }
-        if (hudDepositToast && depositAmountEl && depositHintEl) {
-          const showDepositToast = (): void => {
-            if (this.depositToastTimer) clearTimeout(this.depositToastTimer)
-            this.fillDepositToastLines(
-              depositAmountEl,
-              depositHintEl,
-              ev,
-              ol,
-            )
-            hudDepositToast.classList.remove('hidden')
-            hudDepositToast.classList.add('visible')
-            this.depositToastTimer = setTimeout(() => {
-              hudDepositToast.classList.remove('visible')
-              hudDepositToast.classList.add('hidden')
-              this.depositToastTimer = null
-            }, DEPOSIT_TOAST_MS)
-          }
-          if (relicItem) {
-            window.setTimeout(showDepositToast, 920)
-          } else {
-            showDepositToast()
-          }
-        }
+        this.runDepositPresentationUi(items, ev, ol)
       },
     })
 
@@ -482,8 +501,6 @@ export class Game {
       hostEl: this.hostEl,
       capacityPad: upgradePads.capacity,
       speedPad: upgradePads.speed,
-      pulseFreqPad: upgradePads.pulseFreq,
-      pulseDurationPad: upgradePads.pulseDuration,
       isDoorUnlocked: (doorIndex) =>
         this.doorUnlock.isDoorUnlocked(doorIndex),
       onSpendVfx: (_kind, cost, padWorld) => {
@@ -499,26 +516,16 @@ export class Game {
       },
     })
 
-    this.pulseBtnEl = host.querySelector<HTMLButtonElement>('#hud-pulse-btn')
-    const setPulseHeld = (v: boolean): void => {
-      this.pulseHeld = v
-    }
-    this.pulseBtnEl?.addEventListener('pointerdown', (e) => {
+    this.hudDisposeBagBtn?.addEventListener('click', (e) => {
+      e.preventDefault()
       e.stopPropagation()
-      setPulseHeld(true)
+      this.tryStartBagDispose()
     })
-    this.pulseBtnEl?.addEventListener('pointerup', (e) => {
+    this.hudDisposeBagBtn?.addEventListener('pointerdown', (e) => {
       e.stopPropagation()
-      setPulseHeld(false)
-    })
-    this.pulseBtnEl?.addEventListener('pointerleave', () => {
-      setPulseHeld(false)
-    })
-    this.pulseBtnEl?.addEventListener('pointercancel', () => {
-      setPulseHeld(false)
     })
 
-    /** Precompile materials (door shaders + scene). */
+    /** Precompile materials (scene). */
     this.scene.updateMatrixWorld(true)
     this.renderer.compile(this.scene, this.camera)
 
@@ -531,55 +538,42 @@ export class Game {
       this.elapsedSec += dt
       this.perf.beginFrame(now)
 
-      const move = mergeMoveInput(
+      let move = mergeMoveInput(
         this.joystick.getVector(),
         this.keyboardMove.getVector(),
       )
+      if (this.gateCinematicRemain > 0) {
+        move = { x: 0, y: 0, fingerDown: false, active: false }
+      }
 
       this.player.getPosition(this.playerPos)
-      const dr = DEFAULT_DEPOSIT_ZONE_RADIUS
-      const inDepositZone =
-        this.playerPos.x * this.playerPos.x + this.playerPos.z * this.playerPos.z <=
-        dr * dr
-
+      const roomEarly = this.roomSystem.getRoomAt(
+        this.playerPos.x,
+        this.playerPos.z,
+      )
+      const inSafeRoomEarly = roomEarly === 'SAFE_CENTER'
       if (
         !this.hubWelcomeHidden &&
-        this.wasInDepositZone &&
-        !inDepositZone
+        this.wasInSafeRoom &&
+        !inSafeRoomEarly
       ) {
         this.hubTitleFloorLabel.hideWelcomeBanner()
         this.hubWelcomeHidden = true
       }
-      this.wasInDepositZone = inDepositZone
+      this.wasInSafeRoom = inSafeRoomEarly
+
+      const inTrashPortal = this.trashPortals.isPlayerInTrashPortal(
+        this.playerPos.x,
+        this.playerPos.z,
+      )
 
       this.upgradeZones.update(dt)
       this.doorUnlock.update(dt, this.elapsedSec)
-      this.questSystem.update(this.elapsedSec)
+      this.itemWorld.updateClutterGateReveal(this.doorUnlock)
+      this.roomLockCovers.update()
 
       const roomPre = this.roomSystem.getRoomAt(this.playerPos.x, this.playerPos.z)
-      const inSafeRoom = roomPre === 'SAFE_CENTER'
-      const pulsePaused =
-        inDepositZone ||
-        this.upgradeZones.isPlayerInsideAnyPadZone() ||
-        this.doorUnlock.isPlayerInsideDoorZone()
-
-      const fillPerSec = this.upgradeZones.getChargeFillPerSec()
-      const drainPerSec = this.upgradeZones.getChargeDrainPerSec()
-
-      if (!inSafeRoom && !pulsePaused) {
-        this.pulseCharge = Math.min(1, this.pulseCharge + fillPerSec * dt)
-      }
-      if (this.pulseHeld && this.pulseCharge > 0) {
-        this.pulseCharge = Math.max(0, this.pulseCharge - drainPerSec * dt)
-      }
-
-      const pulseGameplayActive =
-        this.pulseHeld && this.pulseCharge > 0
-
-      this.player.setPowerSpeedMultiplier(
-        pulseGameplayActive ? GHOST_PULSE_SPEED_MULTIPLIER : 1,
-      )
-
+      this.syncRoomCleanHud(roomPre)
       const trapSlow = this.trapField.update(
         this.elapsedSec,
         this.playerPos.x,
@@ -591,28 +585,42 @@ export class Game {
           },
         },
       )
-      const fillRatio =
-        this.stack.maxCapacity > 0
-          ? this.stack.count / this.stack.maxCapacity
-          : 0
-      this.player.setMovementSlowMultiplier(
-        stackWeightSpeedMultiplier(fillRatio) * trapSlow,
+      const weight = computeStackWeight(
+        this.stack.count,
+        this.stack.maxCapacity,
       )
-      this.syncStackJuiceHud(fillRatio)
+      this.player.setMovementSlowMultiplier(
+        stackWeightSpeedMultiplier(weight) * trapSlow,
+      )
+      this.player.setDragWeightMultiplier(stackWeightDragMultiplier(weight))
+      this.syncStackJuiceHud(weight)
 
       const simDt =
         this.ghostHitSlowMoRemain > 0 ? dt * GHOST_HIT_SLOW_MO_SCALE : dt
       this.ghostHitSlowMoRemain = Math.max(0, this.ghostHitSlowMoRemain - dt)
 
       this.player.update(simDt, move)
+      this.trashPortals.applySuction(
+        this.player.root,
+        this.stack.count,
+        simDt,
+        (x, z, r) => this.worldCollision.resolveCircleXZ(x, z, r),
+        this.player.radius,
+      )
       this.player.getPosition(this.playerPos)
 
-      const room = this.roomSystem.getRoomAt(this.playerPos.x, this.playerPos.z)
+      this.trashPortals.update(
+        dt,
+        this.elapsedSec,
+        this.playerPos.x,
+        this.playerPos.z,
+        this.stack.count,
+      )
 
       this.itemWorld.updateVisuals(this.elapsedSec, dt)
 
       const trailIntensity =
-        fillRatio >= 0.72 ? (fillRatio - 0.72) / (1 - 0.72) : 0
+        weight >= 0.72 ? (weight - 0.72) / (1 - 0.72) : 0
       this.playerTrail.update(
         this.playerPos.x,
         this.playerPos.z,
@@ -621,69 +629,13 @@ export class Game {
         dt,
       )
 
-      this.roomObjectives.update(dt, this.playerPos.x, this.playerPos.z, room, (rid, line) =>
-        this.completeRoomObjective(rid, line),
-      )
-      const objHud = this.roomObjectives.getHud()
-      if (this.hudRoomObjective) {
-        this.hudRoomObjective.textContent = objHud.line
-        this.hudRoomObjective.classList.toggle('hidden', !objHud.visible)
-        this.hudRoomObjective.classList.toggle(
-          'hud-room-objective--active',
-          objHud.visible,
-        )
-      }
-      if (this.lastPowerTintOn !== pulseGameplayActive) {
-        this.powerTintEl?.classList.toggle('hud-power-tint--on', pulseGameplayActive)
-        this.lastPowerTintOn = pulseGameplayActive
-      }
-      const pulseBtnEmpty =
-        this.pulseCharge < 0.02 && !pulseGameplayActive
-      if (this.pulseBtnEl) {
-        if (this.lastPulseBtnActive !== pulseGameplayActive) {
-          this.pulseBtnEl.classList.toggle(
-            'hud-pulse-btn--active',
-            pulseGameplayActive,
-          )
-          this.lastPulseBtnActive = pulseGameplayActive
-        }
-        if (this.lastPulseBtnEmpty !== pulseBtnEmpty) {
-          this.pulseBtnEl.classList.toggle('hud-pulse-btn--empty', pulseBtnEmpty)
-          this.lastPulseBtnEmpty = pulseBtnEmpty
-        }
-      }
-      if (this.powerTimerEl && this.powerTimerFillEl) {
-        this.powerTimerEl.hidden = false
-        this.powerTimerEl.classList.toggle(
-          'hud-power-timer--idle',
-          !pulseGameplayActive,
-        )
-        const fillPct = Math.min(100, this.pulseCharge * 100)
-        const rounded = Math.round(fillPct)
-        if (rounded !== this.lastPowerTimerFill) {
-          this.powerTimerFillEl.style.width = `${fillPct}%`
-          this.powerTimerTrackEl?.setAttribute('aria-valuenow', String(rounded))
-          this.lastPowerTimerFill = rounded
-        }
-        const label = 'Hunt charge — hold the Hunt button to chase ghosts'
-        if (label !== this.lastPowerTimerLabel) {
-          this.powerTimerTrackEl?.setAttribute('aria-label', label)
-          this.lastPowerTimerLabel = label
-        }
-      }
-
-      if (pulseGameplayActive && !this.prevGhostPulseActive) {
-        playJuiceSound('ghost_pulse')
-      }
-      this.prevGhostPulseActive = pulseGameplayActive
-
-      this.ghostSystem.setPowerMode(
-        pulseGameplayActive,
-        this.elapsedSec,
-      )
       this.ghostSystem.update(simDt, this.playerPos, this.stack.hasRelic())
 
       this.ghostHitInvuln = Math.max(0, this.ghostHitInvuln - dt)
+      this.ghostVacuumDisabledRemain = Math.max(
+        0,
+        this.ghostVacuumDisabledRemain - dt,
+      )
       if (!this.ghostDamageArmed) {
         if (
           this.ghostSystem.isPlayerClearForGhostDamageRearm(
@@ -700,18 +652,6 @@ export class Game {
         this.lastGhostInvuln = invuln
       }
 
-      const eat = this.ghostSystem.tryEatGhost(this.playerPos, this.player.radius)
-      if (eat.kind === 'eaten') {
-        this.economy.addMoney(GHOST_EAT_MONEY_REWARD)
-        spawnFloatingHudText(
-          this.gameViewport,
-          `+$${GHOST_EAT_MONEY_REWARD}`,
-          'float-hud--coin',
-        )
-        playJuiceSound('ghost_eat')
-        const gemColor = gemColorForGhostBodyHex(eat.bodyColor)
-        this.itemWorld.spawn(createGemItem(gemColor), eat.x, eat.z)
-      }
       const hit = this.ghostSystem.tryHitPlayer(
         this.playerPos,
         this.player.radius,
@@ -726,7 +666,9 @@ export class Game {
           this.playerPos.x,
           this.playerPos.z,
         )
-        this.triggerGhostHitFlash()
+        this.triggerGhostHitFlash(140)
+        this.triggerDepositScreenShake(true)
+        this.ghostVacuumDisabledRemain = GHOST_HIT_VACUUM_DISABLE_SEC
 
         const c = this.stack.count
         let toRemove = 0
@@ -739,7 +681,7 @@ export class Game {
         const lost =
           toRemove > 0 ? this.stack.popManyFromTop(toRemove) : []
         if (lost.length > 0) {
-          this.scatterDroppedItems(lost, STACK_DROP_SCATTER_RADIUS)
+          this.scatterGhostHitExplosion(lost)
         }
         this.ghostHitSlowMoRemain = GHOST_HIT_SLOW_MO_SEC
 
@@ -750,6 +692,7 @@ export class Game {
             this.burstGroup,
             this.burstSpawnScratch,
             lost,
+            { intense: true },
           ),
         )
         playJuiceSound('ghost_hit')
@@ -762,19 +705,39 @@ export class Game {
       updateGhostHitBursts(this.burstParticles, dt)
 
       const collected = this.collection.update(this.player, this.stack, this.itemWorld, dt, {
-        pickupBlocked: this.ghostHitInvuln > 0,
+        pickupBlocked:
+          this.ghostHitInvuln > 0 ||
+          this.bagDisposeInFlight ||
+          this.gateCinematicRemain > 0,
+        magnetBlocked: this.ghostVacuumDisabledRemain > 0,
       })
-      for (const { item } of collected) {
-        if (item.type === 'wisp') {
-          spawnFloatingHudText(this.gameViewport, '+1', 'float-hud--pickup')
-          this.roomObjectives.onWispCollected(
-            this.playerPos.x,
-            this.playerPos.z,
-            (rid, line) => this.completeRoomObjective(rid, line),
+      for (const { item, pickupX, pickupZ } of collected) {
+        if (item.type === 'clutter') {
+          this.roomCleanliness.registerClutterCollected(item)
+        }
+        if (item.type === 'clutter' && item.haunted) {
+          this.specialRelicSpawns.trySpawnRelicFromHauntedClutter(
+            item.spawnRoomId,
           )
+          const spawn = this.resolveGhostSpawnFromHauntedClutter(
+            pickupX,
+            pickupZ,
+            item.spawnRoomId,
+          )
+          this.ghostSystem.spawnGhost({
+            x: spawn.x,
+            z: spawn.z,
+            roomIndex: spawn.roomIndex,
+            color: pickGhostColorForRoomIndex(spawn.roomIndex, Math.random),
+          })
+          continue
+        }
+        if (item.type === 'wisp' || item.type === 'clutter') {
+          spawnFloatingHudText(this.gameViewport, '+1', 'float-hud--pickup')
         }
         if (
           item.type === 'wisp' ||
+          item.type === 'clutter' ||
           item.type === 'relic' ||
           item.type === 'gem'
         ) {
@@ -784,10 +747,15 @@ export class Game {
 
       const maxCap = this.stack.maxCapacity
       const atMax = maxCap > 0 && this.stack.count >= maxCap
+      if (this.hudDisposeBagBtn) {
+        const show = atMax && !this.bagDisposeInFlight
+        this.hudDisposeBagBtn.classList.toggle('hud-dispose-bag--visible', show)
+        this.hudDisposeBagBtn.disabled = !show
+      }
       if (atMax && !this.wasAtMaxCapacity) {
         spawnFloatingHudText(
           this.gameViewport,
-          'STACK FULL!',
+          'BAG FULL — TOSS IT!',
           'float-hud--stack-full',
           { durationSec: 1.35, leftPct: 50, topPct: 24 },
         )
@@ -802,16 +770,21 @@ export class Game {
         velX: this.velScratch.x,
         itemsCarried: this.stack.count,
         maxCarry: this.stack.maxCapacity,
-        powerMode: pulseGameplayActive,
+        powerMode: false,
         ghostInvuln: this.ghostHitInvuln > 0,
         recentPickupSec: 0,
       })
-      this.cameraRig.update(dt)
+      if (this.gateCinematicRemain > 0) {
+        this.updateGateOpeningCinematic(dt)
+      } else {
+        this.cameraRig.update(dt)
+      }
       this.moneyHud?.update(dt)
       this.itemWorld.updateCollectEffects(dt)
+      this.updateBagThrow(dt)
       this.stackVisual.update(dt)
       this.depositController.update(dt)
-      this.depositFeedback.setPlayerInside(inDepositZone)
+      this.depositFeedback.setPlayerInside(inTrashPortal)
       this.depositFeedback.update(dt)
       this.roomWispSpawns.update(dt, this.elapsedSec)
       this.specialRelicSpawns.update(dt)
@@ -834,30 +807,123 @@ export class Game {
     )
   }
 
-  private syncQuestHud(s: QuestHudState): void {
-    const root = this.questHudRoot
-    if (!root) return
-    root.hidden = !s.visible
-    const a = root.querySelector('#hud-quest-relic')
-    const b = root.querySelector('#hud-quest-red')
-    const c = root.querySelector('#hud-quest-blue')
-    if (a) a.textContent = `Relic: ${s.relic.have} / ${s.relic.need}`
-    if (b) b.textContent = `Red gems: ${s.redGems.have} / ${s.redGems.need}`
-    if (c) {
-      if (s.blueGems.need === 0) {
-        c.classList.add('hud-quest__line--hidden')
-        c.textContent = ''
-      } else {
-        c.classList.remove('hud-quest__line--hidden')
-        c.textContent = `Blue gems: ${s.blueGems.have} / ${s.blueGems.need}`
-      }
+  private syncClutterRoomAccessibilityFromDoors(): void {
+    this.itemWorld.updateClutterGateReveal(this.doorUnlock)
+  }
+
+  private beginGateOpeningCinematic(doorIndex: number): void {
+    this.gateCinematicDoorIndex = doorIndex
+    this.gateCinematicRemain = GATE_OPEN_TOTAL_SEC
+    this.gateCineStartPos.copy(this.camera.position)
+  }
+
+  private updateGateOpeningCinematic(dt: number): void {
+    if (this.gateCinematicRemain <= 0) return
+    const zDoor = getDoorBlockerZ(this.gateCinematicDoorIndex)
+    this.gateCineTargetPos.set(0, 10.2, zDoor + 9.2)
+    this.gateCineLookAt.set(0, 1.15, zDoor)
+    const total = GATE_OPEN_TOTAL_SEC
+    const elapsed = total - this.gateCinematicRemain
+    const intro = 0.2
+    const u = Math.min(1, elapsed / intro)
+    const ease = u * u * (3 - 2 * u)
+    this.camera.position.lerpVectors(this.gateCineStartPos, this.gateCineTargetPos, ease)
+    this.camera.lookAt(this.gateCineLookAt)
+    this.gateCinematicRemain -= dt
+    if (this.gateCinematicRemain < 0) {
+      this.gateCinematicRemain = 0
     }
   }
 
-  private completeRoomObjective(roomId: RoomId, line: string): void {
-    celebrateRoomObjectiveComplete(this.gameViewport, line)
-    playJuiceSound('pickup')
-    this.roomObjectives.spawnRewardBurst(roomId, this.itemWorld, Math.random)
+  private syncRoomCleanHud(roomId: RoomId | null): void {
+    const wrap = this.hudRoomCleanWrap
+    const fill = this.hudRoomCleanFill
+    const pctEl = this.hudRoomCleanPct
+    const titleEl = this.hudRoomCleanTitle
+    if (!wrap || !fill || !pctEl || !titleEl) return
+
+    const trackable =
+      roomId !== null &&
+      roomId !== 'SAFE_CENTER' &&
+      roomId.startsWith('ROOM_')
+
+    if (!trackable) {
+      wrap.classList.add('hud-room-clean--inactive')
+      titleEl.textContent =
+        roomId === 'SAFE_CENTER' ? 'Safe zone' : 'Room'
+      pctEl.textContent = '—'
+      fill.style.transform = 'scaleX(0)'
+      return
+    }
+
+    wrap.classList.remove('hud-room-clean--inactive')
+    titleEl.textContent = roomCleanHudLabel(roomId)
+    const pct = this.roomCleanliness.getDisplayPercent(roomId)
+    const rounded = Math.round(pct)
+    pctEl.textContent = `${rounded}%`
+    fill.style.transform = `scaleX(${Math.max(0, Math.min(1, pct / 100))})`
+    wrap.querySelector('[role="progressbar"]')?.setAttribute(
+      'aria-valuenow',
+      String(rounded),
+    )
+    if (this.roomCleanliness.isRoomCleared(roomId)) {
+      wrap.classList.add('hud-room-clean--cleared')
+    } else {
+      wrap.classList.remove('hud-room-clean--cleared')
+    }
+  }
+
+  /**
+   * Push spawn away from the player if needed, then clamp to walkable geometry.
+   */
+  private resolveGhostSpawnFromHauntedClutter(
+    pickupX: number,
+    pickupZ: number,
+    spawnRoomId: RoomId,
+  ): { x: number; z: number; roomIndex: number } {
+    this.player.getPosition(this.playerPos)
+    const px = this.playerPos.x
+    const pz = this.playerPos.z
+    const pr = this.player.radius
+    const roomIndex = this.roomChainIndexFromId(spawnRoomId)
+    const visualMul = ghostRoomVisualMul(roomIndex)
+    const rG = GHOST_COLLISION_RADIUS * visualMul
+    const minSep = pr + rG + 0.42
+
+    let sx = pickupX
+    let sz = pickupZ
+    let dx = sx - px
+    let dz = sz - pz
+    let dist = Math.hypot(dx, dz)
+    if (dist < 1e-5) {
+      const ang = Math.random() * Math.PI * 2
+      dx = Math.cos(ang)
+      dz = Math.sin(ang)
+      dist = 1
+    } else {
+      dx /= dist
+      dz /= dist
+    }
+    if (dist < minSep) {
+      sx = px + dx * minSep
+      sz = pz + dz * minSep
+    }
+    const placed = this.worldCollision.resolveCircleXZ(sx, sz, rG)
+    return { x: placed.x, z: placed.z, roomIndex }
+  }
+
+  private roomChainIndexFromId(
+    roomId: ReturnType<RoomSystem['getRoomAt']>,
+  ): number {
+    if (!roomId || roomId === 'SAFE_CENTER') return 1
+    const m: Record<string, number> = {
+      ROOM_1: 1,
+      ROOM_2: 2,
+      ROOM_3: 3,
+      ROOM_4: 4,
+      ROOM_5: 5,
+    }
+    return m[roomId] ?? 1
   }
 
   private scatterDroppedItems(items: readonly GameItem[], radius: number): void {
@@ -875,17 +941,40 @@ export class Game {
     }
   }
 
-  private syncStackJuiceHud(fillRatio: number): void {
+  /** LIFO order preserved; each item may roll recoverable vs lost; strong outward kick. */
+  private scatterGhostHitExplosion(items: readonly GameItem[]): void {
+    const px = this.playerPos.x
+    const pz = this.playerPos.z
+    for (const it of items) {
+      if (Math.random() > GHOST_HIT_DROP_RECOVER_CHANCE) continue
+      const ang = Math.random() * Math.PI * 2
+      const d =
+        GHOST_HIT_SCATTER_R_MIN + Math.random() * GHOST_HIT_SCATTER_R_SPREAD
+      const hk =
+        GHOST_HIT_DROP_KICK_H_MIN + Math.random() * GHOST_HIT_DROP_KICK_H_SPREAD
+      const vy =
+        GHOST_HIT_DROP_POP_VY_MIN + Math.random() * GHOST_HIT_DROP_POP_VY_SPREAD
+      this.itemWorld.spawnRecoverable(
+        it,
+        px + Math.cos(ang) * d,
+        pz + Math.sin(ang) * d,
+        STACK_DROP_RECOVERY_TTL_SEC,
+        { horizontalKick: hk, popVy: vy },
+      )
+    }
+  }
+
+  private syncStackJuiceHud(weight: number): void {
     const v = this.hudStackVignette
     if (v) {
-      const t = fillRatio >= 0.5 ? (fillRatio - 0.5) / 0.5 : 0
+      const t = weight >= 0.5 ? (weight - 0.5) / 0.5 : 0
       v.style.opacity = String(t * 0.85)
     }
     const h = this.hudStackHum
     if (h) {
-      const on = fillRatio >= 0.7
+      const on = weight >= 0.7
       h.classList.toggle('hud-stack-hum--on', on)
-      h.style.opacity = on ? String(0.28 + ((fillRatio - 0.7) / 0.3) * 0.55) : '0'
+      h.style.opacity = on ? String(0.28 + ((weight - 0.7) / 0.3) * 0.55) : '0'
     }
   }
 
@@ -948,6 +1037,241 @@ export class Game {
     return this.roomSystem
   }
 
+  private runDepositPresentationUi(
+    items: GameItem[],
+    ev: DepositEval,
+    ol: DepositPresentationOverload,
+  ): void {
+    const relicItem = items.find((it) => it.type === 'relic')
+    if (relicItem) {
+      this.player.getPosition(this.playerPos)
+      this.burstSpawnScratch.copy(this.playerPos)
+      this.burstSpawnScratch.y += 0.42
+      this.burstParticles.push(
+        ...spawnRelicCollectBurst(this.burstGroup, this.burstSpawnScratch),
+      )
+      showRelicBankedCelebration(this.gameViewport, relicItem.value)
+      spawnRelicScreenSparkBurst(this.gameViewport)
+      playJuiceSound('relic_collect')
+    }
+
+    if (ol.overloadActive) {
+      this.depositFeedback.triggerOverloadBurst(ol.perfect)
+    } else {
+      this.depositFeedback.triggerDepositComplete(
+        items.length,
+        ev.credits + ol.overloadBonus,
+      )
+    }
+    const totalPayout = ev.credits + ol.overloadBonus
+    const hudMoney = this.hudMoneyEl
+    if (hudMoney) {
+      hudMoney.classList.remove('money-bump', 'money-bump-big')
+      void hudMoney.offsetWidth
+      const heavy =
+        !ol.overloadActive && (items.length >= 7 || totalPayout >= 65)
+      hudMoney.classList.add(heavy ? 'money-bump-big' : 'money-bump')
+    }
+    const hudOverload = this.hudOverloadEl
+    const hudOverloadAmount = this.hudOverloadAmountEl
+    if (hudOverload && hudOverloadAmount && ol.overloadActive) {
+      if (this.overloadHudTimer) clearTimeout(this.overloadHudTimer)
+      hudOverloadAmount.textContent = `+$${totalPayout}`
+      hudOverload.classList.toggle('hud-overload--perfect', ol.perfect)
+      hudOverload.classList.remove('hidden')
+      hudOverload.classList.add('visible')
+      this.overloadHudTimer = setTimeout(() => {
+        hudOverload.classList.remove('visible', 'hud-overload--perfect')
+        hudOverload.classList.add('hidden')
+        this.overloadHudTimer = null
+      }, 2400)
+    }
+    const hudDepositToast = this.hudDepositToastEl
+    const depositAmountEl = this.depositToastAmountEl
+    const depositHintEl = this.depositToastHintEl
+    if (hudDepositToast && depositAmountEl && depositHintEl) {
+      const showDepositToast = (): void => {
+        if (this.depositToastTimer) clearTimeout(this.depositToastTimer)
+        this.fillDepositToastLines(depositAmountEl, depositHintEl, ev, ol)
+        hudDepositToast.classList.remove('hidden')
+        hudDepositToast.classList.add('visible')
+        this.depositToastTimer = setTimeout(() => {
+          hudDepositToast.classList.remove('visible')
+          hudDepositToast.classList.add('hidden')
+          this.depositToastTimer = null
+        }, DEPOSIT_TOAST_MS)
+      }
+      if (relicItem) {
+        window.setTimeout(showDepositToast, 920)
+      } else {
+        showDepositToast()
+      }
+    }
+  }
+
+  private computeOverloadBonusForDispose(
+    ev: DepositEval,
+    active: boolean,
+    perfect: boolean,
+  ): number {
+    if (!active) return 0
+    let extra = Math.floor(ev.credits * (OVERLOAD_BONUS_MULT - 1))
+    if (perfect) {
+      extra = Math.floor(extra * PERFECT_OVERLOAD_BONUS_MULT)
+    }
+    return Math.max(0, extra)
+  }
+
+  private tryStartBagDispose(): void {
+    if (this.bagThrow !== null || this.bagDisposeInFlight) return
+    const maxCap = this.stack.maxCapacity
+    if (this.stack.count < maxCap) return
+
+    this.bagDisposeInFlight = true
+    const snapshot = [...this.stack.getSnapshot()]
+    const overload = {
+      active: snapshot.length >= OVERLOAD_STACK_THRESHOLD,
+      perfect: snapshot.length >= maxCap,
+    }
+
+    const bag = this.stackVisual.detachBagForThrow(this.scene)
+    bag.updateMatrixWorld(true)
+    const start = new Vector3()
+    bag.getWorldPosition(start)
+
+    const yaw = this.player.root.rotation.y
+    const fx = Math.sin(yaw)
+    const fz = Math.cos(yaw)
+
+    const tossDist = 5.4
+    const end = new Vector3(
+      start.x + fx * tossDist,
+      0.26,
+      start.z + fz * tossDist,
+    )
+    const mid = new Vector3()
+      .copy(start)
+      .lerp(end, 0.5)
+    mid.y += 2.1
+
+    const scale0 = bag.scale.clone().multiplyScalar(1.32)
+
+    this.burstSpawnScratch.copy(start)
+    this.burstSpawnScratch.y += 0.2
+    this.burstParticles.push(
+      ...spawnBagDisposeBurst(this.burstGroup, this.burstSpawnScratch, 22, {
+        intense: true,
+      }),
+    )
+    playJuiceSound('deposit_complete', { pitch: 1.15 })
+    this.gameViewport.classList.add('game-viewport--glow-ecto')
+
+    this.bagThrow = {
+      bag,
+      t: 0,
+      dur: BAG_THROW_SEC,
+      start,
+      end,
+      mid,
+      scale0,
+      snapshot,
+      overload,
+    }
+  }
+
+  private updateBagThrow(dt: number): void {
+    const bt = this.bagThrow
+    if (!bt) return
+
+    bt.t += dt
+    const alpha = Math.min(1, bt.t / bt.dur)
+    const ease = 1 - Math.pow(1 - alpha, DEPOSIT_ARC_EASE)
+    const u = ease
+    const omu = 1 - u
+    const b = bt.bag
+    const x =
+      omu * omu * bt.start.x +
+      2 * omu * u * bt.mid.x +
+      u * u * bt.end.x
+    const y =
+      omu * omu * bt.start.y +
+      2 * omu * u * bt.mid.y +
+      u * u * bt.end.y
+    const z =
+      omu * omu * bt.start.z +
+      2 * omu * u * bt.mid.z +
+      u * u * bt.end.z
+    b.position.set(x, y, z)
+
+    const shrink = Math.max(0.38, Math.pow(1 - ease, 1.45))
+    b.scale.set(
+      bt.scale0.x * shrink,
+      bt.scale0.y * shrink,
+      bt.scale0.z * shrink,
+    )
+
+    if (alpha >= 1) {
+      this.completeBagThrow()
+    }
+  }
+
+  private completeBagThrow(): void {
+    const bt = this.bagThrow
+    if (!bt) return
+
+    const snapshot = bt.snapshot
+    const ov = bt.overload
+    const endPos = bt.bag.position.clone()
+
+    endPos.y += 0.08
+    this.burstParticles.push(...spawnBagLandImpact(this.burstGroup, endPos))
+    this.burstParticles.push(
+      ...spawnBagDisposeBurst(this.burstGroup, endPos, 26, { intense: false }),
+    )
+    playJuiceSound('deposit_item', { pitch: 0.9 })
+    this.triggerDepositScreenShake(
+      snapshot.length >= OVERLOAD_STACK_THRESHOLD,
+    )
+
+    this.disposeThrownBagMesh(bt.bag)
+    this.bagThrow = null
+
+    const ev = evaluateDeposit(snapshot)
+    const overloadBonus = this.computeOverloadBonusForDispose(
+      ev,
+      ov.active,
+      ov.perfect,
+    )
+    this.economy.addMoney(ev.credits + overloadBonus)
+    this.runDepositPresentationUi(snapshot, ev, {
+      overloadActive: ov.active,
+      perfect: ov.perfect,
+      overloadBonus,
+    })
+
+    this.stack.drain()
+    this.trashPortals.pulsePortalItemLand(this.playerPos.x, this.playerPos.z)
+
+    this.bagDisposeInFlight = false
+    this.gameViewport.classList.remove('game-viewport--glow-ecto')
+  }
+
+  private disposeThrownBagMesh(root: Group): void {
+    root.removeFromParent()
+    if (root.userData.carryBagGltf === true) {
+      disposeCarryBagClone(root)
+      return
+    }
+    root.traverse((o) => {
+      if (o instanceof Mesh) {
+        o.geometry.dispose()
+        const m = o.material
+        if (Array.isArray(m)) m.forEach((x) => x.dispose())
+        else m.dispose()
+      }
+    })
+  }
+
   private fillDepositToastLines(
     amountEl: HTMLElement,
     hintEl: HTMLElement,
@@ -994,7 +1318,7 @@ export class Game {
     hintEl.style.display = 'none'
   }
 
-  private triggerGhostHitFlash(): void {
+  private triggerGhostHitFlash(durationMs = 88): void {
     const el = this.hitFlashEl
     if (!el) return
     if (this.hitFlashTimer) {
@@ -1005,7 +1329,17 @@ export class Game {
     this.hitFlashTimer = setTimeout(() => {
       el.classList.remove('hud-hit-flash--on')
       this.hitFlashTimer = null
-    }, 88)
+    }, durationMs)
+  }
+
+  /** Encumbrance ∈ [0, 1] — `count / maxCapacity` (for HUD / future UI). */
+  getStackWeight(): number {
+    return computeStackWeight(this.stack.count, this.stack.maxCapacity)
+  }
+
+  /** Gate sink progress 0…1 (for future door UI). */
+  getDoorOpenProgress(doorIndex: number): number {
+    return this.doorUnlock.getDoorOpenProgress(doorIndex)
   }
 
   dispose(): void {
@@ -1025,12 +1359,15 @@ export class Game {
     disposeAllGhostHitBursts(this.burstParticles)
     this.burstGroup.removeFromParent()
     this.doorUnlock.dispose()
+    this.roomLockCovers.dispose()
+    this.trashPortals.dispose()
     this.hubTitleFloorLabel.dispose()
     this.trapField.dispose()
     this.playerTrail.dispose()
     this.upgradeZones.dispose()
     this.ghostSystem.dispose()
     disposeGhostGltfTemplate(this.ghostGltfTemplate)
+    this.stackVisual.dispose()
     this.playerCharacter.dispose()
     disposePlayerGltfTemplate(this.playerGltfTemplate)
     disposeGhostSharedGeometry()

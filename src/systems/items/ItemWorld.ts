@@ -7,8 +7,12 @@ import {
   type Object3D,
   type Scene,
 } from 'three'
+import type { DoorUnlockSystem } from '../doors/DoorUnlockSystem.ts'
+import { computeClutterRevealOpacity } from '../clutter/clutterRevealOpacity.ts'
 import type { Vector3 } from 'three'
 import type { GameItem } from '../../core/types/GameItem.ts'
+import { isWorldPickupInteractable } from './pickupWorldState.ts'
+import { disposeClutterGltfClone } from '../clutter/clutterGltfAsset.ts'
 import { disposeRelicGltfClone } from '../relic/relicGltfAsset.ts'
 import { disposeWispGltfClone } from '../wisp/wispGltfAsset.ts'
 import { createPickupMesh } from './ItemVisuals.ts'
@@ -30,6 +34,93 @@ type Entry = { mesh: Object3D; item: GameItem; recover?: RecoverState }
 
 type CollectAnim = { mesh: Object3D; t: number }
 
+const CLUTTER_FADE_EPS = 1e-3
+
+/**
+ * GLTF clutter shares prototype materials; clone once per instance before animating opacity.
+ */
+function cloneMaterialsForClutterFade(root: Object3D): void {
+  root.traverse((o) => {
+    if (o instanceof Mesh) {
+      const m = o.material
+      const mats = Array.isArray(m) ? m : [m]
+      const newMats = mats.map((mat) => {
+        const c = mat.clone()
+        const base =
+          'opacity' in c && typeof c.opacity === 'number' ? c.opacity : 1
+        c.userData.clutterFadeBase = base
+        return c
+      })
+      o.material = Array.isArray(m) ? newMats : newMats[0]!
+    }
+    if (o instanceof Sprite) {
+      const sm = o.material as SpriteMaterial
+      const c = sm.clone()
+      const base = typeof sm.opacity === 'number' ? sm.opacity : 1
+      c.userData.clutterFadeBase = base
+      o.material = c
+    }
+  })
+}
+
+function applyClutterRevealOpacity(root: Object3D, alpha: number): void {
+  if (alpha <= CLUTTER_FADE_EPS) {
+    root.visible = false
+    return
+  }
+  root.visible = true
+  if (alpha < 1 - CLUTTER_FADE_EPS) {
+    if (!root.userData.clutterFadeMaterialsOwned) {
+      cloneMaterialsForClutterFade(root)
+      root.userData.clutterFadeMaterialsOwned = true
+    }
+    root.traverse((o) => {
+      if (o instanceof Mesh) {
+        const m = o.material
+        const mats = Array.isArray(m) ? m : [m]
+        for (const mat of mats) {
+          const base =
+            (mat.userData.clutterFadeBase as number | undefined) ?? 1
+          mat.transparent = true
+          mat.opacity = base * alpha
+          if ('depthWrite' in mat) {
+            ;(mat as { depthWrite: boolean }).depthWrite = alpha >= 0.995
+          }
+        }
+      }
+      if (o instanceof Sprite) {
+        const m = o.material as SpriteMaterial
+        const base = (m.userData.clutterFadeBase as number | undefined) ?? 1
+        m.transparent = true
+        m.opacity = base * alpha
+      }
+    })
+    return
+  }
+
+  if (!root.userData.clutterFadeMaterialsOwned) return
+  root.traverse((o) => {
+    if (o instanceof Mesh) {
+      const m = o.material
+      const mats = Array.isArray(m) ? m : [m]
+      for (const mat of mats) {
+        const base = (mat.userData.clutterFadeBase as number | undefined) ?? 1
+        mat.opacity = base
+        mat.transparent = base < 1 - CLUTTER_FADE_EPS
+        if ('depthWrite' in mat) {
+          ;(mat as { depthWrite: boolean }).depthWrite = true
+        }
+      }
+    }
+    if (o instanceof Sprite) {
+      const m = o.material as SpriteMaterial
+      const base = (m.userData.clutterFadeBase as number | undefined) ?? 1
+      m.opacity = base
+      m.transparent = base < 1 - CLUTTER_FADE_EPS
+    }
+  })
+}
+
 /**
  * Owns world pickups: logical `GameItem` + Three.js mesh.
  */
@@ -41,6 +132,10 @@ export class ItemWorld {
   private readonly pendingDisposals: Object3D[] = []
   private readonly pooledWispMeshes: Object3D[] = []
   private readonly pooledRelicMeshes: [Object3D[], Object3D[]] = [[], []]
+  private readonly pooledClutterMeshes: Object3D[][] = Array.from(
+    { length: 7 },
+    () => [],
+  )
 
   constructor(pickupGroup: Group, scene: Scene) {
     this.pickupGroup = pickupGroup
@@ -67,12 +162,26 @@ export class ItemWorld {
     }
   }
 
-  spawn(item: GameItem, x: number, z: number): void {
+  spawn(
+    item: GameItem,
+    x: number,
+    z: number,
+    opts?: { visible?: boolean },
+  ): void {
     if (this.byId.has(item.id)) return
     const mesh = this.obtainMesh(item)
     const y = mesh.position.y
     mesh.position.set(x, y, z)
-    mesh.visible = true
+    const show = opts?.visible !== false
+    if (item.type === 'clutter') {
+      mesh.userData.clutterSpawnRoomId = item.spawnRoomId
+      mesh.userData.clutterWorldInteractable = show
+      mesh.rotation.y = Math.random() * Math.PI * 2
+      const base = (mesh.userData.clutterBaseScale as number | undefined) ?? 1
+      const mul = 0.8 + Math.random() * 0.4
+      mesh.scale.setScalar(base * mul)
+    }
+    mesh.visible = show
     attachPickupIdleMotion(
       mesh,
       item.type === 'wisp' ? 'wisp' : 'pellet',
@@ -136,7 +245,8 @@ export class ItemWorld {
     const outerR = collectRadius + magnetExtra
     const outerR2 = outerR * outerR
     const innerR2 = innerR * innerR
-    for (const [, { mesh, recover }] of this.byId) {
+    for (const [, { mesh, item, recover }] of this.byId) {
+      if (!isWorldPickupInteractable(mesh, item)) continue
       if (recover && !recover.landed) continue
       const dx = playerXZ.x - mesh.position.x
       const dz = playerXZ.z - mesh.position.z
@@ -197,6 +307,52 @@ export class ItemWorld {
     return n
   }
 
+  /** World clutter only (not carried). */
+  countClutter(): number {
+    let n = 0
+    for (const [, { item }] of this.byId) {
+      if (item.type === 'clutter') n += 1
+    }
+    return n
+  }
+
+  /**
+   * Per-frame: locked rooms stay hidden; during gate sink, clutter fades in (opacity 0→1)
+   * without respawning — only visibility, materials, and `clutterWorldInteractable`.
+   */
+  updateClutterGateReveal(doorUnlock: DoorUnlockSystem): void {
+    for (const [, { mesh, item }] of this.byId) {
+      if (item.type !== 'clutter') continue
+      const alpha = computeClutterRevealOpacity(item.spawnRoomId, doorUnlock)
+      applyClutterRevealOpacity(mesh, alpha)
+      mesh.userData.clutterWorldInteractable = alpha >= 1 - CLUTTER_FADE_EPS
+    }
+  }
+
+  /**
+   * Pre-allocate clutter visuals to reduce hitches when many spawns appear at once.
+   */
+  prewarmClutterPool(perVariant: number): void {
+    const n = Math.max(0, Math.floor(perVariant))
+    for (let v = 0; v < 7; v++) {
+      for (let i = 0; i < n; i++) {
+        const warmId = `__warm_clutter_${v}_${i}`
+        const mesh = createPickupMesh({
+          id: warmId,
+          kind: 'collectible',
+          type: 'clutter',
+          clutterVariant: v as 0 | 1 | 2 | 3 | 4 | 5 | 6,
+          spawnRoomId: 'ROOM_1',
+          haunted: false,
+          value: 0,
+        })
+        if (!this.tryPoolMesh(mesh)) {
+          this.disposeMesh(mesh)
+        }
+      }
+    }
+  }
+
   hasPickup(id: string): boolean {
     return this.byId.has(id)
   }
@@ -247,6 +403,7 @@ export class ItemWorld {
     }
 
     for (const [, { mesh, item, recover }] of this.byId) {
+      if (!isWorldPickupInteractable(mesh, item)) continue
       if (recover && !recover.landed) continue
       const wispMixer = mesh.userData.wispMixer as AnimationMixer | undefined
       if (wispMixer) wispMixer.update(dt)
@@ -331,6 +488,10 @@ export class ItemWorld {
       disposeRelicGltfClone(root)
       return
     }
+    if (root.userData.clutterGltf === true) {
+      disposeClutterGltfClone(root)
+      return
+    }
     root.removeFromParent()
     root.traverse((o) => {
       if (o instanceof Sprite) {
@@ -370,6 +531,19 @@ export class ItemWorld {
         return mesh
       }
     }
+    if (item.type === 'clutter') {
+      const v = item.clutterVariant
+      const pool = this.pooledClutterMeshes[v]!
+      if (pool.length > 0) {
+        const mesh = pool.pop()!
+        mesh.position.set(0, mesh.position.y, 0)
+        const base = (mesh.userData.clutterBaseScale as number | undefined) ?? 1
+        mesh.scale.setScalar(base)
+        mesh.rotation.y = Math.random() * Math.PI * 2
+        mesh.visible = true
+        return mesh
+      }
+    }
     return createPickupMesh(item)
   }
 
@@ -391,6 +565,14 @@ export class ItemWorld {
       delete root.userData.pickupIdle
       const v = root.userData.relicVariant as 0 | 1
       this.pooledRelicMeshes[v].push(root)
+      return true
+    }
+    if (root.userData.clutterPickup === true) {
+      root.removeFromParent()
+      root.visible = false
+      delete root.userData.pickupIdle
+      const v = (root.userData.clutterVariant as 0 | 1 | 2 | 3 | 4 | 5 | 6) ?? 0
+      this.pooledClutterMeshes[v]!.push(root)
       return true
     }
     return false

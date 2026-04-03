@@ -14,7 +14,6 @@ import {
 import type { PlayerController } from '../player/PlayerController.ts'
 import type { CarryStack } from '../stack/CarryStack.ts'
 import type { StackVisual } from '../stack/StackVisual.ts'
-import { DEFAULT_DEPOSIT_ZONE_RADIUS } from './DepositZone.ts'
 import { DEPOSIT_INTER_ITEM_DELAY_SEC } from '../../juice/juiceConfig.ts'
 import {
   DEPOSIT_FLIGHT_DURATION_SEC,
@@ -22,7 +21,7 @@ import {
 } from './DepositFlightAnimator.ts'
 
 const p = new Vector3()
-const center = new Vector3()
+const flightEnd = new Vector3()
 
 export type OverloadEvalResult = {
   overload: boolean
@@ -35,14 +34,20 @@ export type DepositPresentationOverload = {
   overloadBonus: number
 }
 
+export type DepositZoneResolver = () => {
+  center: Vector3
+  radius: number
+} | null
+
 export type DepositControllerOptions = {
   scene: Scene
-  zoneRadius?: number
   player: PlayerController
   stack: CarryStack
   stackVisual: StackVisual
   economy: Economy
   flight: DepositFlightAnimator
+  /** Trash portal / room deposit disc — null when player is not in a deposit zone. */
+  resolveDepositZone: DepositZoneResolver
   evaluateOverload?: (snapshot: readonly GameItem[]) => OverloadEvalResult
   onItemDepositLanded?: (item: GameItem, flightIndex: number) => void
   onDepositSessionStart?: (meta: {
@@ -60,7 +65,7 @@ export type DepositControllerOptions = {
 
 export class DepositController {
   private readonly scene: Scene
-  private readonly zoneRadius: number
+  private readonly resolveDepositZone: DepositZoneResolver
   private readonly player: PlayerController
   private readonly stack: CarryStack
   private readonly stackVisual: StackVisual
@@ -83,10 +88,13 @@ export class DepositController {
   private peelIndex = 0
   /** Stagger between item flights (after each lands, before next peel). */
   private depositDelayRemain = 0
+  /** Snapshot at session start — player must stay inside this disc while depositing. */
+  private readonly sessionDepositCenter = new Vector3()
+  private sessionDepositRadius = 1.28
 
   constructor(opts: DepositControllerOptions) {
     this.scene = opts.scene
-    this.zoneRadius = opts.zoneRadius ?? DEFAULT_DEPOSIT_ZONE_RADIUS
+    this.resolveDepositZone = opts.resolveDepositZone
     this.player = opts.player
     this.stack = opts.stack
     this.stackVisual = opts.stackVisual
@@ -100,15 +108,25 @@ export class DepositController {
   }
 
   update(dt: number): void {
-    /** Deposit root stays at origin — avoid `getWorldPosition` matrix walks each frame. */
-    center.set(0, 0, 0)
     this.player.getPosition(p)
-    const dx = p.x - center.x
-    const dz = p.z - center.z
-    const inside = dx * dx + dz * dz <= this.zoneRadius * this.zoneRadius
+    const zone = this.resolveDepositZone()
+    const inside =
+      zone !== null &&
+      (() => {
+        const dx = p.x - zone.center.x
+        const dz = p.z - zone.center.z
+        return dx * dx + dz * dz <= zone.radius * zone.radius
+      })()
 
-    if (this.sessionSnapshot !== null && !inside) {
-      this.abortDepositSession()
+    if (this.sessionSnapshot !== null) {
+      const dxs = p.x - this.sessionDepositCenter.x
+      const dzs = p.z - this.sessionDepositCenter.z
+      const inSessionDisc =
+        dxs * dxs + dzs * dzs <=
+        this.sessionDepositRadius * this.sessionDepositRadius
+      if (!inSessionDisc) {
+        this.abortDepositSession()
+      }
     }
 
     this.flight.update(dt)
@@ -130,11 +148,14 @@ export class DepositController {
       inside &&
       !this.wasInside &&
       this.stack.count > 0 &&
-      this.sessionSnapshot === null
+      this.sessionSnapshot === null &&
+      zone !== null
     ) {
       const snapshot = [...this.stack.getSnapshot()]
       this.sessionSnapshot = snapshot
       this.depositedIds.clear()
+      this.sessionDepositCenter.copy(zone.center)
+      this.sessionDepositRadius = zone.radius
       const evo = this.evaluateOverload?.(snapshot) ?? {
         overload: false,
         perfect: false,
@@ -200,7 +221,7 @@ export class DepositController {
     }
     const mesh = this.stackVisual.extractTopMeshForDeposit(item)
     this.stack.notifyChange()
-    center.set(0, 0, 0)
+    flightEnd.copy(this.sessionDepositCenter)
     const spiralIndex = this.peelIndex
     this.peelIndex += 1
     const onFlightDone = (flightMesh: import('three').Object3D): void => {
@@ -229,7 +250,7 @@ export class DepositController {
     this.flight.startOne(
       this.scene,
       mesh,
-      center,
+      flightEnd,
       onFlightDone,
       dur,
       overloadStyle,

@@ -1,6 +1,7 @@
 import type { Object3D } from 'three'
 import type { GameItem } from '../../core/types/GameItem.ts'
 import {
+  createClutterPickupMesh,
   createGemPickupMesh,
   createPelletStackMesh,
   createRelicPickupMesh,
@@ -13,6 +14,9 @@ export function createPickupMesh(item: GameItem): Object3D {
   }
   if (item.type === 'gem') {
     return createGemPickupMesh(item.gemColor)
+  }
+  if (item.type === 'clutter') {
+    return createClutterPickupMesh(item.clutterVariant)
   }
   return createWispPickupMesh(item.hue)
 }

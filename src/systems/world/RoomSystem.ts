@@ -14,12 +14,34 @@ export type AreaId = RoomId | 'CORRIDOR'
 /**
  * Single entry point for room/area queries (player, enemies, spawning, AI).
  * Stateless except optional RNG for random room picks.
+ * Per-room cleanliness (0–100%) is tracked by `RoomCleanlinessSystem` using `getRoomAt` / clutter `spawnRoomId`.
+ *
+ * `configureRoomAccess` wires north-chain **door unlock** state (see `DoorUnlockSystem.canAccessRoomForSpawning`).
  */
 export class RoomSystem {
   private readonly random: () => number
+  /** Set from `Game` after doors exist — used for clutter visibility / locked-room rules. */
+  private roomAccess: ((roomId: RoomId) => boolean) | null = null
 
   constructor(random: () => number = Math.random) {
     this.random = random
+  }
+
+  /**
+   * Call once when `DoorUnlockSystem` is ready. Determines which `ROOM_*` interiors are reachable.
+   */
+  configureRoomAccess(canEnterRoom: (roomId: RoomId) => boolean): void {
+    this.roomAccess = canEnterRoom
+  }
+
+  /**
+   * Whether gameplay may show pickups / spawns in this room (doors before this room index must be passable).
+   */
+  isRoomAccessibleForGameplay(roomId: RoomId): boolean {
+    if (this.roomAccess === null) {
+      return !roomId.startsWith('ROOM_')
+    }
+    return this.roomAccess(roomId)
   }
 
   /** Room interior hit-test; corridors return null. */

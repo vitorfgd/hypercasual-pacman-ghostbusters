@@ -1,15 +1,5 @@
-import {
-  AmbientLight,
-  CircleGeometry,
-  Color,
-  Group,
-  Mesh,
-  MeshStandardMaterial,
-  Object3D,
-  Scene,
-} from 'three'
+import { AmbientLight, CircleGeometry, Color, Group, Mesh, MeshStandardMaterial, Object3D, Scene } from 'three'
 import type { Mesh as MeshType } from 'three'
-import { DEFAULT_DEPOSIT_ZONE_RADIUS } from '../deposit/DepositZone.ts'
 import type { PlayerGltfTemplate } from '../player/playerGltfAsset.ts'
 import { PlayerCharacterVisual } from '../player/PlayerCharacterVisual.ts'
 import { createUpgradePad } from '../upgrades/UpgradePadVisual.ts'
@@ -33,10 +23,12 @@ export type SceneContents = {
   pickupGroup: Group
   /** Ghost enemies (pressure / chase) */
   ghostGroup: Group
-  /** Deposit zone root (visual + logical center) */
+  /**
+   * Off-screen root for `DepositZoneFeedback` burst ring + invisible dummy zone
+   * meshes (hub deposit visuals removed).
+   */
   depositRoot: Group
   depositZoneMesh: MeshType
-  /** Wide underglow under deposit disc — reacts with zone feedback */
   depositUnderglowMesh: MeshType
   /** Character (GLB or procedural + stack anchor) */
   playerCharacter: PlayerCharacterVisual
@@ -50,16 +42,6 @@ export type SceneContents = {
       setOccupancy: (t: number) => void
     }
     speed: {
-      root: Group
-      setLabel: (p: PadLabelPayload) => void
-      setOccupancy: (t: number) => void
-    }
-    pulseFreq: {
-      root: Group
-      setLabel: (p: PadLabelPayload) => void
-      setOccupancy: (t: number) => void
-    }
-    pulseDuration: {
       root: Group
       setLabel: (p: PadLabelPayload) => void
       setOccupancy: (t: number) => void
@@ -83,7 +65,7 @@ export function createScene(
   const character = new PlayerCharacterVisual(playerGltfTemplate)
   playerRoot.add(character.root)
 
-  /** Start inside hub deposit / safe circle (radius from `DEFAULT_DEPOSIT_ZONE_RADIUS`). */
+  /** Start in hub safe room. */
   playerRoot.position.set(0.35, 0, 0.55)
   scene.add(playerRoot)
 
@@ -95,13 +77,11 @@ export function createScene(
   scene.add(ghostGroup)
 
   const depositRoot = new Group()
-  depositRoot.position.set(0, 0, 0)
-  scene.add(depositRoot)
-
-  const depR = DEFAULT_DEPOSIT_ZONE_RADIUS
-
+  depositRoot.name = 'depositFxOffscreen'
+  /** Invisible stand-ins for `DepositZoneFeedback`; root not in scene — no hub deposit visuals. */
+  const depR = 0.02
   const depositUnderglow = new Mesh(
-    new CircleGeometry(depR * 2.35, 56),
+    new CircleGeometry(depR * 2, 10),
     new MeshStandardMaterial({
       color: 0x1a1422,
       emissive: 0x3d2848,
@@ -114,12 +94,13 @@ export function createScene(
     }),
   )
   depositUnderglow.name = 'depositUnderglow'
+  depositUnderglow.visible = false
   depositUnderglow.rotation.x = -Math.PI / 2
   depositUnderglow.position.y = 0.018
   depositRoot.add(depositUnderglow)
 
   const depositZoneMesh = new Mesh(
-    new CircleGeometry(depR, 56),
+    new CircleGeometry(depR, 10),
     new MeshStandardMaterial({
       color: 0x2a2230,
       emissive: 0x4a3058,
@@ -131,11 +112,12 @@ export function createScene(
     }),
   )
   depositZoneMesh.name = 'depositZone'
+  depositZoneMesh.visible = false
   depositZoneMesh.rotation.x = -Math.PI / 2
   depositZoneMesh.position.y = 0.022
   depositRoot.add(depositZoneMesh)
 
-  /** Four pads around hub center (between deposit and room walls). */
+  /** Two pads around hub center (capacity + speed). */
   const upgradeAreaRoot = new Group()
   upgradeAreaRoot.name = 'upgradeArea'
   const hc = UPGRADE_PAD_HUB_OFFSET
@@ -147,14 +129,6 @@ export function createScene(
   const speedPad = createUpgradePad('SPEED', 0x342838, 0x9a8060)
   speedPad.root.position.set(hc, 0.02, hc)
   upgradeAreaRoot.add(speedPad.root)
-
-  const pulseFreqPad = createUpgradePad('FILL', 0x382a44, 0x7a6488)
-  pulseFreqPad.root.position.set(-hc, 0.02, -hc)
-  upgradeAreaRoot.add(pulseFreqPad.root)
-
-  const pulseDurationPad = createUpgradePad('DRAIN', 0x362632, 0xa07058)
-  pulseDurationPad.root.position.set(hc, 0.02, -hc)
-  upgradeAreaRoot.add(pulseDurationPad.root)
 
   scene.add(upgradeAreaRoot)
 
@@ -176,8 +150,6 @@ export function createScene(
     upgradePads: {
       capacity: capacityPad,
       speed: speedPad,
-      pulseFreq: pulseFreqPad,
-      pulseDuration: pulseDurationPad,
     },
     hubTitleFloorLabel,
   }

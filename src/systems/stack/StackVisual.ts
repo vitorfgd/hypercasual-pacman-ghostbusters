@@ -1,50 +1,73 @@
 import {
-  AnimationMixer,
+  BoxGeometry,
+  Group,
   Mesh,
-  Sprite,
-  SpriteMaterial,
+  MeshStandardMaterial,
+  type Scene,
+  Vector3,
   type Object3D,
 } from 'three'
-import { Vector3 } from 'three'
 import type { GameItem } from '../../core/types/GameItem.ts'
-import { createStackMesh } from '../items/ItemVisuals.ts'
-import { disposeRelicGltfClone } from '../relic/relicGltfAsset.ts'
-import { disposeWispGltfClone } from '../wisp/wispGltfAsset.ts'
 import {
-  STACK_ADD_BOUNCE,
-  STACK_BOUNCE_DECAY,
-} from '../../juice/juiceConfig.ts'
+  createDepositFlightProxy,
+  disposeDepositFlightProxy,
+} from '../deposit/depositFlightProxy.ts'
+import {
+  cloneCarryBagMesh,
+  disposeCarryBagClone,
+  isCarryBagReady,
+} from './bagGltfAsset.ts'
+import { STACK_BOUNCE_DECAY } from '../../juice/juiceConfig.ts'
 
-const STEP_Y = 0.44
-const SPAWN_SCALE = 0.14
+const SCALE_SMOOTH = 11
+const BAG_Y_MIN = 0.84
+const BAG_Y_MAX = 1.48
+const BAG_XZ_MIN = 0.88
+const BAG_XZ_MAX = 1.22
+const BOUNCE_SCALE_AMP = 0.09
 
 /**
- * Wisp GLB stores `wispBaseScale`; relic GLB stores `relicBaseScale`.
- * We must read both — using only `wispBaseScale` made relics fall back to 1 (huge).
+ * Single carry bag on `stackAnchor` (player back). `CarryStack` data unchanged;
+ * deposit flights use lightweight proxy spheres instead of stacked item meshes.
  */
-function stackMeshBaseScale(mesh: Object3D): number {
-  const w = mesh.userData.wispBaseScale as number | undefined
-  const r = mesh.userData.relicBaseScale as number | undefined
-  const s = w ?? r
-  return s !== undefined && s > 0 ? s : 1
-}
-
-/** Carried stack meshes on the anchor; data-driven, type-agnostic */
 export class StackVisual {
-  private meshes: Object3D[] = []
-  private prevIds: string[] = []
   private readonly anchor: Object3D
-  private readonly poolWisp: Object3D[] = []
-  private readonly poolRelic: [Object3D[], Object3D[]] = [[], []]
-  private static readonly MAX_POOL = 64
+  /** Null while the bag mesh is flying in a dispose toss. */
+  private bag: Group | null = null
+  private fitScale = 1
+  private prevIds: string[] = []
+  private bounce = 0
+  private targetFill = 0
+  private displayFill = 0
+  private readonly curMul = new Vector3(1, 1, 1)
+  private readonly tgtMul = new Vector3(1, 1, 1)
+  private readonly worldPos = new Vector3()
 
   constructor(anchor: Object3D) {
     this.anchor = anchor
+    this.mountFreshBag()
   }
 
-  sync(items: readonly GameItem[]): void {
-    const ids = items.map((x) => x.id)
+  /** Detach current bag to the scene for a forward toss; anchor has no bag until empty `sync`. */
+  detachBagForThrow(scene: Scene): Group {
+    const b = this.bag
+    if (!b) {
+      throw new Error('StackVisual.detachBagForThrow: no bag')
+    }
+    scene.attach(b)
+    this.bag = null
+    return b
+  }
 
+  sync(items: readonly GameItem[], maxCapacity: number): void {
+    if (this.bag === null && items.length > 0) {
+      return
+    }
+    if (this.bag === null && items.length === 0) {
+      this.mountFreshBag()
+    }
+
+    const ids = items.map((x) => x.id)
     if (
       ids.length === this.prevIds.length &&
       ids.every((id, i) => id === this.prevIds[i])
@@ -52,194 +75,130 @@ export class StackVisual {
       return
     }
 
-    if (ids.length === 0) {
-      this.clearMeshes()
-      this.prevIds = []
-      return
-    }
-
-    const samePrefix =
-      ids.length > this.prevIds.length &&
+    const incremental =
+      ids.length === this.prevIds.length + 1 &&
       this.prevIds.length > 0 &&
       this.prevIds.every((id, i) => id === ids[i])
-
-    if (samePrefix && ids.length === this.prevIds.length + 1) {
-      const item = items[items.length - 1]
-      const mesh = this.obtainMesh(item)
-      const baseScale = stackMeshBaseScale(mesh)
-      mesh.userData.stackItemId = item.id
-      mesh.userData.stackItemType = item.type
-      const i = items.length - 1
-      mesh.position.y = i * STEP_Y + STACK_ADD_BOUNCE * STEP_Y
-      mesh.position.x = 0
-      mesh.position.z = 0
-      mesh.scale.setScalar(baseScale * SPAWN_SCALE)
-      mesh.userData.stackTargetScale = baseScale
-      mesh.userData.stackBounce = 1
-      this.anchor.add(mesh)
-      this.meshes.push(mesh)
-      this.prevIds = ids
-      return
+    if (incremental) {
+      this.bounce = 1
     }
 
-    this.fullRebuild(items)
     this.prevIds = ids
+    const max = Math.max(1, maxCapacity)
+    const fillVol = items.length / max
+    const clutterN = items.filter((x) => x.type === 'clutter').length
+    const clutterBoost = Math.min(0.38, clutterN * 0.034)
+    this.targetFill = Math.max(0, Math.min(1, fillVol + clutterBoost))
+    this.recomputeTargetScales(this.targetFill)
   }
 
-  /** Smooth scale-in for new items and Y settle after layout changes */
   update(dt: number): void {
-    const kScale = 1 - Math.exp(-16 * dt)
-    const kY = 1 - Math.exp(-12 * dt)
-    const kB = 1 - Math.exp(-STACK_BOUNCE_DECAY * dt)
-    this.meshes.forEach((mesh, i) => {
-      const wispMixer = mesh.userData.wispMixer as AnimationMixer | undefined
-      if (wispMixer) wispMixer.update(dt)
-      const relicMixer = mesh.userData.relicMixer as AnimationMixer | undefined
-      if (relicMixer) relicMixer.update(dt)
-      const bounce = (mesh.userData.stackBounce as number | undefined) ?? 0
-      const targetY = i * STEP_Y + bounce * STEP_Y * STACK_ADD_BOUNCE
-      mesh.position.y += (targetY - mesh.position.y) * kY
-      if (bounce > 0.002) {
-        mesh.userData.stackBounce = bounce * (1 - kB)
-      } else {
-        mesh.userData.stackBounce = 0
-      }
-      const target =
-        (mesh.userData.stackTargetScale as number | undefined) ?? 1
-      const s = mesh.scale.x
-      const ns = s + (target - s) * kScale
-      mesh.scale.setScalar(ns)
-    })
+    if (!this.bag) return
+
+    const k = 1 - Math.exp(-SCALE_SMOOTH * dt)
+    this.displayFill += (this.targetFill - this.displayFill) * k
+
+    this.recomputeTargetScales(this.displayFill)
+    if (this.bounce > 0.002) {
+      this.bounce *= Math.exp(-STACK_BOUNCE_DECAY * dt)
+    } else {
+      this.bounce = 0
+    }
+
+    const bounceMul = 1 + BOUNCE_SCALE_AMP * this.bounce
+    this.curMul.x += (this.tgtMul.x * bounceMul - this.curMul.x) * k
+    this.curMul.y += (this.tgtMul.y * bounceMul - this.curMul.y) * k
+    this.curMul.z += (this.tgtMul.z * bounceMul - this.curMul.z) * k
+
+    this.applyBagScale()
   }
 
-  /**
-   * After `stack.popFromTop({ silent: true })`, detaches the top mesh for deposit flight.
-   * Caller must `stack.notifyChange()` so HUD/sync see the new snapshot.
-   */
   extractTopMeshForDeposit(item: GameItem): Object3D {
-    if (this.meshes.length === 0) {
-      throw new Error('StackVisual.extractTopMeshForDeposit: empty stack')
+    const mesh = createDepositFlightProxy(item)
+    if (this.bag) {
+      this.bag.getWorldPosition(this.worldPos)
+      this.worldPos.y += 0.42
+    } else {
+      this.anchor.getWorldPosition(this.worldPos)
+      this.worldPos.y += 0.42
     }
-    const lastId = this.prevIds[this.prevIds.length - 1]
-    if (lastId !== item.id) {
-      throw new Error('StackVisual.extractTopMeshForDeposit: item/stack mismatch')
-    }
-    const mesh = this.meshes.pop()!
-    this.prevIds.pop()
-    this.anchor.updateMatrixWorld(true)
-    mesh.updateMatrixWorld(true)
-    const w = new Vector3()
-    mesh.getWorldPosition(w)
-    mesh.userData.depositWorldStart = w.clone()
-    mesh.userData.stackItemType = item.type
-    this.anchor.remove(mesh)
+    mesh.userData.depositWorldStart = this.worldPos.clone()
     return mesh
   }
 
-  recycleDepositedMesh(item: GameItem, mesh: Object3D): void {
+  recycleDepositedMesh(_item: GameItem, mesh: Object3D): void {
     mesh.removeFromParent()
-    mesh.visible = false
-    delete mesh.userData.stackItemId
-    delete mesh.userData.depositWorldStart
-    const mix = mesh.userData.wispMixer as AnimationMixer | undefined
-    if (mix) mix.stopAllAction()
-    const rMix = mesh.userData.relicMixer as AnimationMixer | undefined
-    if (rMix) rMix.stopAllAction()
-    if (item.type === 'wisp') {
-      if (this.poolWisp.length < StackVisual.MAX_POOL) this.poolWisp.push(mesh)
-      else this.disposeMesh(mesh)
-      return
-    }
-    if (item.type === 'gem') {
-      this.disposeMesh(mesh)
-      return
-    }
-    const v = item.relicVariant
-    if (this.poolRelic[v].length < StackVisual.MAX_POOL) this.poolRelic[v].push(mesh)
-    else this.disposeMesh(mesh)
+    disposeDepositFlightProxy(mesh)
   }
 
-  private fullRebuild(items: readonly GameItem[]): void {
-    this.clearMeshes()
-    items.forEach((item, i) => {
-      const mesh = this.obtainMesh(item)
-      const baseScale = stackMeshBaseScale(mesh)
-      mesh.userData.stackItemId = item.id
-      mesh.userData.stackItemType = item.type
-      mesh.userData.stackTargetScale = baseScale
-      mesh.userData.stackBounce = 0
-      mesh.position.y = i * STEP_Y
-      mesh.scale.setScalar(baseScale)
-      this.anchor.add(mesh)
-      this.meshes.push(mesh)
+  private mountFreshBag(): void {
+    if (isCarryBagReady()) {
+      this.bag = cloneCarryBagMesh()
+      this.bag.rotation.y = Math.PI
+    } else {
+      this.bag = this.createProceduralBag()
+    }
+    this.fitScale = Math.max(
+      this.bag.scale.x,
+      this.bag.scale.y,
+      this.bag.scale.z,
+      1e-4,
+    )
+    this.anchor.add(this.bag)
+    this.recomputeTargetScales(0)
+    this.curMul.copy(this.tgtMul)
+    this.applyBagScale()
+  }
+
+  private recomputeTargetScales(fill: number): void {
+    const t = fill
+    const yR = BAG_Y_MIN + (BAG_Y_MAX - BAG_Y_MIN) * t
+    const xzR = BAG_XZ_MIN + (BAG_XZ_MAX - BAG_XZ_MIN) * t
+    const f = this.fitScale
+    this.tgtMul.set(f * xzR, f * yR, f * xzR)
+  }
+
+  private applyBagScale(): void {
+    if (!this.bag) return
+    this.bag.scale.set(this.curMul.x, this.curMul.y, this.curMul.z)
+  }
+
+  private createProceduralBag(): Group {
+    const root = new Group()
+    root.name = 'carryBagProcedural'
+    const mat = new MeshStandardMaterial({
+      color: 0x7d6e58,
+      roughness: 0.9,
+      metalness: 0.05,
     })
+    const body = new Mesh(new BoxGeometry(0.5, 0.55, 0.26), mat)
+    body.position.y = 0.28
+    body.castShadow = true
+    body.receiveShadow = true
+    root.add(body)
+    const flap = new Mesh(new BoxGeometry(0.42, 0.12, 0.22), mat)
+    flap.position.set(0, 0.52, 0.05)
+    flap.rotation.x = -0.35
+    flap.castShadow = true
+    root.add(flap)
+    root.userData.bagBaseScale = 1
+    root.userData.carryBagProcedural = true
+    return root
   }
 
-  private clearMeshes(): void {
-    for (const m of this.meshes) {
-      this.anchor.remove(m)
-      const t = m.userData.stackItemType as GameItem['type'] | undefined
-      if (t === 'wisp' && this.poolWisp.length < StackVisual.MAX_POOL) {
-        m.visible = false
-        this.poolWisp.push(m)
-        continue
-      }
-      if (t === 'relic') {
-        const v = (m.userData.relicVariant as 0 | 1 | undefined) ?? 0
-        if (this.poolRelic[v].length < StackVisual.MAX_POOL) {
-          m.visible = false
-          this.poolRelic[v].push(m)
-          continue
-        }
-      }
-      if (t === 'gem') {
-        this.disposeMesh(m)
-        continue
-      }
-      this.disposeMesh(m)
-    }
-    this.meshes = []
-  }
-
-  private obtainMesh(item: GameItem): Object3D {
-    if (item.type === 'wisp' && this.poolWisp.length > 0) {
-      const m = this.poolWisp.pop()!
-      m.visible = true
-      return m
-    }
-    if (item.type === 'relic') {
-      const v = item.relicVariant
-      const pool = this.poolRelic[v]
-      if (pool.length > 0) {
-        const m = pool.pop()!
-        m.visible = true
-        return m
-      }
-    }
-    return createStackMesh(item)
-  }
-
-  private disposeMesh(m: Object3D): void {
-    if (m.userData.wispGltf === true) {
-      disposeWispGltfClone(m)
+  dispose(): void {
+    if (!this.bag) return
+    this.anchor.remove(this.bag)
+    if (this.bag.userData.carryBagGltf === true) {
+      disposeCarryBagClone(this.bag)
       return
     }
-    if (m.userData.relicGltf === true) {
-      disposeRelicGltfClone(m)
-      return
-    }
-    m.traverse((o) => {
-      if (o instanceof Sprite) {
-        const sm = o.material as SpriteMaterial
-        sm.map?.dispose()
-        sm.dispose()
-        return
-      }
+    this.bag.traverse((o) => {
       if (o instanceof Mesh) {
         o.geometry.dispose()
-        const mat = o.material
-        if (Array.isArray(mat)) mat.forEach((x) => x.dispose())
-        else mat.dispose()
+        const m = o.material
+        if (Array.isArray(m)) m.forEach((x) => x.dispose())
+        else m.dispose()
       }
     })
   }

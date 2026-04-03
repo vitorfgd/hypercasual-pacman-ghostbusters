@@ -10,9 +10,13 @@ export async function mountGame(host: HTMLElement): Promise<Game> {
       import('../wisp/wispGltfAsset.ts'),
     ])
     const { loadRelicGltfs, RELIC_GLTF_URLS } = await import('../relic/relicGltfAsset.ts')
+    const { loadClutterGltfs, CLUTTER_GLTF_URLS } = await import(
+      '../clutter/clutterGltfAsset.ts'
+    )
     await Promise.all([
       loadWispPickupGltf(WISP_GLTF_URL),
       loadRelicGltfs(RELIC_GLTF_URLS),
+      loadClutterGltfs(CLUTTER_GLTF_URLS),
     ])
   })()
 
@@ -20,11 +24,23 @@ export async function mountGame(host: HTMLElement): Promise<Game> {
     { GHOST_GLTF_URL },
     { loadGhostEnemyGltf },
     { PLAYER_GLTF_URL, loadPlayerCharacterGltf },
-  ] = await Promise.all([ghostCfgPromise, ghostLoadPromise, playerLoadPromise])
+    { loadCarryBagGltf, CARRY_BAG_GLTF_URL },
+  ] = await Promise.all([
+    ghostCfgPromise,
+    ghostLoadPromise,
+    playerLoadPromise,
+    import('../stack/bagGltfAsset.ts'),
+  ])
 
-  const [ghostLoaded, playerLoaded] = await Promise.all([
+  const gateLoadPromise = import('../doors/gateGltfAsset.ts').then((m) =>
+    m.loadGateGltf(),
+  )
+
+  const [ghostLoaded, playerLoaded, bagLoaded, _gateLoaded] = await Promise.all([
     loadGhostEnemyGltf(GHOST_GLTF_URL),
     loadPlayerCharacterGltf(PLAYER_GLTF_URL),
+    loadCarryBagGltf(CARRY_BAG_GLTF_URL),
+    gateLoadPromise,
   ])
 
   if (!ghostLoaded.ok) {
@@ -43,6 +59,12 @@ export async function mountGame(host: HTMLElement): Promise<Game> {
       '| Expected file:',
       PLAYER_GLTF_URL,
       'with animations: idle, collecting, running.',
+    )
+  }
+  if (!bagLoaded) {
+    console.warn(
+      '[carryBag] Using procedural sack. Expected GLB at',
+      CARRY_BAG_GLTF_URL,
     )
   }
 

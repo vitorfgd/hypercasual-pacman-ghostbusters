@@ -1,6 +1,7 @@
 /** Timed room wisp spawning — tune here */
 
-export const WISP_SPAWN_MAX_ACTIVE = 9
+/** Set to 0 when clutter is the primary room fodder; `RoomWispSpawnSystem` stays wired. */
+export const WISP_SPAWN_MAX_ACTIVE = 0
 
 /** Next spawn delay is random in [min, max] seconds (when under cap). */
 export const WISP_SPAWN_INTERVAL_MIN_SEC = 0.82
@@ -20,5 +21,5 @@ export const WISP_SPAWN_MIN_DIST_FROM_DEPOSIT = 2.65
 /** If placement fails, retry after this delay (seconds). */
 export const WISP_SPAWN_RETRY_DELAY_SEC = 0.28
 
-/** High-value relic spawn interval (seconds). */
+/** @deprecated Relics spawn from haunted clutter only (`SpecialRelicSpawnSystem`). */
 export const SPECIAL_RELIC_INTERVAL_SEC = 30

@@ -30,6 +30,8 @@ export class PlayerController {
   private readonly worldCollision: WorldCollision
   private maxSpeed: number
   private readonly drag: number
+  /** ≥1 — stack weight increases effective drag (see `stackWeightDragMultiplier`). */
+  private dragWeightMul = 1
   private targetYaw = 0
   private currentYaw = 0
   private readonly turnSmooth = 14
@@ -72,6 +74,15 @@ export class PlayerController {
 
   getMovementSlowMultiplier(): number {
     return this.movementSlowMul
+  }
+
+  /** Multiplies base drag; clamped so heavy loads never feel unresponsive. */
+  setDragWeightMultiplier(m: number): void {
+    this.dragWeightMul = Math.max(1, Math.min(1.42, m))
+  }
+
+  getDragWeightMultiplier(): number {
+    return this.dragWeightMul
   }
 
   getPosition(out: Vector3): Vector3 {
@@ -145,7 +156,7 @@ export class PlayerController {
       const targetVx = nx * cap
       const targetVz = nz * cap
 
-      const k = 1 - Math.exp(-this.drag * dt)
+      const k = 1 - Math.exp(-this.drag * this.dragWeightMul * dt)
       this.velocity.x += (targetVx - this.velocity.x) * k
       this.velocity.z += (targetVz - this.velocity.z) * k
     }

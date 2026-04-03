@@ -1,19 +1,31 @@
-/** Gold required to clear one door and open the next area. */
-export const DOOR_UNLOCK_COST = 1000
+/**
+ * Gates open when a room reaches full cleanliness (`RoomCleanlinessSystem` + `openDoorFully`).
+ * Visual: vertical sink into the ground (no swing).
+ */
 
-/** Gold per button press / tick toward the current door. */
-export const DOOR_PAY_CHUNK = 45
-
-/** 3D arc flight duration — much shorter than wisp deposit (~0.1s). */
-export const DOOR_FLIGHT_DURATION_SEC = 0.042
+/** Fallback procedural gate height when GLB is missing. */
+export const GATE_PANEL_HEIGHT = 2.4
 
 /**
- * Axis-aligned rectangular pay zone (half-extents from zone center on XZ).
- * Wide along X (in front of the door), shallow along Z (snug to the threshold).
+ * How far the gate travels (Y) when fully lowered — must clear the passage visually.
  */
-export const DOOR_ZONE_HALF_WIDTH = 2.15
-export const DOOR_ZONE_HALF_DEPTH = 0.95
+export const GATE_SINK_DEPTH = 2.9
 
-/** Vertical door panel size. */
-export const DOOR_PANEL_WIDTH = 4.1
-export const DOOR_PANEL_HEIGHT = 2.35
+/** Pause before movement starts (anticipation). */
+export const GATE_OPEN_DELAY_SEC = 0.18
+
+/** Small horizontal shake window before the sink. */
+export const GATE_ANTICIPATION_SEC = 0.12
+
+/** Main vertical drop duration. */
+export const GATE_SINK_DURATION_SEC = 0.72
+
+/** Full gate open sequence (delay + shake + sink) — matches `DoorUnlockSystem` animation length. */
+export const GATE_OPEN_TOTAL_SEC =
+  GATE_OPEN_DELAY_SEC + GATE_ANTICIPATION_SEC + GATE_SINK_DURATION_SEC
+
+export const GATE_SHAKE_AMPLITUDE = 0.056
+export const GATE_SHAKE_FREQ = 48
+
+/** Hub → ROOM_1 starts passable so the safe center remains playable. */
+export const DOOR_HUB_STARTS_FULLY_OPEN = true

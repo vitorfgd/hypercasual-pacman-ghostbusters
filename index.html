@@ -12,61 +12,58 @@
   </head>
   <body>
     <div id="app">
+      <div
+        id="game-loading"
+        class="game-loading"
+        role="status"
+        aria-live="polite"
+        aria-label="Loading"
+      >
+        <p class="game-loading__text">Tidying the mansion...</p>
+      </div>
       <div id="game-viewport" aria-label="Game view">
         <div id="hud-hit-flash" class="hud-hit-flash" aria-hidden="true"></div>
-        <div id="hud-power-tint" class="hud-power-tint" aria-hidden="true"></div>
         <div id="hud-top" class="hud-top" aria-live="polite">
           <div class="hud-main-row">
             <span id="hud-carry" class="hud-stat hud-stat--carry">0 / 10</span>
-            <div
-              id="hud-power-timer"
-              class="hud-power-timer hud-power-timer--idle"
-              aria-hidden="true"
-            >
-              <div
-                id="hud-power-timer-track"
-                class="hud-power-timer__track"
-                role="progressbar"
-                aria-valuemin="0"
-                aria-valuemax="100"
-                aria-valuenow="0"
-                aria-label="Hunt charge"
-              >
-                <div class="hud-power-timer__fill" id="hud-power-timer-fill"></div>
-              </div>
-            </div>
             <span id="hud-money" class="hud-stat hud-stat--money">$0</span>
           </div>
+          <div
+            id="hud-room-clean"
+            class="hud-room-clean hud-room-clean--inactive"
+            aria-label="Room cleanliness"
+          >
+            <div class="hud-room-clean__row">
+              <span id="hud-room-clean-title" class="hud-room-clean__title">Room</span>
+              <span id="hud-room-clean-pct" class="hud-room-clean__pct">—</span>
+            </div>
+            <div
+              class="hud-room-clean__track"
+              role="progressbar"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              aria-valuenow="0"
+              aria-label="Cleanliness"
+            >
+              <div class="hud-room-clean__fill" id="hud-room-clean-fill"></div>
+            </div>
+          </div>
         </div>
-        <div id="hud-quest" class="hud-quest" hidden aria-live="polite">
-          <div class="hud-quest__title">Quest — deposit at hub</div>
-          <div id="hud-quest-relic" class="hud-quest__line">Relic: 0 / 1</div>
-          <div id="hud-quest-red" class="hud-quest__line">Red gems: 0 / 2</div>
-          <div id="hud-quest-blue" class="hud-quest__line">Blue gems: 0 / 1</div>
-        </div>
-        <div
-          id="hud-room-objective"
-          class="hud-room-objective hidden"
-          aria-live="polite"
-        ></div>
         <div id="hud-stack-vignette" class="hud-stack-vignette" aria-hidden="true"></div>
         <div id="hud-stack-hum" class="hud-stack-hum" aria-hidden="true"></div>
         <div id="hud-bottom" class="hud-bottom" aria-live="polite">
-          <div id="hud-spawn" class="hud-spawn"></div>
-          <div class="hud-bottom-pulse">
+          <div class="hud-dispose-wrap" aria-hidden="true">
             <button
               type="button"
-              id="hud-pulse-btn"
-              class="hud-pulse-btn"
-              aria-label="Hold to hunt ghosts"
+              id="hud-dispose-bag"
+              class="hud-dispose-bag"
+              aria-label="Toss bag and cash in"
             >
-              <span class="hud-pulse-btn__sheen" aria-hidden="true"></span>
-              <span class="hud-pulse-btn__inner">
-                <span class="hud-pulse-btn__icon" aria-hidden="true">⚡</span>
-                <span class="hud-pulse-btn__label">Hunt</span>
-              </span>
+              <span class="hud-dispose-bag__glow" aria-hidden="true"></span>
+              <span class="hud-dispose-bag__label">TOSS &amp; CASH IN</span>
             </button>
           </div>
+          <div id="hud-spawn" class="hud-spawn"></div>
         </div>
         <div id="hud-overload" class="hud-overload hidden" aria-live="polite">
           <div class="hud-overload-label">OVERLOAD</div>

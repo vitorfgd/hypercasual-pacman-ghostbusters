@@ -9,7 +9,10 @@ import {
 } from 'three'
 import type { Vector3 } from 'three'
 import type { GameItem } from '../core/types/GameItem.ts'
-import { GHOST_HIT_BURST_MAX_PARTICLES } from '../systems/ghost/ghostConfig.ts'
+import {
+  GHOST_HIT_BURST_MAX_PARTICLES,
+  GHOST_HIT_BURST_MAX_PARTICLES_INTENSE,
+} from '../systems/ghost/ghostConfig.ts'
 
 export type GhostHitBurstParticle = {
   mesh: Object3D
@@ -45,6 +48,18 @@ function createBurstFleckMesh(item: GameItem): Mesh {
   } else if (item.type === 'relic') {
     color = new Color().setHSL(item.hue, 0.8, 0.55)
     emissive = new Color().setHSL(item.hue + 0.03, 0.9, 0.5)
+  } else if (item.type === 'clutter') {
+    const palette: Color[] = [
+      new Color(0xc8c0b0),
+      new Color(0x8a8478),
+      new Color(0x6a6058),
+      new Color(0x9a9082),
+      new Color(0xb8a898),
+      new Color(0x6e665c),
+      new Color(0x7d7368),
+    ]
+    color = palette[item.clutterVariant] ?? palette[2]!
+    emissive = color.clone().multiplyScalar(0.35)
   }
   const mat = new MeshStandardMaterial({
     color,
@@ -107,21 +122,30 @@ export function spawnGhostHitPelletBurst(
   parent: Group,
   origin: Vector3,
   lostItems: readonly GameItem[],
+  opts?: { intense?: boolean },
 ): GhostHitBurstParticle[] {
-  const n = Math.min(lostItems.length, GHOST_HIT_BURST_MAX_PARTICLES)
+  const cap = opts?.intense
+    ? GHOST_HIT_BURST_MAX_PARTICLES_INTENSE
+    : GHOST_HIT_BURST_MAX_PARTICLES
+  const n = Math.min(lostItems.length, cap)
   const out: GhostHitBurstParticle[] = []
+  const intense = opts?.intense === true
   for (let i = 0; i < n; i++) {
     const mesh = createBurstFleckMesh(lostItems[i]!)
     mesh.position.copy(origin)
-    mesh.position.y += 0.52 + Math.random() * 0.2
+    mesh.position.y += 0.52 + Math.random() * (intense ? 0.28 : 0.2)
     const ang = Math.random() * Math.PI * 2
-    const sp = 4.2 + Math.random() * 5.2
+    const sp = intense
+      ? 5.6 + Math.random() * 7.2
+      : 4.2 + Math.random() * 5.2
     parent.add(mesh)
     out.push({
       mesh,
       vx: Math.cos(ang) * sp,
       vz: Math.sin(ang) * sp,
-      vy: 3.2 + Math.random() * 2.6,
+      vy: intense
+        ? 4.4 + Math.random() * 4.2
+        : 3.2 + Math.random() * 2.6,
       t: 0,
     })
   }

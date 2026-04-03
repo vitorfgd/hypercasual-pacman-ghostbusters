@@ -14,10 +14,10 @@ export const PLAYER_START_BOOST_MULT = 1.14
 export const PLAYER_START_BOOST_DURATION_SEC = 0.12
 
 /** Ghost patrol speed (NORMAL wander) — slower, calmer roam */
-export const GHOST_WANDER_SPEED = 3.55
+export const GHOST_WANDER_SPEED = 3.55 * 1.08
 
 /** Ghost chase speed in NORMAL (must stay < PLAYER_BASE_MAX_SPEED) */
-export const GHOST_CHASE_SPEED = 6.25
+export const GHOST_CHASE_SPEED = 6.25 * 1.08
 
 /** Ghost flee speed in FRIGHTENED (power mode) — slightly slower than chase, still readable */
-export const GHOST_FRIGHT_SPEED = 5.15
+export const GHOST_FRIGHT_SPEED = 5.15 * 1.08

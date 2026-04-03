@@ -4,7 +4,6 @@ import type { WorldCollision } from '../world/WorldCollision.ts'
 import type { RoomId } from '../world/mansionRoomData.ts'
 import type { RelicItem } from '../../core/types/GameItem.ts'
 import {
-  SPECIAL_RELIC_INTERVAL_SEC,
   WISP_SPAWN_ATTEMPTS,
   WISP_SPAWN_BODY_RADIUS,
   WISP_SPAWN_MIN_DIST_FROM_DEPOSIT,
@@ -23,8 +22,8 @@ export type SpecialRelicSpawnSystemOptions = {
 }
 
 /**
- * Every `SPECIAL_RELIC_INTERVAL_SEC`, spawns one high-value relic in a random room.
- * Removes the previous world relic when a new one is placed.
+ * High-value relics spawn only when the player collects **haunted** clutter
+ * (`trySpawnRelicFromHauntedClutter`). No timer-based spawns.
  */
 export class SpecialRelicSpawnSystem {
   private readonly itemWorld: ItemWorld
@@ -35,7 +34,6 @@ export class SpecialRelicSpawnSystem {
   private readonly onSpawn?: () => void
   private readonly canSpawnInRoom?: (roomId: RoomId) => boolean
 
-  private timer = SPECIAL_RELIC_INTERVAL_SEC
   private activeRelicId: string | null = null
 
   constructor(opts: SpecialRelicSpawnSystemOptions) {
@@ -48,12 +46,8 @@ export class SpecialRelicSpawnSystem {
     this.canSpawnInRoom = opts.canSpawnInRoom
   }
 
-  update(dt: number): void {
-    this.timer -= dt
-    if (this.timer > 0) return
-    this.timer = SPECIAL_RELIC_INTERVAL_SEC
-    this.spawnRelic()
-  }
+  /** Kept for call-site compatibility; relics no longer spawn on a timer. */
+  update(_dt: number): void {}
 
   /** World XZ of the active relic pickup, or null if collected / missing. */
   getActiveRelicXZ(): { x: number; z: number } | null {
@@ -61,7 +55,11 @@ export class SpecialRelicSpawnSystem {
     return this.itemWorld.getPickupXZ(this.activeRelicId)
   }
 
-  private spawnRelic(): void {
+  /**
+   * Call when haunted clutter is collected. Spawns at most one world relic;
+   * replaces the previous ground relic if still present.
+   */
+  trySpawnRelicFromHauntedClutter(roomId: RoomId): void {
     if (this.itemWorld.hasRelicOnGround()) return
 
     if (this.activeRelicId !== null && this.itemWorld.hasPickup(this.activeRelicId)) {
@@ -69,13 +67,8 @@ export class SpecialRelicSpawnSystem {
     }
     this.activeRelicId = null
 
-    let pool = this.roomSystem.getSpawnEligibleRoomIds()
-    if (this.canSpawnInRoom) {
-      pool = pool.filter((id) => this.canSpawnInRoom!(id))
-    }
-    if (pool.length === 0) return
+    if (this.canSpawnInRoom && !this.canSpawnInRoom(roomId)) return
 
-    const roomId = pool[Math.floor(this.random() * pool.length)]!
     const b = this.roomSystem.getBounds(roomId)
     const inset = WISP_SPAWN_ROOM_INSET
     const minX = b.minX + inset

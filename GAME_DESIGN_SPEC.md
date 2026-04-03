@@ -7,7 +7,7 @@ This document describes **how the game works in the current codebase**: mechanic
 ## 1. High-level concept
 
 - **Genre**: Top-down **3D** hypercasual loop on **XZ**: move, collect stackable pickups, **bank** at the hub for money, **avoid ghosts** that strip part of your stack on contact, and use **ghost pulse** (charged ability) to **eat** ghosts for cash.
-- **World**: A **hub** at the origin (safe deposit + four upgrade pads) and a **north chain of rooms** (`ROOM_1` … `ROOM_5`) connected by corridors, with **doors** that unlock with gold. Wisps and ghosts use **room bounds + collision**; spawns avoid the hub.
+- **World**: A **hub** at the origin (safe deposit + four upgrade pads) and a **north chain of rooms** (`ROOM_1` … `ROOM_5`) connected by corridors, with **doors** that unlock with gold. Rooms can differ in **width and depth** (per-room bounds); **geometry past the next unpaid door is hidden** until that door opens, then a **short reveal** plays on the new room. Wisps and ghosts use **room bounds + collision**; spawns avoid the hub.
 - **Progression**: Money from deposits and ghost eats → **capacity / speed / pulse fill / pulse drain** upgrades at pads, and **door** payments to open new areas. **Quests** track relic + colored **gem** turn-ins at the hub.
 - **End state**: There is **no coded win screen**; play is an open-ended loop (money, upgrades, rooms, repeating quests).
 
@@ -19,7 +19,7 @@ Order of operations in `Game`’s animation tick (simplified):
 
 1. **Input**: Read **virtual joystick** (pointer on the **WebGL canvas only**) and **keyboard** (WASD + arrows). Vectors are merged: keyboard wins whenever a movement key is held; otherwise joystick. Typing in inputs is ignored for movement.
 2. **Player**: Integrate velocity with **drag**, **max speed** (upgrades + optional **pulse speed multiplier**), **start boost** when movement starts from idle, **wall collision** (circle vs static geometry), **ghost knockback** decay.
-3. **World systems**: Upgrade zones, door unlock, **quest timer**, ghost AI, item idle motion, stack visual smoothing, deposit flights, room wisp spawns, special relic timer, relic foot arrow, camera rig, money HUD, collect effects.
+3. **World systems**: Upgrade zones, door unlock, **mansion ground visibility + room reveal animation**, **quest timer**, ghost AI, item idle motion, stack visual smoothing, deposit flights, room wisp spawns, special relic timer, relic foot arrow, camera rig, money HUD, collect effects.
 4. **Pulse charge**: If the player is **outside** the safe center **and** not in the deposit disc **and** not on any **upgrade pad** zone **and** not in a **door pay** zone → `pulseCharge` increases toward 1 at **fill/sec** (from FILL upgrade). If the **PULSE** button is held and charge &gt; 0 → charge decreases at **drain/sec** (from DRAIN upgrade) and **pulse gameplay** is active (ghosts frightened, can be eaten, speed tint).
 5. **Ghosts**: Update behavior from player position, **carrying relic** flag, safe-room rules, **pulse** (frightened) mode. **Eat** test: if pulse active and player overlaps a ghost → ghost is eaten, **flat money** reward, optional **gem** spawn at ghost position, respawn later. **Hit** test: if not pulse and not i-frames → knockback, **random fraction** of stack lost from **top**, particles, flash.
 6. **Collection**: If not pickup-blocked (ghost hit i-frames), magnet pulls pickups; overlap pushes **GameItem** onto **CarryStack** (if capacity).
@@ -43,9 +43,12 @@ Movement convention: joystick **Y** is screen-down positive; **world forward** i
 ## 4. World, rooms, and collision
 
 - **`RoomSystem`**: Classifies a point into a **room id** (e.g. `SAFE_CENTER`, `ROOM_1` … `ROOM_5`) or corridor / outside, using **axis-aligned bounds** from `mansionRoomData`.
-- **`WorldCollision`**: Resolves the player circle against static geometry so the avatar slides on walls.
+- **Room layout** (`mansionRoomData.ts`): The safe hub uses a fixed half-extent on X (`ROOM_HALF` in `mansionGeometry.ts`). Each normal room has its own **half-depth** along −Z (`ROOM_DEPTH_HALF`) and **half-width** on ±X (`ROOM_HALF_X_BY_INDEX`); chain position is derived from `roomNorthZ` / `roomSouthZ`. The outer shell uses **`MANSION_OUTER_HALF_X`** (max of hub and all room half-widths). Door openings stay **centered on X** with width **`2 × DOOR_HALF`**; narrow corridors use **`CORRIDOR_BOUNDS`**.
+- **Walls & collision** (`mansionWalls.ts`): Static AABBs match the same layout (including corridor side blocks and, when a room is narrower than the envelope, **side “wing”** wall segments). **`WorldCollision`** uses the full wall set plus **extra** door-plane blockers while a door is locked (`DoorUnlockSystem`).
+- **Mansion visuals** (`mansionEnvironment.ts`, `mansionVisibility.ts`): Floors and walls are grouped by segment (`shell`, `safe`, `corridor_0` … `corridor_4`, `room_1` … `room_5`). **`isMansionSegmentVisible`** gates what is shown from the current **door-unlocked** flags: you do not see the **next** room (or corridors deeper than your door progress) until the preceding doors are paid. **`shell`** (outer perimeter + edge vignette) and **`safe`** stay on.
+- **Reveal on unlock**: When a door finishes unlocking, **`notifyDoorUnlocked`** runs for the corresponding **`room_{k}`** segment: a brief **opacity + scale** animation (~0.42 s ease-out). Initial visibility is synced from `DoorUnlockSystem.getDoorUnlockedFlags()` after construction (`Game.ts`).
 - **Hub**: **Deposit** is a **circle** centered at **(0,0)** on XZ (`DEFAULT_DEPOSIT_ZONE_RADIUS` in `DepositZone.ts`). **Upgrade pads** are **rectangles** (half-width × half-depth in `upgradeConfig.ts`), placed at **(±h, ±h)** with `UPGRADE_PAD_HUB_OFFSET`.
-- **Doors**: Multiple door indices along the north chain; each has a **rectangular pay zone** in front of the threshold (`doorUnlockConfig.ts`, `doorLayout.ts`). **Barriers** and **pay pads** visibility follow unlock state.
+- **Doors**: Multiple door indices along the north chain; each has a **rectangular pay zone** in front of the threshold (`doorUnlockConfig.ts`, `doorLayout.ts`). **Barriers** and **pay pads** visibility follow unlock state (see §12).
 - **Ghosts**: Spawn presets in `ghostConfig.ts` — **per-room** counts, **body color** per spawn, **room index** scales size/speed. Not placed in the safe center.
 
 ---
@@ -148,7 +151,8 @@ Tracks:
 - **Sequential** locks: first **locked** door is the only one that accepts payment toward **`DOOR_UNLOCK_COST`**.
 - **Stand in door pay rectangle** → auto-pay chunks (`DOOR_PAY_CHUNK`) like upgrades.
 - **Floor labels** on each **locked** door show **$ remaining** (or full cost for later doors); **barriers** hide when unlocked.
-- **Room access** for spawns: `canAccessRoomForSpawning` gates wisps/relics by door chain.
+- **Room access** for spawns: `canAccessRoomForSpawning` gates wisps/relics by door chain (same door flags as gameplay access).
+- **Mansion sync**: `onUnlocked` notifies **`MansionGroundHandle.notifyDoorUnlocked`** so the newly accessible **room** segment appears with the **reveal** animation. **`getDoorUnlockedFlags()`** exposes the flag array for visibility sync.
 
 ---
 
@@ -208,6 +212,9 @@ Approximate layout in `#game-viewport`:
 | Deposit batch math | `depositScaling.ts`, `depositEvaluation.ts` |
 | Overload | `overloadDropConfig.ts` |
 | Doors | `doorUnlockConfig.ts`, `doorLayout.ts` |
+| Room sizes & bounds chain | `mansionRoomData.ts`, `mansionGeometry.ts` |
+| Mansion walls (collision + visual segments) | `mansionWalls.ts` |
+| Hidden areas & reveal | `mansionVisibility.ts`, `mansionEnvironment.ts` |
 | Quest targets / delays | `QuestSystem.ts` (constructor args in `Game.ts`) |
 | Gem color from ghost | `ghostGemColor.ts` |
 
@@ -221,7 +228,7 @@ Approximate layout in `#game-viewport`:
 4. **Ghosts**: wander/chase/frighten, safe hub rules, hit vs eat, **relic aggro**.
 5. **Pulse**: **charge** outside safe (paused on deposit/pads/doors), **hold** to use, **FILL/DRAIN** upgrades.
 6. **Four upgrade pads** with **auto-pay** in zone + **floor labels**.
-7. **Doors** with **sequential** unlock and **pay zones**.
+7. **Doors** with **sequential** unlock and **pay zones**; **mansion** areas beyond the door chain **hidden** until unlocked, with **reveal** on open.
 8. **Relic** timer spawn + **arrow**; wisps room-spawned.
 9. **Gems** from **ghost eats** + **quests** tied to **hub deposits**.
 10. **HUD**: top stats, **pulse bar**, **quest** block, **PULSE** button bottom.

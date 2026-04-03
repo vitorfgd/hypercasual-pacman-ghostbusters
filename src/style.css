@@ -25,6 +25,32 @@ body {
     env(safe-area-inset-bottom) env(safe-area-inset-left);
 }
 
+/* Session bootstrap — hidden after rooms, gates, and clutter are ready */
+.game-loading {
+  position: fixed;
+  inset: 0;
+  z-index: 200000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: radial-gradient(ellipse at 50% 38%, #1e2840 0%, #0c0c10 52%);
+  font: 600 clamp(16px, 3.8vw, 20px) system-ui, sans-serif;
+  color: #c8d4e8;
+  letter-spacing: 0.05em;
+  pointer-events: auto;
+}
+
+.game-loading.game-loading--on {
+  display: flex;
+}
+
+.game-loading__text {
+  margin: 0;
+  padding: 0 24px;
+  text-align: center;
+  text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
+}
+
 /*
   Portrait-friendly frame: 9:16 fits common mobile stores / ads.
   On wide desktops, letterboxes instead of stretching the game to a super-wide view.
@@ -128,84 +154,6 @@ body {
   }
 }
 
-.hud-room-objective {
-  position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 48px);
-  right: 10px;
-  z-index: 11;
-  max-width: min(58%, 300px);
-  padding: 10px 14px 12px;
-  border-radius: 14px;
-  font: 800 clamp(13px, 3.6vw, 16px) system-ui, sans-serif;
-  line-height: 1.4;
-  letter-spacing: 0.01em;
-  color: rgba(248, 252, 255, 0.98);
-  text-shadow:
-    0 0 12px rgba(120, 200, 255, 0.45),
-    0 2px 8px rgba(0, 0, 0, 0.65);
-  background: linear-gradient(
-    145deg,
-    rgba(18, 28, 48, 0.94) 0%,
-    rgba(28, 22, 42, 0.92) 100%
-  );
-  border: 2px solid rgba(130, 190, 255, 0.55);
-  pointer-events: none;
-  box-shadow:
-    0 0 0 1px rgba(255, 255, 255, 0.08) inset,
-    0 4px 24px rgba(0, 0, 0, 0.45),
-    0 0 28px rgba(80, 140, 255, 0.25);
-  transform-origin: top right;
-}
-
-.hud-room-objective.hud-room-objective--active {
-  animation: hudRoomObjectivePop 0.45s cubic-bezier(0.2, 0.9, 0.25, 1) both,
-    hudRoomObjectiveGlow 2.4s ease-in-out infinite 0.45s;
-}
-
-.hud-room-objective.hud-room-objective--active::before {
-  content: 'Room goal';
-  display: block;
-  font: 800 9px system-ui, sans-serif;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: rgba(180, 215, 255, 0.92);
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
-  margin-bottom: 6px;
-}
-
-@keyframes hudRoomObjectivePop {
-  0% {
-    opacity: 0;
-    transform: scale(0.92) translateY(-6px);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-}
-
-@keyframes hudRoomObjectiveGlow {
-  0%,
-  100% {
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.08) inset,
-      0 4px 24px rgba(0, 0, 0, 0.45),
-      0 0 22px rgba(80, 140, 255, 0.22);
-    border-color: rgba(130, 190, 255, 0.5);
-  }
-  50% {
-    box-shadow:
-      0 0 0 1px rgba(255, 255, 255, 0.1) inset,
-      0 6px 28px rgba(0, 0, 0, 0.5),
-      0 0 36px rgba(120, 200, 255, 0.42);
-    border-color: rgba(170, 220, 255, 0.75);
-  }
-}
-
-.hud-room-objective.hidden {
-  display: none;
-}
-
 /* Ghost hit: quick full-frame flash (no pointer capture) */
 .hud-hit-flash {
   position: absolute;
@@ -228,37 +176,7 @@ body {
   transition: opacity 0.04s ease-in;
 }
 
-/* Ghost pulse mode — visible but light gold wash (subtle, not overpowering) */
-.hud-power-tint {
-  position: absolute;
-  inset: 0;
-  z-index: 7;
-  pointer-events: none;
-  opacity: 0;
-  background: radial-gradient(
-    ellipse 88% 70% at 50% 38%,
-    rgba(255, 210, 130, 0.14) 0%,
-    rgba(130, 95, 45, 0.06) 48%,
-    transparent 78%
-  );
-  box-shadow: inset 0 0 36px rgba(255, 195, 95, 0.18);
-  mix-blend-mode: screen;
-  transition: opacity 0.14s ease-out;
-}
-
-.hud-power-tint.hud-power-tint--on {
-  opacity: 0.62;
-  transition: opacity 0.1s ease-in;
-  background: radial-gradient(
-    ellipse 90% 74% at 50% 36%,
-    rgba(255, 225, 160, 0.32) 0%,
-    rgba(200, 150, 65, 0.14) 46%,
-    rgba(35, 26, 12, 0.22) 100%
-  );
-  box-shadow: inset 0 0 56px rgba(255, 200, 95, 0.32);
-}
-
-/* Top HUD: capacity | pulse bar | money (one row) */
+/* Top HUD: capacity | money (one row) */
 .hud-top {
   position: absolute;
   top: env(safe-area-inset-top, 0);
@@ -274,6 +192,177 @@ body {
   align-items: center;
   gap: 10px;
   width: 100%;
+}
+
+.hud-room-clean {
+  margin-top: 8px;
+  max-width: 240px;
+  padding: 6px 10px 8px;
+  border-radius: 10px;
+  background: rgba(8, 12, 18, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  transition: opacity 0.2s ease;
+}
+
+.hud-room-clean--inactive {
+  opacity: 0.5;
+}
+
+.hud-room-clean__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 5px;
+}
+
+.hud-room-clean__title {
+  font: 600 12px system-ui, sans-serif;
+  color: rgba(235, 240, 250, 0.92);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  letter-spacing: 0.02em;
+}
+
+.hud-room-clean__pct {
+  font: 700 13px system-ui, monospace;
+  color: #c8f0dd;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+  min-width: 2.75rem;
+  text-align: right;
+}
+
+.hud-room-clean__track {
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.38);
+  overflow: hidden;
+  border: 1px solid rgba(120, 180, 150, 0.2);
+}
+
+.hud-room-clean__fill {
+  height: 100%;
+  width: 100%;
+  transform-origin: left center;
+  transform: scaleX(0);
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    rgba(80, 160, 120, 0.92) 0%,
+    rgba(140, 220, 180, 0.95) 100%
+  );
+  box-shadow: 0 0 10px rgba(100, 200, 150, 0.25);
+}
+
+.hud-room-clean--cleared .hud-room-clean__fill {
+  background: linear-gradient(
+    90deg,
+    rgba(120, 200, 255, 0.85) 0%,
+    rgba(200, 230, 255, 0.95) 100%
+  );
+}
+
+.hud-room-clean--cleared .hud-room-clean__pct {
+  color: #d8f4ff;
+}
+
+/* Full-width dispose CTA — only the button captures touches (see pointer-events). */
+.hud-dispose-wrap {
+  position: relative;
+  z-index: 12;
+  width: 100%;
+  margin-bottom: 4px;
+  pointer-events: none;
+}
+
+.hud-dispose-bag {
+  position: relative;
+  display: none;
+  width: 100%;
+  margin: 0;
+  padding: 14px 18px;
+  border: none;
+  border-radius: 14px;
+  cursor: pointer;
+  pointer-events: auto;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  overflow: hidden;
+  font: 800 15px system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  color: #0a1a12;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+  background: linear-gradient(
+    180deg,
+    #6cffb8 0%,
+    #1ee89a 38%,
+    #0ab87a 100%
+  );
+  box-shadow:
+    0 0 0 1px rgba(180, 255, 220, 0.5),
+    0 4px 24px rgba(0, 255, 160, 0.45),
+    0 8px 32px rgba(0, 200, 120, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.45);
+  transform: scale(0.97);
+  opacity: 0;
+  transition:
+    transform 0.2s cubic-bezier(0.34, 1.4, 0.64, 1),
+    opacity 0.2s ease;
+}
+
+.hud-dispose-bag.hud-dispose-bag--visible {
+  display: block;
+  opacity: 1;
+  transform: scale(1);
+  animation: hudDisposeWobble 2.4s ease-in-out infinite;
+}
+
+.hud-dispose-bag:active {
+  transform: scale(0.96);
+}
+
+.hud-dispose-bag__glow {
+  position: absolute;
+  inset: -40%;
+  background: radial-gradient(
+    circle at 50% 30%,
+    rgba(255, 255, 255, 0.55) 0%,
+    transparent 55%
+  );
+  opacity: 0.45;
+  pointer-events: none;
+  animation: hudDisposeSheen 2.8s ease-in-out infinite;
+}
+
+.hud-dispose-bag__label {
+  position: relative;
+  z-index: 1;
+}
+
+@keyframes hudDisposeWobble {
+  0%,
+  100% {
+    filter: brightness(1) saturate(1.05);
+  }
+  50% {
+    filter: brightness(1.12) saturate(1.15);
+  }
+}
+
+@keyframes hudDisposeSheen {
+  0%,
+  100% {
+    transform: translate(0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate(4%, -2%) rotate(6deg);
+  }
+}
+
+#game-viewport.game-viewport--glow-ecto {
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.45),
+    0 0 48px rgba(0, 255, 140, 0.22);
+  transition: box-shadow 0.25s ease;
 }
 
 .hud-stat {
@@ -307,55 +396,6 @@ body {
     0 2px 8px rgba(0, 0, 0, 0.35);
 }
 
-/* Hunt charge bar — flexes between carry and money */
-.hud-power-timer {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 0;
-  width: auto;
-  max-width: none;
-  pointer-events: none;
-}
-
-.hud-power-timer.hidden {
-  display: none;
-}
-
-.hud-power-timer__track {
-  height: 18px;
-  border-radius: 999px;
-  background: rgba(24, 20, 32, 0.72);
-  border: 1px solid rgba(120, 100, 140, 0.35);
-  overflow: hidden;
-  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45);
-}
-
-.hud-power-timer__fill {
-  height: 100%;
-  width: 0%;
-  border-radius: 999px;
-  background: linear-gradient(
-    90deg,
-    rgba(140, 175, 210, 0.85),
-    rgba(200, 215, 235, 0.95)
-  );
-  box-shadow: 0 0 12px rgba(160, 190, 230, 0.35);
-}
-
-.hud-power-timer:not(.hud-power-timer--idle) .hud-power-timer__track {
-  border-color: rgba(230, 180, 95, 0.45);
-  background: rgba(36, 28, 14, 0.65);
-}
-
-.hud-power-timer:not(.hud-power-timer--idle) .hud-power-timer__fill {
-  background: linear-gradient(
-    90deg,
-    rgba(220, 150, 55, 0.95),
-    rgba(255, 220, 140, 1)
-  );
-  box-shadow: 0 0 14px rgba(255, 200, 90, 0.5);
-}
-
 /* Ghost hit i-frames — subtle frame cue (with shirt blink on character) */
 #game-viewport.game-viewport--ghost-invuln::after {
   content: '';
@@ -375,40 +415,6 @@ body {
   to {
     opacity: 0.72;
   }
-}
-
-.hud-quest {
-  position: absolute;
-  top: calc(env(safe-area-inset-top, 0px) + 52px);
-  left: 12px;
-  z-index: 9;
-  max-width: min(56%, 228px);
-  padding: 8px 12px 10px;
-  border-radius: 12px;
-  background: rgba(14, 11, 22, 0.82);
-  border: 1px solid rgba(200, 165, 110, 0.32);
-  pointer-events: none;
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.38);
-}
-
-.hud-quest__title {
-  font: 800 10px system-ui, sans-serif;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: rgba(255, 215, 170, 0.95);
-  margin-bottom: 6px;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
-}
-
-.hud-quest__line {
-  font: 600 12px system-ui, sans-serif;
-  color: rgba(255, 252, 248, 0.94);
-  line-height: 1.5;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
-}
-
-.hud-quest__line.hud-quest__line--hidden {
-  display: none;
 }
 
 .float-hud {
@@ -503,68 +509,6 @@ body {
     0 0 14px rgba(255, 180, 60, 0.85),
     0 2px 10px rgba(0, 0, 0, 0.55);
   max-width: 38ch;
-}
-
-/* Confetti + hub / room celebration (`confettiHud.ts`) */
-.juice-confetti-layer {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  z-index: 19;
-  overflow: hidden;
-}
-
-.juice-confetti-piece {
-  position: absolute;
-  border-radius: 1px;
-  opacity: 0.96;
-  animation-name: juiceConfettiFall;
-  animation-timing-function: linear;
-  animation-fill-mode: forwards;
-  will-change: transform;
-}
-
-@keyframes juiceConfettiFall {
-  0% {
-    transform: translate3d(0, 0, 0) rotate(0deg);
-    opacity: 1;
-  }
-  100% {
-    transform: translate3d(var(--cf-dx, 0px), 120vh, 0)
-      rotate(var(--cf-rot, 720deg));
-    opacity: 0.88;
-  }
-}
-
-.float-hud--celebration-wrap {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  width: min(92vw, 400px);
-  max-width: min(92vw, 400px);
-  text-align: center;
-  z-index: 21;
-}
-
-.float-hud--celebration-title {
-  font: 900 clamp(22px, 6.5vw, 36px) system-ui, sans-serif;
-  letter-spacing: 0.02em;
-  line-height: 1.15;
-  color: #fffef8;
-  text-shadow:
-    0 0 20px rgba(255, 120, 180, 0.42),
-    0 0 32px rgba(100, 190, 255, 0.38),
-    0 3px 14px rgba(0, 0, 0, 0.65);
-}
-
-.float-hud--celebration-sub {
-  font: 700 clamp(14px, 4vw, 19px) system-ui, sans-serif;
-  line-height: 1.45;
-  color: rgba(230, 245, 255, 0.94);
-  text-shadow: 0 2px 10px rgba(0, 0, 0, 0.55);
-  max-width: 36ch;
 }
 
 .relic-spark {
@@ -714,7 +658,7 @@ body {
   outline-offset: 2px;
 }
 
-/* Bottom: spawn text + pulse (center-right on bottom) */
+/* Bottom: spawn text + dispose CTA */
 .hud-bottom {
   position: absolute;
   left: 12px;
@@ -728,191 +672,6 @@ body {
   width: calc(100% - 24px);
   max-width: 100%;
   pointer-events: none;
-}
-
-/* Sits in the lower area, toward the right (not flush corner — “center-right”) */
-.hud-bottom-pulse {
-  display: flex;
-  justify-content: flex-end;
-  width: 100%;
-  padding-left: 22%;
-  padding-right: max(4px, env(safe-area-inset-right, 0px));
-}
-
-/* Hunt button — premium CTA: glow ring, sheen, icon + label */
-.hud-pulse-btn {
-  pointer-events: auto;
-  touch-action: manipulation;
-  -webkit-tap-highlight-color: transparent;
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 158px;
-  min-height: 58px;
-  margin: 0;
-  padding: 12px 22px;
-  border: none;
-  border-radius: 18px;
-  cursor: pointer;
-  overflow: visible;
-  background: transparent;
-  animation: hudPulseBtnIdle 3.2s ease-in-out infinite;
-  transition:
-    transform 0.1s ease,
-    filter 0.15s ease,
-    opacity 0.15s ease;
-}
-
-.hud-pulse-btn::before {
-  content: '';
-  position: absolute;
-  inset: -3px;
-  border-radius: 21px;
-  background: linear-gradient(
-    145deg,
-    rgba(255, 200, 120, 0.55),
-    rgba(140, 90, 160, 0.45) 40%,
-    rgba(60, 40, 80, 0.6) 100%
-  );
-  z-index: 0;
-  filter: blur(0.5px);
-  opacity: 0.95;
-}
-
-.hud-pulse-btn::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: 18px;
-  background: linear-gradient(
-    165deg,
-    rgba(110, 78, 125, 1) 0%,
-    rgba(58, 38, 72, 1) 42%,
-    rgba(32, 20, 38, 1) 100%
-  );
-  box-shadow:
-    inset 0 2px 1px rgba(255, 235, 210, 0.22),
-    inset 0 -8px 16px rgba(0, 0, 0, 0.35),
-    0 8px 0 rgba(12, 6, 14, 0.65),
-    0 14px 28px rgba(0, 0, 0, 0.4);
-  z-index: 1;
-}
-
-.hud-pulse-btn__sheen {
-  position: absolute;
-  inset: 2px;
-  border-radius: 16px;
-  background: linear-gradient(
-    105deg,
-    rgba(255, 255, 255, 0.14) 0%,
-    transparent 42%,
-    transparent 58%,
-    rgba(255, 200, 140, 0.06) 100%
-  );
-  z-index: 2;
-  pointer-events: none;
-}
-
-.hud-pulse-btn__inner {
-  position: relative;
-  z-index: 3;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}
-
-.hud-pulse-btn__icon {
-  font-size: 1.35rem;
-  line-height: 1;
-  filter: drop-shadow(0 0 8px rgba(255, 220, 120, 0.55));
-}
-
-.hud-pulse-btn__label {
-  font: 800 clamp(12px, 3.6vw, 17px) system-ui, sans-serif;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: #fffaf0;
-  text-shadow:
-    0 0 12px rgba(255, 200, 100, 0.35),
-    0 2px 4px rgba(0, 0, 0, 0.55);
-}
-
-@keyframes hudPulseBtnIdle {
-  0%,
-  100% {
-    filter: drop-shadow(0 0 10px rgba(200, 150, 255, 0.22));
-  }
-  50% {
-    filter: drop-shadow(0 0 16px rgba(255, 190, 90, 0.38));
-  }
-}
-
-.hud-pulse-btn--active {
-  animation: none;
-}
-
-.hud-pulse-btn--active::before {
-  background: linear-gradient(
-    145deg,
-    rgba(255, 220, 140, 0.75),
-    rgba(220, 150, 60, 0.55) 45%,
-    rgba(100, 55, 20, 0.65) 100%
-  );
-}
-
-.hud-pulse-btn--active::after {
-  background: linear-gradient(
-    165deg,
-    rgba(175, 115, 48, 1) 0%,
-    rgba(120, 72, 28, 1) 45%,
-    rgba(62, 40, 16, 1) 100%
-  );
-  box-shadow:
-    inset 0 2px 1px rgba(255, 235, 200, 0.35),
-    inset 0 -8px 16px rgba(50, 20, 0, 0.4),
-    0 8px 0 rgba(12, 6, 8, 0.7),
-    0 0 32px rgba(255, 195, 80, 0.45),
-    0 14px 32px rgba(0, 0, 0, 0.45);
-}
-
-.hud-pulse-btn--active .hud-pulse-btn__label {
-  color: #fffef8;
-  text-shadow:
-    0 0 14px rgba(255, 220, 120, 0.55),
-    0 2px 4px rgba(0, 0, 0, 0.45);
-}
-
-.hud-pulse-btn--empty:not(.hud-pulse-btn--active)::after {
-  opacity: 0.88;
-}
-
-.hud-pulse-btn--empty:not(.hud-pulse-btn--active) .hud-pulse-btn__label,
-.hud-pulse-btn--empty:not(.hud-pulse-btn--active) .hud-pulse-btn__icon {
-  opacity: 0.72;
-  filter: grayscale(0.25);
-}
-
-.hud-pulse-btn:active {
-  transform: translateY(6px) scale(0.99);
-}
-
-.hud-pulse-btn:active::after {
-  box-shadow:
-    inset 0 2px 1px rgba(255, 235, 210, 0.15),
-    inset 0 -4px 10px rgba(0, 0, 0, 0.35),
-    0 3px 0 rgba(12, 6, 14, 0.55),
-    0 8px 16px rgba(0, 0, 0, 0.35);
-}
-
-.hud-pulse-btn--active:active {
-  filter: brightness(1.08);
-}
-
-.hud-pulse-btn:focus-visible {
-  outline: 3px solid rgba(255, 210, 140, 0.65);
-  outline-offset: 4px;
 }
 
 .hud-spawn {

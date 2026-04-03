@@ -3,33 +3,27 @@ import { Vector3 } from 'three'
 import type { PerspectiveCamera } from 'three'
 import { DepositFlightAnimator } from '../deposit/DepositFlightAnimator.ts'
 import {
-  createDoorPaymentCoinMesh,
-  disposeDoorPaymentCoinMesh,
-} from '../doors/doorPaymentMesh.ts'
-import { spawnDoorPayCoins } from '../doors/doorPayVfx.ts'
-import { DOOR_FLIGHT_DURATION_SEC } from '../doors/doorUnlockConfig.ts'
+  createUpgradeSpendCoinMesh,
+  disposeUpgradeSpendCoinMesh,
+} from './upgradePaymentCoinMesh.ts'
+import { UPGRADE_SPEND_FLIGHT_DURATION_SEC } from './upgradeConfig.ts'
 import type { Economy } from '../economy/Economy.ts'
 import type { PlayerController } from '../player/PlayerController.ts'
 import type { CarryStack } from '../stack/CarryStack.ts'
 import {
   INITIAL_STACK_CAPACITY,
   MAX_CAPACITY_UPGRADE_LEVELS,
-  MAX_PULSE_DRAIN_UPGRADE_LEVELS,
-  MAX_PULSE_FILL_UPGRADE_LEVELS,
   MAX_SPEED_UPGRADE_LEVELS,
   UPGRADE_PAD_HALF_DEPTH,
   UPGRADE_PAD_HALF_WIDTH,
   UPGRADE_PAD_HUB_OFFSET,
   UPGRADE_PAY_CHUNK,
   capacityUpgradeCost,
-  pulseChargeDrainPerSec,
-  pulseChargeFillPerSec,
-  pulseDrainUpgradeCost,
-  pulseFillUpgradeCost,
   speedForLevel,
   speedUpgradeCost,
 } from './upgradeConfig.ts'
 import type { PadLabelPayload } from './UpgradePadVisual.ts'
+import { spawnUpgradeSpendCoins } from './upgradeSpendVfx.ts'
 import {
   createUpgradePadWorldLabel,
   type UpgradePadWorldLabel,
@@ -38,22 +32,15 @@ import {
 const p = new Vector3()
 
 /**
- * Hub upgrade pads appear only after the matching door is paid open.
- * Door 0 is the hub south wall (unlocked at start); unlocking doors 1…4
- * reveals capacity, speed, pulse fill, and pulse drain in order.
+ * Hub upgrade pads appear only after the matching door is opened (room cleanliness).
+ * Door 0 is the hub passage (open at start); unlocking doors 1…2 in order reveals capacity and speed.
  */
 const UPGRADE_VISIBLE_AFTER_DOOR: Record<UpgradeSpendKind, number> = {
   capacity: 1,
   speed: 2,
-  pulseFreq: 3,
-  pulseDuration: 4,
 }
 
-export type UpgradeSpendKind =
-  | 'capacity'
-  | 'speed'
-  | 'pulseFreq'
-  | 'pulseDuration'
+export type UpgradeSpendKind = 'capacity' | 'speed'
 
 export type UpgradeZoneSystemOptions = {
   economy: Economy
@@ -72,29 +59,17 @@ export type UpgradeZoneSystemOptions = {
     setLabel: (p: PadLabelPayload) => void
     setOccupancy: (t: number) => void
   }
-  pulseFreqPad: {
-    root: Group
-    setLabel: (p: PadLabelPayload) => void
-    setOccupancy: (t: number) => void
-  }
-  pulseDurationPad: {
-    root: Group
-    setLabel: (p: PadLabelPayload) => void
-    setOccupancy: (t: number) => void
-  }
   onSpendVfx?: (
     kind: UpgradeSpendKind,
     cost: number,
     padWorld: Vector3,
   ) => void
-  /** Pad is interactable only when this door index is unlocked (see `UPGRADE_VISIBLE_AFTER_DOOR`). */
   isDoorUnlocked: (doorIndex: number) => boolean
-  /** Called when a full upgrade level completes (after paying the last chunk). */
   onUpgradeLevelUp?: (kind: UpgradeSpendKind, newLevel: number) => void
 }
 
 /**
- * Hub pads: stand on pad to pay toward the next level (door-style); floor shows $ left.
+ * Hub pads: stand on pad to pay toward the next level; floor shows $ left.
  */
 export class UpgradeZoneSystem {
   private readonly economy: Economy
@@ -105,8 +80,6 @@ export class UpgradeZoneSystem {
   private readonly hostEl: HTMLElement
   private readonly capacityPad: UpgradeZoneSystemOptions['capacityPad']
   private readonly speedPad: UpgradeZoneSystemOptions['speedPad']
-  private readonly pulseFreqPad: UpgradeZoneSystemOptions['pulseFreqPad']
-  private readonly pulseDurationPad: UpgradeZoneSystemOptions['pulseDurationPad']
   private readonly onSpendVfx?: UpgradeZoneSystemOptions['onSpendVfx']
   private readonly onUpgradeLevelUp?: UpgradeZoneSystemOptions['onUpgradeLevelUp']
   private readonly isDoorUnlocked: (doorIndex: number) => boolean
@@ -115,31 +88,21 @@ export class UpgradeZoneSystem {
 
   private capacityUpgradeLevel = 0
   private speedUpgradeLevel = 0
-  private pulseFillLevel = 0
-  private pulseDrainLevel = 0
 
   private paidCapacity = 0
   private paidSpeed = 0
-  private paidPulseFill = 0
-  private paidPulseDrain = 0
 
   private activeKind: UpgradeSpendKind | null = null
 
-  /** After a level completes, must step off the pad before paying toward the next level. */
   private blockUntilLeaveCapacity = false
   private blockUntilLeaveSpeed = false
-  private blockUntilLeavePulseFill = false
-  private blockUntilLeavePulseDrain = false
 
   private occCapacity = 0
   private occSpeed = 0
-  private occPulseFreq = 0
-  private occPulseDuration = 0
 
   private readonly padWorld: Record<UpgradeSpendKind, Vector3>
   private readonly floorLabels: UpgradePadWorldLabel[]
-  /** Avoid redrawing floor canvases every frame (huge CPU/GPU cost). */
-  private readonly lastFloorLabelSig = ['', '', '', '']
+  private readonly lastFloorLabelSig = ['', '']
 
   constructor(opts: UpgradeZoneSystemOptions) {
     this.economy = opts.economy
@@ -150,8 +113,6 @@ export class UpgradeZoneSystem {
     this.hostEl = opts.hostEl
     this.capacityPad = opts.capacityPad
     this.speedPad = opts.speedPad
-    this.pulseFreqPad = opts.pulseFreqPad
-    this.pulseDurationPad = opts.pulseDurationPad
     this.onSpendVfx = opts.onSpendVfx
     this.onUpgradeLevelUp = opts.onUpgradeLevelUp
     this.isDoorUnlocked = opts.isDoorUnlocked
@@ -160,8 +121,6 @@ export class UpgradeZoneSystem {
     this.padWorld = {
       capacity: new Vector3(-h, y, h),
       speed: new Vector3(h, y, h),
-      pulseFreq: new Vector3(-h, y, -h),
-      pulseDuration: new Vector3(h, y, -h),
     }
 
     const fullW = UPGRADE_PAD_HALF_WIDTH * 2
@@ -169,13 +128,9 @@ export class UpgradeZoneSystem {
     this.floorLabels = [
       createUpgradePadWorldLabel(fullW, fullD, 'CAPACITY'),
       createUpgradePadWorldLabel(fullW, fullD, 'SPEED'),
-      createUpgradePadWorldLabel(fullW, fullD, 'FILL'),
-      createUpgradePadWorldLabel(fullW, fullD, 'DRAIN'),
     ]
     this.capacityPad.root.add(this.floorLabels[0]!.mesh)
     this.speedPad.root.add(this.floorLabels[1]!.mesh)
-    this.pulseFreqPad.root.add(this.floorLabels[2]!.mesh)
-    this.pulseDurationPad.root.add(this.floorLabels[3]!.mesh)
 
     this.syncPadRootVisibility()
     this.refreshFloorLabels()
@@ -186,21 +141,10 @@ export class UpgradeZoneSystem {
     return this.isDoorUnlocked(door)
   }
 
-  /** Hide locked pads and clear their occupancy highlight (labels updated in `refreshFloorLabels`). */
   private syncPadRootVisibility(): void {
-    const kinds: UpgradeSpendKind[] = [
-      'capacity',
-      'speed',
-      'pulseFreq',
-      'pulseDuration',
-    ]
-    const pads = [
-      this.capacityPad,
-      this.speedPad,
-      this.pulseFreqPad,
-      this.pulseDurationPad,
-    ]
-    for (let i = 0; i < 4; i++) {
+    const kinds: UpgradeSpendKind[] = ['capacity', 'speed']
+    const pads = [this.capacityPad, this.speedPad]
+    for (let i = 0; i < 2; i++) {
       const k = kinds[i]!
       const vis = this.kindUnlocked(k)
       pads[i]!.root.visible = vis
@@ -219,14 +163,6 @@ export class UpgradeZoneSystem {
     )
   }
 
-  getChargeFillPerSec(): number {
-    return pulseChargeFillPerSec(this.pulseFillLevel)
-  }
-
-  getChargeDrainPerSec(): number {
-    return pulseChargeDrainPerSec(this.pulseDrainLevel)
-  }
-
   isPlayerInsideAnyPadZone(): boolean {
     return this.activeKind !== null
   }
@@ -243,21 +179,6 @@ export class UpgradeZoneSystem {
     }
     if (!this.inPadRect(p.x, p.z, this.padWorld.speed.x, this.padWorld.speed.z)) {
       this.blockUntilLeaveSpeed = false
-    }
-    if (
-      !this.inPadRect(p.x, p.z, this.padWorld.pulseFreq.x, this.padWorld.pulseFreq.z)
-    ) {
-      this.blockUntilLeavePulseFill = false
-    }
-    if (
-      !this.inPadRect(
-        p.x,
-        p.z,
-        this.padWorld.pulseDuration.x,
-        this.padWorld.pulseDuration.z,
-      )
-    ) {
-      this.blockUntilLeavePulseDrain = false
     }
 
     const occK = 1 - Math.exp(-8 * dt)
@@ -282,28 +203,6 @@ export class UpgradeZoneSystem {
     } else {
       this.speedPad.setOccupancy(0)
       this.occSpeed = 0
-    }
-    if (this.kindUnlocked('pulseFreq')) {
-      this.occPulseFreq = this.stepPadOcc(
-        this.pulseFreqPad,
-        this.padWorld.pulseFreq,
-        this.occPulseFreq,
-        occK,
-      )
-    } else {
-      this.pulseFreqPad.setOccupancy(0)
-      this.occPulseFreq = 0
-    }
-    if (this.kindUnlocked('pulseDuration')) {
-      this.occPulseDuration = this.stepPadOcc(
-        this.pulseDurationPad,
-        this.padWorld.pulseDuration,
-        this.occPulseDuration,
-        occK,
-      )
-    } else {
-      this.pulseDurationPad.setOccupancy(0)
-      this.occPulseDuration = 0
     }
 
     let bestKind: UpgradeSpendKind | null = null
@@ -330,16 +229,6 @@ export class UpgradeZoneSystem {
     if (this.kindUnlocked('speed')) {
       tryPad('speed', this.padWorld.speed.x, this.padWorld.speed.z)
     }
-    if (this.kindUnlocked('pulseFreq')) {
-      tryPad('pulseFreq', this.padWorld.pulseFreq.x, this.padWorld.pulseFreq.z)
-    }
-    if (this.kindUnlocked('pulseDuration')) {
-      tryPad(
-        'pulseDuration',
-        this.padWorld.pulseDuration.x,
-        this.padWorld.pulseDuration.z,
-      )
-    }
     this.activeKind = bestKind
 
     if (this.activeKind) {
@@ -349,13 +238,8 @@ export class UpgradeZoneSystem {
   }
 
   private refreshFloorLabels(): void {
-    const kinds: UpgradeSpendKind[] = [
-      'capacity',
-      'speed',
-      'pulseFreq',
-      'pulseDuration',
-    ]
-    for (let i = 0; i < 4; i++) {
+    const kinds: UpgradeSpendKind[] = ['capacity', 'speed']
+    for (let i = 0; i < 2; i++) {
       const k = kinds[i]!
       const lbl = this.floorLabels[i]!
       const vis = this.kindUnlocked(k)
@@ -392,20 +276,6 @@ export class UpgradeZoneSystem {
         const cost = speedUpgradeCost(this.speedUpgradeLevel)
         return { paid: this.paidSpeed, cost, maxed: false }
       }
-      case 'pulseFreq': {
-        if (this.pulseFillLevel >= MAX_PULSE_FILL_UPGRADE_LEVELS) {
-          return { paid: 0, cost: 0, maxed: true }
-        }
-        const cost = pulseFillUpgradeCost(this.pulseFillLevel)
-        return { paid: this.paidPulseFill, cost, maxed: false }
-      }
-      case 'pulseDuration': {
-        if (this.pulseDrainLevel >= MAX_PULSE_DRAIN_UPGRADE_LEVELS) {
-          return { paid: 0, cost: 0, maxed: true }
-        }
-        const cost = pulseDrainUpgradeCost(this.pulseDrainLevel)
-        return { paid: this.paidPulseDrain, cost, maxed: false }
-      }
     }
   }
 
@@ -420,12 +290,6 @@ export class UpgradeZoneSystem {
         return
       case 'speed':
         this.paySpeed()
-        return
-      case 'pulseFreq':
-        this.payPulseFill()
-        return
-      case 'pulseDuration':
-        this.payPulseDrain()
         return
     }
   }
@@ -474,55 +338,15 @@ export class UpgradeZoneSystem {
     }
   }
 
-  private payPulseFill(): void {
-    if (this.blockUntilLeavePulseFill) return
-    if (this.pulseFillLevel >= MAX_PULSE_FILL_UPGRADE_LEVELS) return
-    const cost = pulseFillUpgradeCost(this.pulseFillLevel)
-    const need = cost - this.paidPulseFill
-    if (need <= 0) return
-    const chunk = Math.min(UPGRADE_PAY_CHUNK, need, this.economy.money)
-    if (chunk <= 0) return
-    if (!this.economy.trySpend(chunk)) return
-    this.paidPulseFill += chunk
-    this.spawnPayFx('pulseFreq', chunk, this.padWorld.pulseFreq)
-    if (this.paidPulseFill >= cost) {
-      this.pulseFillLevel += 1
-      this.paidPulseFill = 0
-      this.blockUntilLeavePulseFill = true
-      this.onSpendVfx?.('pulseFreq', cost, this.padWorld.pulseFreq.clone())
-      this.onUpgradeLevelUp?.('pulseFreq', this.pulseFillLevel)
-    }
-  }
-
-  private payPulseDrain(): void {
-    if (this.blockUntilLeavePulseDrain) return
-    if (this.pulseDrainLevel >= MAX_PULSE_DRAIN_UPGRADE_LEVELS) return
-    const cost = pulseDrainUpgradeCost(this.pulseDrainLevel)
-    const need = cost - this.paidPulseDrain
-    if (need <= 0) return
-    const chunk = Math.min(UPGRADE_PAY_CHUNK, need, this.economy.money)
-    if (chunk <= 0) return
-    if (!this.economy.trySpend(chunk)) return
-    this.paidPulseDrain += chunk
-    this.spawnPayFx('pulseDuration', chunk, this.padWorld.pulseDuration)
-    if (this.paidPulseDrain >= cost) {
-      this.pulseDrainLevel += 1
-      this.paidPulseDrain = 0
-      this.blockUntilLeavePulseDrain = true
-      this.onSpendVfx?.('pulseDuration', cost, this.padWorld.pulseDuration.clone())
-      this.onUpgradeLevelUp?.('pulseDuration', this.pulseDrainLevel)
-    }
-  }
-
   private spawnPayFx(
     _kind: UpgradeSpendKind,
     chunk: number,
     padCenter: Vector3,
   ): void {
     const endHud = new Vector3(padCenter.x, padCenter.y + 0.52, padCenter.z)
-    spawnDoorPayCoins(this.hostEl, this.camera, chunk, endHud)
+    spawnUpgradeSpendCoins(this.hostEl, this.camera, chunk, endHud)
 
-    const coin = createDoorPaymentCoinMesh()
+    const coin = createUpgradeSpendCoinMesh()
     this.player.getPosition(p)
     const start = new Vector3(p.x, 0.38, p.z)
     coin.position.copy(start)
@@ -534,9 +358,9 @@ export class UpgradeZoneSystem {
       coin,
       endFlight,
       (m) => {
-        disposeDoorPaymentCoinMesh(m as Mesh)
+        disposeUpgradeSpendCoinMesh(m as Mesh)
       },
-      DOOR_FLIGHT_DURATION_SEC,
+      UPGRADE_SPEND_FLIGHT_DURATION_SEC,
       null,
     )
   }
