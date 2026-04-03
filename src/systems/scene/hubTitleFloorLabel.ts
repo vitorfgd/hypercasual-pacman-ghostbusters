@@ -98,7 +98,7 @@ export function createHubTitleFloorLabel(): HubTitleFloorLabelHandle {
     drawLine('WELCOME TO', yWelcome, sizeWelcome)
     drawLine('HAUNTED', yHaunted, sizeMain)
     drawLine('HAUL', yHaul, sizeMain)
-  }, 0.72)
+  }, 0.3)
   title.mesh.name = 'hubTitleFloorLabelTitleMesh'
   title.mesh.position.set(0, title.mesh.position.y, 0)
   root.add(title.mesh)

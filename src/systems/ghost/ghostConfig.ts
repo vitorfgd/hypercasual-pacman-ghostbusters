@@ -51,8 +51,11 @@ export type GhostSpawnSpec = {
   roomIndex: number
 }
 
-/** Ghost count per north-chain room (ROOM_1 … ROOM_5). */
-export const GHOSTS_PER_ROOM = [1, 1, 1, 0, 1] as const
+/**
+ * Ghost count per north-chain room (ROOM_1 … ROOM_5).
+ * Ramps up with depth so later areas feel more dangerous.
+ */
+export const GHOSTS_PER_ROOM = [1, 1, 2, 2, 3] as const
 
 /** When a room is cleared, ghosts for that room shrink away and are removed (no respawn). */
 export const GHOST_ROOM_PURGE_SHRINK_SEC = 0.55
@@ -71,6 +74,15 @@ export function randomSpawnChaseGraceSec(): number {
       (GHOST_SPAWN_CHASE_GRACE_MAX - GHOST_SPAWN_CHASE_GRACE_MIN)
   )
 }
+
+/**
+ * Chance that collecting **haunted** clutter spawns a ghost (relic logic is unchanged).
+ * Tuned with `clutterPrefill` haunted density so extra spawns stay noticeable but not spammy.
+ */
+export const HAUNTED_PICKUP_GHOST_CHANCE = 0.52
+
+/** Stop spawning new ghosts from haunted pickups once this many are active (chase/wander). */
+export const MAX_ACTIVE_GHOSTS = 14
 
 /** Mesh scale multiplier at ROOM_1 vs ROOM_5 (applied on top of `GHOST_VISUAL_SCALE`). */
 const GHOST_ROOM_VISUAL_SCALE_MIN = 0.82
@@ -110,7 +122,10 @@ const ROOM_CHAIN: readonly RoomId[] = [
 const SPAWN_OFFSETS: readonly (readonly { ox: number; oz: number }[])[] = [
   [{ ox: -0.35, oz: 0.35 }],
   [{ ox: 0.38, oz: -0.28 }],
-  [{ ox: -0.48, oz: 0.22 }],
+  [
+    { ox: -0.48, oz: 0.22 },
+    { ox: 0.42, oz: -0.32 },
+  ],
   [
     { ox: -0.44, oz: 0.26 },
     { ox: 0.4, oz: -0.36 },
@@ -163,14 +178,14 @@ export function buildDefaultGhostSpawns(): GhostSpawnSpec[] {
     const bounds = ROOMS[roomId].bounds
     const c = roomCenter(roomId)
     for (let i = 0; i < count; i++) {
-      const o = offs[i]!
+      const o = offs[i % offs.length]!
       const rawX = c.x + o.ox
       const rawZ = c.z + o.oz
       const p = clampSpawnToRoomBounds(rawX, rawZ, bounds, margin)
       out.push({
         x: p.x,
         z: p.z,
-        color: colors[i]!,
+        color: colors[i % colors.length]!,
         roomIndex: ri + 1,
       })
     }
@@ -178,7 +193,7 @@ export function buildDefaultGhostSpawns(): GhostSpawnSpec[] {
   return out
 }
 
-/** Spawns across the chain (ROOM_4 empty here); larger & faster toward ROOM_5. */
+/** Spawns across the chain (counts from `GHOSTS_PER_ROOM`); larger & faster toward ROOM_5. */
 export const DEFAULT_GHOST_SPAWNS: readonly GhostSpawnSpec[] =
   buildDefaultGhostSpawns()
 
@@ -217,12 +232,15 @@ export const GHOST_DEPOSIT_EXCLUSION_PADDING = 0.14
  */
 export const GHOST_MELEE_REARM_PADDING = 0.42
 
-/** Fraction of carried stack lost on hit: uniform random in [min, max] */
-export const GHOST_HIT_LOSS_MIN = 0.3
-export const GHOST_HIT_LOSS_MAX = 0.5
+/** Fraction of carried stack lost on hit: uniform random in [min, max] (then clamp ≥1 item). */
+export const GHOST_HIT_LOSS_MIN = 0.2
+export const GHOST_HIT_LOSS_MAX = 0.35
 
 /** Seconds of invulnerability after a hit (ghost cannot register another touch) */
 export const GHOST_HIT_INVULN_SEC = 1.55
+
+/** Brief ground-pickup lock so burst items scatter before re-collection. */
+export const GHOST_HIT_PICKUP_LOCK_SEC = 0.32
 
 /** Initial knockback speed away from ghost (world units/s, decays in PlayerController) */
 export const GHOST_HIT_KNOCKBACK_SPEED = 7.8
@@ -234,28 +252,22 @@ export const GHOST_HIT_KNOCKBACK_DECAY = 17
 export const GHOST_HIT_BURST_MAX_PARTICLES = 14
 
 /** Stronger burst cap when ghost lands a hit (visual juice). */
-export const GHOST_HIT_BURST_MAX_PARTICLES_INTENSE = 22
+export const GHOST_HIT_BURST_MAX_PARTICLES_INTENSE = 34
 
 /** After a hit, vacuum (magnet pull) is disabled for this many seconds. */
-export const GHOST_HIT_VACUUM_DISABLE_SEC = 0.5
-
-/**
- * Chance each popped item becomes a recoverable world pickup (rest are lost in the blast).
- * Order is still LIFO from `popManyFromTop`; per-item roll is independent.
- */
-export const GHOST_HIT_DROP_RECOVER_CHANCE = 0.58
+export const GHOST_HIT_VACUUM_DISABLE_SEC = 0.42
 
 /** Ghost-hit scatter: min ring radius (world units) from player */
-export const GHOST_HIT_SCATTER_R_MIN = 0.55
+export const GHOST_HIT_SCATTER_R_MIN = 0.45
 /** Ghost-hit scatter: extra random radius on top of min */
-export const GHOST_HIT_SCATTER_R_SPREAD = 2.45
+export const GHOST_HIT_SCATTER_R_SPREAD = 2.85
 
 /** Recoverable kick — horizontal burst speed (world units/s) */
-export const GHOST_HIT_DROP_KICK_H_MIN = 4.8
-export const GHOST_HIT_DROP_KICK_H_SPREAD = 5.2
+export const GHOST_HIT_DROP_KICK_H_MIN = 5.2
+export const GHOST_HIT_DROP_KICK_H_SPREAD = 6.4
 /** Recoverable kick — upward pop */
-export const GHOST_HIT_DROP_POP_VY_MIN = 5.4
-export const GHOST_HIT_DROP_POP_VY_SPREAD = 4.4
+export const GHOST_HIT_DROP_POP_VY_MIN = 5.8
+export const GHOST_HIT_DROP_POP_VY_SPREAD = 5.2
 
 /** After landing a hit: push ghost this far from player (XZ) so bodies separate */
 export const GHOST_POST_HIT_SEPARATION = 0.42

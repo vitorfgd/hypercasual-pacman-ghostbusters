@@ -49,7 +49,9 @@ export function getGatePrototype(): Group | null {
 /** Clones share prototype materials — do not dispose shared geometry/materials on the clone. */
 export function tryCloneGateMesh(): Group | null {
   if (!prototype) return null
-  return cloneSkeletonSafe(prototype) as Group
+  const root = cloneSkeletonSafe(prototype) as Group
+  root.userData.gateGltf = true
+  return root
 }
 
 export function disposeGateGltfClone(root: Object3D): void {

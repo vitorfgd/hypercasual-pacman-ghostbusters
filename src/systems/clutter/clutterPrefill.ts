@@ -135,8 +135,8 @@ export function precomputeAllClutterPlacements(
         tryFindClutterPosition(roomId, roomSystem, worldCollision, random)
       if (!pos) continue
       const variant = Math.floor(random() * 7) as ClutterVariant
-      const haunted =
-        i % 7 === 1 || i % 7 === 4 || i % 7 === 6 || random() < 0.14
+      /** ~1–2 haunted pieces per room on average; ghost spawn is further throttled in Game. */
+      const haunted = random() < 0.092
       out.push({
         roomId,
         index: i,

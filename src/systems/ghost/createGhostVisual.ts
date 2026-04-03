@@ -95,7 +95,8 @@ function applyBodyTint(model: Group, bodyColor: number): void {
       for (const m of mats) {
         if (tintableMaterial(m)) {
           m.color.multiplyScalar(0.42).add(tint.clone().multiplyScalar(0.58))
-          m.emissive.lerp(tint, 0.22)
+          m.emissive.lerp(tint, 0.34)
+          m.emissiveIntensity = Math.max(m.emissiveIntensity ?? 0, 0.18)
         }
       }
     }
@@ -235,7 +236,7 @@ export function createProceduralGhostVisual(
   const bodyMat = new MeshStandardMaterial({
     color: baseColor,
     emissive: baseColor.clone(),
-    emissiveIntensity: 0.48,
+    emissiveIntensity: 0.58,
     roughness: 0.34,
     metalness: 0.08,
   })
@@ -251,7 +252,7 @@ export function createProceduralGhostVisual(
   const eyeWhiteMat = new MeshStandardMaterial({
     color: 0xffffff,
     emissive: 0xffffff,
-    emissiveIntensity: 0.22,
+    emissiveIntensity: 0.32,
     roughness: 0.32,
     metalness: 0,
   })

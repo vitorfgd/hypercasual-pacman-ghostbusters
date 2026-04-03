@@ -78,6 +78,15 @@ export class GhostSystem {
     )
   }
 
+  /** Ghosts currently in play (not eaten, not mid–room-clear purge). */
+  getActiveGhostCount(): number {
+    let n = 0
+    for (const g of this.ghosts) {
+      if (!g.isEaten() && !g.isRoomClearPurging()) n++
+    }
+    return n
+  }
+
   /** Shrink away and remove all ghosts tied to `ROOM_{roomIndex}` (1…5). */
   purgeGhostsForRoom(roomIndex: number): void {
     for (const g of this.ghosts) {
@@ -87,7 +96,12 @@ export class GhostSystem {
     }
   }
 
-  update(dt: number, playerPos: Vector3, playerCarryingRelic: boolean): void {
+  update(
+    dt: number,
+    playerPos: Vector3,
+    playerCarryingRelic: boolean,
+    gateCinematicRoamOnly = false,
+  ): void {
     this.ghostAnimTime += dt
     const frightened = false
     const hub = ROOMS.SAFE_CENTER.bounds
@@ -104,6 +118,7 @@ export class GhostSystem {
         this.ghostAnimTime,
         playerInSafeCenter,
         playerCarryingRelic,
+        gateCinematicRoamOnly,
       )
       if (!g.isRoomClearPurging()) {
         g.updateVulnerableAppearance(false, this.ghostAnimTime)
@@ -425,6 +440,7 @@ class Ghost {
     timeSec: number,
     playerInSafeCenter: boolean,
     relicCarried: boolean,
+    cinematicRoamOnly: boolean,
   ): void {
     if (this.roomClearPurgeRemain > 0) {
       this.roomClearPurgeRemain -= dt
@@ -484,6 +500,12 @@ class Ghost {
       this.spawnChaseGraceRemain -= dt
     }
     const canHuntPlayer = this.spawnChaseGraceRemain <= 0
+    const allowChase = canHuntPlayer && !cinematicRoamOnly
+    if (cinematicRoamOnly && this.state === 'chase') {
+      this.state = 'wander'
+      this.pickWanderTimer()
+      this.wanderAngle = Math.random() * Math.PI * 2
+    }
 
     let tx = 0
     let tz = 0
@@ -516,7 +538,7 @@ class Ghost {
       tx = Math.cos(this.wanderAngle)
       tz = Math.sin(this.wanderAngle)
       targetSpeed = GHOST_WANDER_SPEED
-    } else if (relicCarried && canHuntPlayer) {
+    } else if (relicCarried && allowChase) {
       this.state = 'chase'
       if (dist > 1e-4) {
         const inv = 1 / dist
@@ -528,7 +550,7 @@ class Ghost {
         tz = 0
         targetSpeed = 0
       }
-    } else if (relicCarried && !canHuntPlayer) {
+    } else if (relicCarried && !allowChase) {
       if (this.state === 'chase') {
         this.state = 'wander'
         this.pickWanderTimer()
@@ -549,7 +571,7 @@ class Ghost {
       if (this.state === 'wander') {
         if (
           this.chaseLockout <= 0 &&
-          canHuntPlayer &&
+          allowChase &&
           dist * dist <= detectR2
         ) {
           this.state = 'chase'

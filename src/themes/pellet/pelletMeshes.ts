@@ -201,6 +201,14 @@ function gemPalette(c: GemColor): { core: Color; emissive: Color } {
 }
 
 /** Faceted gem — distinct from wisps (spheres) and relics (gold). */
+/** Subtle emissive so props stay readable under moon + ambient (not mud-brown). */
+function clutterEmissive(color: Color): { emissive: Color; emissiveIntensity: number } {
+  return {
+    emissive: color.clone().multiplyScalar(0.28),
+    emissiveIntensity: 0.34,
+  }
+}
+
 function clutterMat(
   variant: ClutterVariant,
 ): { color: Color; roughness: number; metalness: number } {
@@ -262,6 +270,7 @@ export function createClutterPickupMesh(clutterVariant: ClutterVariant): Group {
   root.userData.clutterVariant = clutterVariant
   root.userData.clutterBaseScale = 1
   const { color, roughness, metalness } = clutterMat(clutterVariant)
+  const em = clutterEmissive(color)
 
   if (clutterVariant === 0) {
     const geo = new BoxGeometry(0.44, 0.028, 0.34)
@@ -269,6 +278,7 @@ export function createClutterPickupMesh(clutterVariant: ClutterVariant): Group {
       color,
       roughness,
       metalness,
+      ...em,
     })
     const paper = new Mesh(geo, mat)
     paper.position.y = 0.014
@@ -283,6 +293,7 @@ export function createClutterPickupMesh(clutterVariant: ClutterVariant): Group {
       color,
       roughness,
       metalness,
+      ...em,
     })
     const cube = new Mesh(geo, mat)
     cube.position.y = s * 0.5
@@ -296,6 +307,7 @@ export function createClutterPickupMesh(clutterVariant: ClutterVariant): Group {
       color,
       roughness,
       metalness,
+      ...em,
     })
     const chunk = new Mesh(geo, mat)
     chunk.position.y = 0.07
@@ -310,6 +322,7 @@ export function createClutterPickupMesh(clutterVariant: ClutterVariant): Group {
       color,
       roughness,
       metalness,
+      ...em,
     })
     const chunk = new Mesh(geo, mat)
     chunk.position.y = 0.07
@@ -350,6 +363,7 @@ export function createClutterStackMesh(clutterVariant: ClutterVariant): Object3D
 
   const d = clutterStackDim(clutterVariant)
   const { color, roughness, metalness } = clutterMat(clutterVariant)
+  const em = clutterEmissive(color)
   let geo: BoxGeometry
   if (clutterVariant === 0) {
     geo = new BoxGeometry(d * 3.2, d * 0.45, d * 2.4)
@@ -360,7 +374,7 @@ export function createClutterStackMesh(clutterVariant: ClutterVariant): Object3D
   }
   const mesh = new Mesh(
     geo,
-    new MeshStandardMaterial({ color, roughness, metalness }),
+    new MeshStandardMaterial({ color, roughness, metalness, ...em }),
   )
   mesh.castShadow = true
   mesh.receiveShadow = true

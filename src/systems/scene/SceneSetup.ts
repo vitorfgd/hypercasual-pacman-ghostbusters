@@ -1,15 +1,13 @@
-import { AmbientLight, CircleGeometry, Color, Group, Mesh, MeshStandardMaterial, Object3D, Scene } from 'three'
+import { CircleGeometry, Group, Mesh, MeshStandardMaterial, Object3D, Scene } from 'three'
 import type { Mesh as MeshType } from 'three'
 import type { PlayerGltfTemplate } from '../player/playerGltfAsset.ts'
 import { PlayerCharacterVisual } from '../player/PlayerCharacterVisual.ts'
-import { createUpgradePad } from '../upgrades/UpgradePadVisual.ts'
-import type { PadLabelPayload } from '../upgrades/UpgradePadVisual.ts'
-import { UPGRADE_PAD_HUB_OFFSET } from '../upgrades/upgradeConfig.ts'
 import { createMansionGround } from './mansionEnvironment.ts'
 import {
   createHubTitleFloorLabel,
   type HubTitleFloorLabelHandle,
 } from './hubTitleFloorLabel.ts'
+import { setupReadableSceneLighting } from './sceneLighting.ts'
 
 export type SceneContents = {
   scene: Scene
@@ -32,21 +30,6 @@ export type SceneContents = {
   depositUnderglowMesh: MeshType
   /** Character (GLB or procedural + stack anchor) */
   playerCharacter: PlayerCharacterVisual
-  /** Hub-corner upgrade pads */
-  upgradeAreaRoot: Group
-  /** World upgrade pads */
-  upgradePads: {
-    capacity: {
-      root: Group
-      setLabel: (p: PadLabelPayload) => void
-      setOccupancy: (t: number) => void
-    }
-    speed: {
-      root: Group
-      setLabel: (p: PadLabelPayload) => void
-      setOccupancy: (t: number) => void
-    }
-  }
   hubTitleFloorLabel: HubTitleFloorLabelHandle
 }
 
@@ -54,10 +37,6 @@ export function createScene(
   playerGltfTemplate: PlayerGltfTemplate | null = null,
 ): SceneContents {
   const scene = new Scene()
-  scene.background = new Color(0x2a2e44)
-  /** Single flat fill — no directional/point lights or shadows (see `createRenderer`). */
-  scene.add(new AmbientLight(0xffffff, 1.0))
-
   const ground = createMansionGround()
   scene.add(ground)
 
@@ -117,23 +96,10 @@ export function createScene(
   depositZoneMesh.position.y = 0.022
   depositRoot.add(depositZoneMesh)
 
-  /** Two pads around hub center (capacity + speed). */
-  const upgradeAreaRoot = new Group()
-  upgradeAreaRoot.name = 'upgradeArea'
-  const hc = UPGRADE_PAD_HUB_OFFSET
-
-  const capacityPad = createUpgradePad('CAPACITY', 0x3a2c42, 0x8b7358)
-  capacityPad.root.position.set(-hc, 0.02, hc)
-  upgradeAreaRoot.add(capacityPad.root)
-
-  const speedPad = createUpgradePad('SPEED', 0x342838, 0x9a8060)
-  speedPad.root.position.set(hc, 0.02, hc)
-  upgradeAreaRoot.add(speedPad.root)
-
-  scene.add(upgradeAreaRoot)
-
   const hubTitleFloorLabel = createHubTitleFloorLabel()
   scene.add(hubTitleFloorLabel.root)
+
+  setupReadableSceneLighting(scene)
 
   return {
     scene,
@@ -146,11 +112,6 @@ export function createScene(
     depositZoneMesh,
     depositUnderglowMesh: depositUnderglow,
     playerCharacter: character,
-    upgradeAreaRoot,
-    upgradePads: {
-      capacity: capacityPad,
-      speed: speedPad,
-    },
     hubTitleFloorLabel,
   }
 }

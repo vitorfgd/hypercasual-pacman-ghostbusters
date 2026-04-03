@@ -8,6 +8,7 @@ import {
 import { MANSION_WALL_COLLIDERS } from '../world/mansionWalls.ts'
 import { MANSION_WORLD_HALF } from '../world/mansionGeometry.ts'
 import { CORRIDOR_BOUNDS, ROOMS, type RoomId } from '../world/mansionRoomData.ts'
+import { addCemeteryGroundDecor } from './groundDecor.ts'
 
 const WALL_HEIGHT = 2.35
 const WALL_Y = WALL_HEIGHT * 0.5
@@ -153,6 +154,7 @@ export function createMansionGround(): Group {
 
   addWallMeshes(root)
   addEdgeVignette(root)
+  addCemeteryGroundDecor(root)
 
   return root
 }

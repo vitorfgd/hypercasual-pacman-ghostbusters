@@ -118,6 +118,45 @@ export function spawnRelicCollectBurst(
   return out
 }
 
+/** Green ectoplasm flecks at the hit point (paired with stack pellet burst). */
+export function spawnGhostHitEctoplasmBurst(
+  parent: Group,
+  origin: Vector3,
+): GhostHitBurstParticle[] {
+  const n = 18
+  const out: GhostHitBurstParticle[] = []
+  for (let i = 0; i < n; i++) {
+    const mesh = new Mesh(
+      new SphereGeometry(0.14 + Math.random() * 0.1, 8, 6),
+      new MeshStandardMaterial({
+        color: new Color(0x66ffcc),
+        emissive: new Color(0x22cc88),
+        emissiveIntensity: 2.1,
+        roughness: 0.35,
+        metalness: 0.05,
+        transparent: true,
+        opacity: 0.92,
+      }),
+    )
+    mesh.castShadow = false
+    mesh.receiveShadow = false
+    mesh.renderOrder = 11
+    mesh.position.copy(origin)
+    mesh.position.y += 0.35 + Math.random() * 0.55
+    const ang = Math.random() * Math.PI * 2
+    const sp = 4.2 + Math.random() * 7.8
+    parent.add(mesh)
+    out.push({
+      mesh,
+      vx: Math.cos(ang) * sp,
+      vz: Math.sin(ang) * sp,
+      vy: 3.8 + Math.random() * 5.2,
+      t: 0,
+    })
+  }
+  return out
+}
+
 export function spawnGhostHitPelletBurst(
   parent: Group,
   origin: Vector3,

@@ -20,11 +20,13 @@ import {
 import { STACK_BOUNCE_DECAY } from '../../juice/juiceConfig.ts'
 
 const SCALE_SMOOTH = 11
-const BAG_Y_MIN = 0.84
-const BAG_Y_MAX = 1.48
-const BAG_XZ_MIN = 0.88
-const BAG_XZ_MAX = 1.22
-const BOUNCE_SCALE_AMP = 0.09
+/** Empty → full multipliers (wider spread so fill growth reads clearly on the back). */
+const BAG_Y_MIN = 0.78
+const BAG_Y_MAX = 1.62
+const BAG_XZ_MIN = 0.82
+const BAG_XZ_MAX = 1.34
+const BOUNCE_SCALE_AMP = 0.125
+const HIT_REACT_DECAY = 13.5
 
 /**
  * Single carry bag on `stackAnchor` (player back). `CarryStack` data unchanged;
@@ -37,6 +39,8 @@ export class StackVisual {
   private fitScale = 1
   private prevIds: string[] = []
   private bounce = 0
+  /** Ghost hit: brief squash / bulge, decays smoothly (0…1). */
+  private hitReact = 0
   private targetFill = 0
   private displayFill = 0
   private readonly curMul = new Vector3(1, 1, 1)
@@ -57,6 +61,11 @@ export class StackVisual {
     scene.attach(b)
     this.bag = null
     return b
+  }
+
+  /** Call when a ghost hit rips items from the bag (after stack data updates). */
+  triggerGhostHitReaction(): void {
+    this.hitReact = 1
   }
 
   sync(items: readonly GameItem[], maxCapacity: number): void {
@@ -103,6 +112,12 @@ export class StackVisual {
       this.bounce *= Math.exp(-STACK_BOUNCE_DECAY * dt)
     } else {
       this.bounce = 0
+    }
+
+    if (this.hitReact > 0.002) {
+      this.hitReact *= Math.exp(-HIT_REACT_DECAY * dt)
+    } else {
+      this.hitReact = 0
     }
 
     const bounceMul = 1 + BOUNCE_SCALE_AMP * this.bounce
@@ -160,7 +175,14 @@ export class StackVisual {
 
   private applyBagScale(): void {
     if (!this.bag) return
-    this.bag.scale.set(this.curMul.x, this.curMul.y, this.curMul.z)
+    const h = this.hitReact
+    const ySquash = 1 - 0.34 * h
+    const xzBulge = 1 + 0.26 * h
+    this.bag.scale.set(
+      this.curMul.x * xzBulge,
+      this.curMul.y * ySquash,
+      this.curMul.z * xzBulge,
+    )
   }
 
   private createProceduralBag(): Group {

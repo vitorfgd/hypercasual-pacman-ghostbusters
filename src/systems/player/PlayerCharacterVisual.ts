@@ -31,7 +31,7 @@ const PLAYER_GLB_Y_OFFSET = 0
  * Stack anchor behind the character. In Three.js, local forward is −Z, so “behind” is +Z.
  * (Negative Z was in front of the rig — pile read as floating ahead.)
  */
-const STACK_ANCHOR_LOCAL = { x: 0, y: 1.5, z: 3.65 }
+const STACK_ANCHOR_LOCAL = { x: 0, y: 5, z: 3.5 }
 
 export type PlayerCharacterAnimState = {
   /** Seconds, for idle sine */

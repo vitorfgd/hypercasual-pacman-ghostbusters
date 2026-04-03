@@ -34,7 +34,8 @@ export class CameraRig {
     this.smooth = smooth
   }
 
-  update(dt: number): void {
+  /** Instant follow target (same math as `update`, without smoothing) — for blending back from cinematics. */
+  getDesiredCameraPosition(out: Vector3): void {
     this.target.getWorldPosition(playerPos)
     const fill = Math.max(0, Math.min(1, this.getStackFillRatio()))
     let zoom = fill * CAMERA_STACK_ZOOM_MAX
@@ -47,9 +48,14 @@ export class CameraRig {
       CAMERA_OFFSET_BASE.y + zoom * CAMERA_STACK_ZOOM_Y,
       CAMERA_OFFSET_BASE.z + zoom * CAMERA_STACK_ZOOM_Z,
     )
-    desired.copy(playerPos).add(offsetWithZoom)
+    out.copy(playerPos).add(offsetWithZoom)
+  }
+
+  update(dt: number): void {
+    this.getDesiredCameraPosition(desired)
     const k = 1 - Math.exp(-this.smooth * dt)
     this.camera.position.lerp(desired, k)
+    this.target.getWorldPosition(playerPos)
     this.camera.lookAt(playerPos)
   }
 }

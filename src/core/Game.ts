@@ -34,6 +34,7 @@ import { createCamera } from '../systems/scene/createCamera.ts'
 import { createRenderer } from '../systems/scene/createRenderer.ts'
 import { createScene } from '../systems/scene/SceneSetup.ts'
 import type { HubTitleFloorLabelHandle } from '../systems/scene/hubTitleFloorLabel.ts'
+import { spawnRoomClearedFloorLabel } from '../systems/scene/roomClearedFloorLabel.ts'
 import { subscribeViewportResize } from '../systems/scene/resize.ts'
 import { CarryStack } from '../systems/stack/CarryStack.ts'
 import { disposeCarryBagClone } from '../systems/stack/bagGltfAsset.ts'
@@ -44,26 +45,19 @@ import {
   createWispItem,
 } from '../themes/wisp/itemFactory.ts'
 import type { GameItem } from './types/GameItem.ts'
-import {
-  UpgradeZoneSystem,
-  type UpgradeSpendKind,
-} from '../systems/upgrades/UpgradeZoneSystem.ts'
 import { INITIAL_STACK_CAPACITY } from '../systems/upgrades/upgradeConfig.ts'
-import { spawnUpgradeSpendCoins } from '../systems/upgrades/upgradeSpendVfx.ts'
+import { applyUpgradeForRoomClear } from '../systems/upgrades/roomClearUpgrade.ts'
 import {
   GHOST_COLLISION_RADIUS,
-  GHOST_HIT_DROP_RECOVER_CHANCE,
-  GHOST_HIT_DROP_KICK_H_MIN,
-  GHOST_HIT_DROP_KICK_H_SPREAD,
-  GHOST_HIT_DROP_POP_VY_MIN,
-  GHOST_HIT_DROP_POP_VY_SPREAD,
   GHOST_HIT_INVULN_SEC,
   GHOST_HIT_LOSS_MAX,
   GHOST_HIT_LOSS_MIN,
-  GHOST_HIT_SCATTER_R_MIN,
-  GHOST_HIT_SCATTER_R_SPREAD,
+  GHOST_HIT_PICKUP_LOCK_SEC,
   GHOST_HIT_VACUUM_DISABLE_SEC,
+  DEFAULT_GHOST_SPAWNS,
   ghostRoomVisualMul,
+  HAUNTED_PICKUP_GHOST_CHANCE,
+  MAX_ACTIVE_GHOSTS,
   pickGhostColorForRoomIndex,
 } from '../systems/ghost/ghostConfig.ts'
 import {
@@ -79,7 +73,13 @@ import { GhostSystem } from '../systems/ghost/GhostSystem.ts'
 import type { AreaId } from '../systems/world/RoomSystem.ts'
 import { RoomSystem } from '../systems/world/RoomSystem.ts'
 import { getDoorBlockerZ, roomIndexFromId } from '../systems/doors/doorLayout.ts'
-import { GATE_OPEN_TOTAL_SEC } from '../systems/doors/doorUnlockConfig.ts'
+import {
+  GATE_CINE_HOLD_AFTER_OPEN_SEC,
+  GATE_CINE_RETURN_TO_PLAYER_SEC,
+  GATE_CINE_TOTAL_SEC,
+  GATE_CINE_ZOOM_OUT_SEC,
+  GATE_OPEN_TOTAL_SEC,
+} from '../systems/doors/doorUnlockConfig.ts'
 import { RoomCleanlinessSystem } from '../systems/world/RoomCleanlinessSystem.ts'
 import type { RoomId } from '../systems/world/mansionRoomData.ts'
 import { WorldCollision } from '../systems/world/WorldCollision.ts'
@@ -101,10 +101,16 @@ import {
   PERFECT_OVERLOAD_BONUS_MULT,
 } from '../systems/overload/overloadDropConfig.ts'
 import { MoneyHud } from '../juice/MoneyHud.ts'
-import { spawnFloatingHudText } from '../juice/floatingHud.ts'
+import {
+  spawnBagFullBanner,
+  spawnFloatingHudText,
+  spawnRoomClearedBanner,
+} from '../juice/floatingHud.ts'
 import { playJuiceSound } from '../juice/juiceSound.ts'
+import { spawnGhostHitDroppedItems } from '../juice/ghostHitBagBurst.ts'
 import {
   disposeAllGhostHitBursts,
+  spawnGhostHitEctoplasmBurst,
   spawnGhostHitPelletBurst,
   spawnRelicCollectBurst,
   updateGhostHitBursts,
@@ -138,13 +144,17 @@ function roomCleanHudLabel(roomId: RoomId): string {
   return m ? `Room ${m[1]}` : roomId
 }
 
-function upgradeLevelUpBanner(kind: UpgradeSpendKind, newLevel: number): string {
+function upgradeLevelUpBanner(kind: 'capacity' | 'speed', newLevel: number): string {
   switch (kind) {
     case 'capacity':
       return `Stack capacity — level ${newLevel}!`
     case 'speed':
       return `Speed — level ${newLevel}!`
   }
+}
+
+function easeInOutCubic(t: number): number {
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
 }
 
 export class Game {
@@ -167,27 +177,32 @@ export class Game {
   private readonly economy: Economy
   private readonly depositFeedback: DepositZoneFeedback
   private readonly playerCharacter: PlayerCharacterVisual
-  private readonly upgradeZones: UpgradeZoneSystem
   private readonly doorUnlock: DoorUnlockSystem
   private readonly roomLockCovers: RoomLockCoverSystem
   private readonly roomCleanliness: RoomCleanlinessSystem
   private readonly roomWispSpawns: RoomWispSpawnSystem
   private readonly specialRelicSpawns: SpecialRelicSpawnSystem
   private readonly relicFootArrow: ReturnType<typeof createSpecialRelicFootArrow>
+  /** Room-clear progression (formerly hub pad levels). */
+  private capacityUpgradeLevel = 0
+  private speedUpgradeLevel = 0
   private readonly ghostSystem: GhostSystem
   private readonly ghostGltfTemplate: GhostGltfTemplate | null
   private readonly playerGltfTemplate: PlayerGltfTemplate | null
   private readonly hubTitleFloorLabel: HubTitleFloorLabelHandle
+  /** World floor decals for cleared rooms (dispose on `Game.dispose`). */
+  private readonly roomClearFloorDisposers: (() => void)[] = []
   private readonly burstGroup: Group
   private readonly burstParticles: GhostHitBurstParticle[] = []
   private readonly burstSpawnScratch = new Vector3()
   private ghostHitInvuln = 0
+  /** Brief lock on walking pickups after a hit (burst scatter reads first). */
+  private ghostHitPickupLockRemain = 0
   /** Real-time seconds; magnet pull off briefly after a ghost hit. */
   private ghostVacuumDisabledRemain = 0
   private ghostDamageArmed = true
   private hitFlashEl: HTMLElement | null = null
   private hitFlashTimer: ReturnType<typeof setTimeout> | null = null
-  private readonly hostEl: HTMLElement
   private depositToastTimer: ReturnType<typeof setTimeout> | null = null
   private overloadHudTimer: ReturnType<typeof setTimeout> | null = null
   private overloadSession: { active: boolean; perfect: boolean } | null = null
@@ -216,7 +231,6 @@ export class Game {
   private readonly trashPortals: TrashPortalSystem
   private readonly playerTrail: PlayerMotionTrail
   private ghostHitSlowMoRemain = 0
-  private hudStackVignette: HTMLElement | null = null
   private hudStackHum: HTMLElement | null = null
   private depositShakeTimer: ReturnType<typeof setTimeout> | null = null
   /** Edge-detect carry stack full (max slots) for one-shot HUD celebration. */
@@ -237,19 +251,21 @@ export class Game {
   private hubWelcomeHidden = false
   private wasInSafeRoom = true
 
-  /** >0: gate-opening cinematic controls the camera; movement input ignored. */
-  private gateCinematicRemain = 0
+  /** Gate-opening cinematic: zoom out → gate lowers → hold → return to follow cam. */
+  private gateCinematicRunning = false
+  private gateCinematicElapsed = 0
   private gateCinematicDoorIndex = 0
   private readonly gateCineStartPos = new Vector3()
-  private readonly gateCineTargetPos = new Vector3()
+  private readonly gateCineWidePos = new Vector3()
   private readonly gateCineLookAt = new Vector3()
+  private readonly gateCineLookBlend = new Vector3()
+  private readonly gateCineRigDesired = new Vector3()
 
   constructor(
     host: HTMLElement,
     ghostGltfTemplate: GhostGltfTemplate | null = null,
     playerGltfTemplate: PlayerGltfTemplate | null = null,
   ) {
-    this.hostEl = host
     this.playerGltfTemplate = playerGltfTemplate
     this.gameViewport =
       host.querySelector<HTMLElement>('#game-viewport') ?? host
@@ -263,7 +279,6 @@ export class Game {
       depositZoneMesh,
       depositUnderglowMesh,
       playerCharacter,
-      upgradePads,
       hubTitleFloorLabel,
     } = createScene(playerGltfTemplate)
 
@@ -301,7 +316,6 @@ export class Game {
     this.hudDisposeBagBtn = host.querySelector<HTMLButtonElement>(
       '#hud-dispose-bag',
     )
-    this.hudStackVignette = host.querySelector('#hud-stack-vignette')
     this.hudStackHum = host.querySelector('#hud-stack-hum')
 
     this.camera = createCamera(
@@ -365,7 +379,7 @@ export class Game {
 
     this.trashPortals = new TrashPortalSystem(this.roomSystem)
 
-    this.trapField = new TrapFieldSystem(this.scene, this.roomSystem, Math.random, 6)
+    this.trapField = new TrapFieldSystem(this.scene, this.roomSystem, Math.random)
     this.playerTrail = new PlayerMotionTrail(this.scene)
 
     this.roomWispSpawns = new RoomWispSpawnSystem({
@@ -403,7 +417,7 @@ export class Game {
     this.ghostSystem = new GhostSystem(
       ghostGroup,
       this.worldCollision,
-      [],
+      DEFAULT_GHOST_SPAWNS,
       ghostGltfTemplate,
     )
 
@@ -412,6 +426,32 @@ export class Game {
         const idx = roomIndexFromId(roomId)
         if (idx !== null && idx >= 1) {
           this.ghostSystem.purgeGhostsForRoom(idx)
+          const levels = {
+            capacityLevel: this.capacityUpgradeLevel,
+            speedLevel: this.speedUpgradeLevel,
+          }
+          const up = applyUpgradeForRoomClear(
+            idx,
+            this.stack,
+            this.player,
+            levels,
+          )
+          this.capacityUpgradeLevel = levels.capacityLevel
+          this.speedUpgradeLevel = levels.speedLevel
+          const bannerKind =
+            up?.kind ?? (idx % 2 === 1 ? 'capacity' : 'speed')
+          spawnRoomClearedBanner(this.gameViewport, bannerKind)
+          this.roomClearFloorDisposers.push(
+            spawnRoomClearedFloorLabel(this.scene, roomId, bannerKind),
+          )
+          if (up) {
+            spawnFloatingHudText(
+              this.gameViewport,
+              upgradeLevelUpBanner(up.kind, up.newLevel),
+              'float-hud--level-up',
+              { topPct: 26, leftPct: 50, durationSec: 2.4 },
+            )
+          }
         }
         if (doorIndex !== null) {
           this.beginGateOpeningCinematic(doorIndex)
@@ -492,30 +532,6 @@ export class Game {
       },
     })
 
-    this.upgradeZones = new UpgradeZoneSystem({
-      economy: this.economy,
-      player: this.player,
-      stack: this.stack,
-      scene: this.scene,
-      camera: this.camera,
-      hostEl: this.hostEl,
-      capacityPad: upgradePads.capacity,
-      speedPad: upgradePads.speed,
-      isDoorUnlocked: (doorIndex) =>
-        this.doorUnlock.isDoorUnlocked(doorIndex),
-      onSpendVfx: (_kind, cost, padWorld) => {
-        spawnUpgradeSpendCoins(this.hostEl, this.camera, cost, padWorld)
-      },
-      onUpgradeLevelUp: (kind, newLevel) => {
-        spawnFloatingHudText(
-          this.gameViewport,
-          upgradeLevelUpBanner(kind, newLevel),
-          'float-hud--level-up',
-          { topPct: 26, leftPct: 50, durationSec: 2.4 },
-        )
-      },
-    })
-
     this.hudDisposeBagBtn?.addEventListener('click', (e) => {
       e.preventDefault()
       e.stopPropagation()
@@ -542,7 +558,7 @@ export class Game {
         this.joystick.getVector(),
         this.keyboardMove.getVector(),
       )
-      if (this.gateCinematicRemain > 0) {
+      if (this.gateCinematicRunning) {
         move = { x: 0, y: 0, fingerDown: false, active: false }
       }
 
@@ -567,7 +583,6 @@ export class Game {
         this.playerPos.z,
       )
 
-      this.upgradeZones.update(dt)
       this.doorUnlock.update(dt, this.elapsedSec)
       this.itemWorld.updateClutterGateReveal(this.doorUnlock)
       this.roomLockCovers.update()
@@ -629,9 +644,18 @@ export class Game {
         dt,
       )
 
-      this.ghostSystem.update(simDt, this.playerPos, this.stack.hasRelic())
+      this.ghostSystem.update(
+        simDt,
+        this.playerPos,
+        this.stack.hasRelic(),
+        this.gateCinematicRunning,
+      )
 
       this.ghostHitInvuln = Math.max(0, this.ghostHitInvuln - dt)
+      this.ghostHitPickupLockRemain = Math.max(
+        0,
+        this.ghostHitPickupLockRemain - dt,
+      )
       this.ghostVacuumDisabledRemain = Math.max(
         0,
         this.ghostVacuumDisabledRemain - dt,
@@ -655,7 +679,9 @@ export class Game {
       const hit = this.ghostSystem.tryHitPlayer(
         this.playerPos,
         this.player.radius,
-        this.ghostHitInvuln > 0 || !this.ghostDamageArmed,
+        this.ghostHitInvuln > 0 ||
+          !this.ghostDamageArmed ||
+          this.gateCinematicRunning,
       )
       if (hit.kind === 'hit') {
         this.ghostDamageArmed = false
@@ -666,9 +692,10 @@ export class Game {
           this.playerPos.x,
           this.playerPos.z,
         )
-        this.triggerGhostHitFlash(140)
-        this.triggerDepositScreenShake(true)
+        this.triggerGhostHitFlash(210, true)
+        this.triggerDepositScreenShake(false)
         this.ghostVacuumDisabledRemain = GHOST_HIT_VACUUM_DISABLE_SEC
+        this.ghostHitPickupLockRemain = GHOST_HIT_PICKUP_LOCK_SEC
 
         const c = this.stack.count
         let toRemove = 0
@@ -676,18 +703,27 @@ export class Game {
           const frac =
             GHOST_HIT_LOSS_MIN +
             Math.random() * (GHOST_HIT_LOSS_MAX - GHOST_HIT_LOSS_MIN)
-          toRemove = Math.min(c, Math.ceil(c * frac))
+          const raw = Math.ceil(c * frac)
+          toRemove = Math.min(c, Math.max(1, raw))
         }
         const lost =
           toRemove > 0 ? this.stack.popManyFromTop(toRemove) : []
         if (lost.length > 0) {
-          this.scatterGhostHitExplosion(lost)
+          spawnGhostHitDroppedItems(
+            this.itemWorld,
+            this.playerPos.x,
+            this.playerPos.z,
+            lost,
+            STACK_DROP_RECOVERY_TTL_SEC,
+          )
+          this.stackVisual.triggerGhostHitReaction()
         }
         this.ghostHitSlowMoRemain = GHOST_HIT_SLOW_MO_SEC
 
         this.burstSpawnScratch.copy(this.playerPos)
         this.burstSpawnScratch.y += 0.38
         this.burstParticles.push(
+          ...spawnGhostHitEctoplasmBurst(this.burstGroup, this.burstSpawnScratch),
           ...spawnGhostHitPelletBurst(
             this.burstGroup,
             this.burstSpawnScratch,
@@ -706,9 +742,9 @@ export class Game {
 
       const collected = this.collection.update(this.player, this.stack, this.itemWorld, dt, {
         pickupBlocked:
-          this.ghostHitInvuln > 0 ||
+          this.ghostHitPickupLockRemain > 0 ||
           this.bagDisposeInFlight ||
-          this.gateCinematicRemain > 0,
+          this.gateCinematicRunning,
         magnetBlocked: this.ghostVacuumDisabledRemain > 0,
       })
       for (const { item, pickupX, pickupZ } of collected) {
@@ -719,17 +755,22 @@ export class Game {
           this.specialRelicSpawns.trySpawnRelicFromHauntedClutter(
             item.spawnRoomId,
           )
-          const spawn = this.resolveGhostSpawnFromHauntedClutter(
-            pickupX,
-            pickupZ,
-            item.spawnRoomId,
-          )
-          this.ghostSystem.spawnGhost({
-            x: spawn.x,
-            z: spawn.z,
-            roomIndex: spawn.roomIndex,
-            color: pickGhostColorForRoomIndex(spawn.roomIndex, Math.random),
-          })
+          if (
+            this.ghostSystem.getActiveGhostCount() < MAX_ACTIVE_GHOSTS &&
+            Math.random() < HAUNTED_PICKUP_GHOST_CHANCE
+          ) {
+            const spawn = this.resolveGhostSpawnFromHauntedClutter(
+              pickupX,
+              pickupZ,
+              item.spawnRoomId,
+            )
+            this.ghostSystem.spawnGhost({
+              x: spawn.x,
+              z: spawn.z,
+              roomIndex: spawn.roomIndex,
+              color: pickGhostColorForRoomIndex(spawn.roomIndex, Math.random),
+            })
+          }
           continue
         }
         if (item.type === 'wisp' || item.type === 'clutter') {
@@ -753,12 +794,7 @@ export class Game {
         this.hudDisposeBagBtn.disabled = !show
       }
       if (atMax && !this.wasAtMaxCapacity) {
-        spawnFloatingHudText(
-          this.gameViewport,
-          'BAG FULL — TOSS IT!',
-          'float-hud--stack-full',
-          { durationSec: 1.35, leftPct: 50, topPct: 24 },
-        )
+        spawnBagFullBanner(this.gameViewport)
         playJuiceSound('pickup')
       }
       this.wasAtMaxCapacity = atMax
@@ -774,7 +810,7 @@ export class Game {
         ghostInvuln: this.ghostHitInvuln > 0,
         recentPickupSec: 0,
       })
-      if (this.gateCinematicRemain > 0) {
+      if (this.gateCinematicRunning) {
         this.updateGateOpeningCinematic(dt)
       } else {
         this.cameraRig.update(dt)
@@ -813,25 +849,52 @@ export class Game {
 
   private beginGateOpeningCinematic(doorIndex: number): void {
     this.gateCinematicDoorIndex = doorIndex
-    this.gateCinematicRemain = GATE_OPEN_TOTAL_SEC
+    this.gateCinematicElapsed = 0
+    this.gateCinematicRunning = true
     this.gateCineStartPos.copy(this.camera.position)
+    const zDoor = getDoorBlockerZ(doorIndex)
+    this.gateCineLookAt.set(0, 1.14, zDoor)
+    /** Pull back + up so the gate stays readable (zoom-out vs. start pose). */
+    this.gateCineWidePos.set(0, 12.85, zDoor + 11.35)
   }
 
   private updateGateOpeningCinematic(dt: number): void {
-    if (this.gateCinematicRemain <= 0) return
+    if (!this.gateCinematicRunning) return
+    this.gateCinematicElapsed += dt
+    const e = this.gateCinematicElapsed
     const zDoor = getDoorBlockerZ(this.gateCinematicDoorIndex)
-    this.gateCineTargetPos.set(0, 10.2, zDoor + 9.2)
-    this.gateCineLookAt.set(0, 1.15, zDoor)
-    const total = GATE_OPEN_TOTAL_SEC
-    const elapsed = total - this.gateCinematicRemain
-    const intro = 0.2
-    const u = Math.min(1, elapsed / intro)
-    const ease = u * u * (3 - 2 * u)
-    this.camera.position.lerpVectors(this.gateCineStartPos, this.gateCineTargetPos, ease)
-    this.camera.lookAt(this.gateCineLookAt)
-    this.gateCinematicRemain -= dt
-    if (this.gateCinematicRemain < 0) {
-      this.gateCinematicRemain = 0
+    this.gateCineLookAt.set(0, 1.14, zDoor)
+
+    const tZoom = GATE_CINE_ZOOM_OUT_SEC
+    const tHoldEnd =
+      GATE_OPEN_TOTAL_SEC + GATE_CINE_HOLD_AFTER_OPEN_SEC
+    const tEnd = GATE_CINE_TOTAL_SEC
+
+    this.cameraRig.getDesiredCameraPosition(this.gateCineRigDesired)
+
+    if (e < tZoom) {
+      const u = easeInOutCubic(Math.min(1, e / tZoom))
+      this.camera.position.lerpVectors(this.gateCineStartPos, this.gateCineWidePos, u)
+      this.camera.lookAt(this.gateCineLookAt)
+    } else if (e < tHoldEnd) {
+      this.camera.position.copy(this.gateCineWidePos)
+      this.camera.lookAt(this.gateCineLookAt)
+    } else if (e < tEnd) {
+      const u = easeInOutCubic(
+        Math.min(1, (e - tHoldEnd) / GATE_CINE_RETURN_TO_PLAYER_SEC),
+      )
+      this.camera.position.lerpVectors(
+        this.gateCineWidePos,
+        this.gateCineRigDesired,
+        u,
+      )
+      this.gateCineLookBlend.lerpVectors(this.gateCineLookAt, this.playerPos, u)
+      this.camera.lookAt(this.gateCineLookBlend)
+    } else {
+      this.camera.position.copy(this.gateCineRigDesired)
+      this.camera.lookAt(this.playerPos)
+      this.gateCinematicRunning = false
+      this.gateCinematicElapsed = 0
     }
   }
 
@@ -941,35 +1004,7 @@ export class Game {
     }
   }
 
-  /** LIFO order preserved; each item may roll recoverable vs lost; strong outward kick. */
-  private scatterGhostHitExplosion(items: readonly GameItem[]): void {
-    const px = this.playerPos.x
-    const pz = this.playerPos.z
-    for (const it of items) {
-      if (Math.random() > GHOST_HIT_DROP_RECOVER_CHANCE) continue
-      const ang = Math.random() * Math.PI * 2
-      const d =
-        GHOST_HIT_SCATTER_R_MIN + Math.random() * GHOST_HIT_SCATTER_R_SPREAD
-      const hk =
-        GHOST_HIT_DROP_KICK_H_MIN + Math.random() * GHOST_HIT_DROP_KICK_H_SPREAD
-      const vy =
-        GHOST_HIT_DROP_POP_VY_MIN + Math.random() * GHOST_HIT_DROP_POP_VY_SPREAD
-      this.itemWorld.spawnRecoverable(
-        it,
-        px + Math.cos(ang) * d,
-        pz + Math.sin(ang) * d,
-        STACK_DROP_RECOVERY_TTL_SEC,
-        { horizontalKick: hk, popVy: vy },
-      )
-    }
-  }
-
   private syncStackJuiceHud(weight: number): void {
-    const v = this.hudStackVignette
-    if (v) {
-      const t = weight >= 0.5 ? (weight - 0.5) / 0.5 : 0
-      v.style.opacity = String(t * 0.85)
-    }
     const h = this.hudStackHum
     if (h) {
       const on = weight >= 0.7
@@ -1140,8 +1175,8 @@ export class Game {
     bag.getWorldPosition(start)
 
     const yaw = this.player.root.rotation.y
-    const fx = Math.sin(yaw)
-    const fz = Math.cos(yaw)
+    const fx = -Math.sin(yaw)
+    const fz = -Math.cos(yaw)
 
     const tossDist = 5.4
     const end = new Vector3(
@@ -1318,16 +1353,17 @@ export class Game {
     hintEl.style.display = 'none'
   }
 
-  private triggerGhostHitFlash(durationMs = 88): void {
+  private triggerGhostHitFlash(durationMs = 88, ghostImpact = false): void {
     const el = this.hitFlashEl
     if (!el) return
     if (this.hitFlashTimer) {
       clearTimeout(this.hitFlashTimer)
       this.hitFlashTimer = null
     }
+    el.classList.toggle('hud-hit-flash--ghost', ghostImpact)
     el.classList.add('hud-hit-flash--on')
     this.hitFlashTimer = setTimeout(() => {
-      el.classList.remove('hud-hit-flash--on')
+      el.classList.remove('hud-hit-flash--on', 'hud-hit-flash--ghost')
       this.hitFlashTimer = null
     }, durationMs)
   }
@@ -1354,17 +1390,23 @@ export class Game {
       clearTimeout(this.hitFlashTimer)
       this.hitFlashTimer = null
     }
-    this.hitFlashEl?.classList.remove('hud-hit-flash--on')
+    this.hitFlashEl?.classList.remove(
+      'hud-hit-flash--on',
+      'hud-hit-flash--ghost',
+    )
     this.gameViewport.classList.remove('game-viewport--ghost-invuln')
     disposeAllGhostHitBursts(this.burstParticles)
     this.burstGroup.removeFromParent()
     this.doorUnlock.dispose()
     this.roomLockCovers.dispose()
     this.trashPortals.dispose()
+    for (const d of this.roomClearFloorDisposers) {
+      d()
+    }
+    this.roomClearFloorDisposers.length = 0
     this.hubTitleFloorLabel.dispose()
     this.trapField.dispose()
     this.playerTrail.dispose()
-    this.upgradeZones.dispose()
     this.ghostSystem.dispose()
     disposeGhostGltfTemplate(this.ghostGltfTemplate)
     this.stackVisual.dispose()
