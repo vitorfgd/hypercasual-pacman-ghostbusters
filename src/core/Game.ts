@@ -91,11 +91,16 @@ import {
   GHOST_HIT_SLOW_MO_SCALE,
   GHOST_HIT_SLOW_MO_SEC,
   loadSavedCameraMode,
+  PLAYER_MAX_LIVES,
   saveCameraMode,
   STACK_DROP_RECOVERY_TTL_SEC,
   STACK_DROP_SCATTER_RADIUS,
   type CameraMode,
 } from '../juice/juiceConfig.ts'
+import {
+  showGameOverOverlay,
+  spawnLifeLostImpact,
+} from '../juice/lifeHudJuice.ts'
 import {
   spawnBagDisposeBurst,
   spawnBagLandImpact,
@@ -236,6 +241,9 @@ export class Game {
   private readonly hudOverloadAmountEl: HTMLElement | null
   private readonly hudDisposeBagBtn: HTMLButtonElement | null
   private readonly hudCameraHintEl: HTMLElement | null
+  private readonly hudLivesWrap: HTMLElement | null
+  private lives = PLAYER_MAX_LIVES
+  private gameOver = false
   private readonly trapField: TrapFieldSystem
   private readonly trashPortals: TrashPortalSystem
   private readonly playerTrail: PlayerMotionTrail
@@ -344,6 +352,7 @@ export class Game {
       '#hud-dispose-bag',
     )
     this.hudCameraHintEl = host.querySelector<HTMLElement>('#hud-camera-hint')
+    this.hudLivesWrap = host.querySelector<HTMLElement>('#hud-lives')
     this.hudStackHum = host.querySelector('#hud-stack-hum')
 
     this.camera = createCamera(
@@ -374,6 +383,7 @@ export class Game {
     )
     window.addEventListener('keydown', this.onCameraModeKey)
     this.syncCameraModeHud()
+    this.syncLivesHud()
 
     this.economy = new Economy()
     this.moneyHud = hudMoney
@@ -590,6 +600,7 @@ export class Game {
     this.player.getPosition(this.playerPos)
 
     const tick = (now: number) => {
+      if (this.gameOver) return
       this.raf = requestAnimationFrame(tick)
       const dt = Math.min(0.05, (now - this.lastTime) / 1000)
       this.lastTime = now
@@ -785,6 +796,17 @@ export class Game {
           hit.ghostZ,
           this.playerPos,
         )
+
+        this.lives = Math.max(0, this.lives - 1)
+        spawnLifeLostImpact(this.gameViewport)
+        this.triggerDepositScreenShake(true)
+        this.syncLivesHud()
+        if (this.lives <= 0) {
+          this.gameOver = true
+          showGameOverOverlay(this.gameViewport, () => {
+            location.reload()
+          })
+        }
       }
       updateGhostHitBursts(this.burstParticles, dt)
 
@@ -903,6 +925,19 @@ export class Game {
     el.setAttribute(
       'aria-label',
       mode === 'over_shoulder' ? 'Camera: near view. Press C for far view.' : 'Camera: far view. Press C for near view.',
+    )
+  }
+
+  private syncLivesHud(): void {
+    const wrap = this.hudLivesWrap
+    if (!wrap) return
+    const hearts = wrap.querySelectorAll<HTMLElement>('.hud-life')
+    hearts.forEach((el, i) => {
+      el.classList.toggle('hud-life--lost', i >= this.lives)
+    })
+    wrap.setAttribute(
+      'aria-label',
+      `Lives: ${this.lives} of ${PLAYER_MAX_LIVES}`,
     )
   }
 

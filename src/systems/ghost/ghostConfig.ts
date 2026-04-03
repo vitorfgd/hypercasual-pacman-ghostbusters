@@ -23,13 +23,13 @@ export const GHOST_DETECT_RADIUS = 6.8
 export const GHOST_LOSE_CHASE_RADIUS = 11.5
 
 /** Full cone aperture in degrees (60–90). Half-angle used for dot test. */
-export const GHOST_VISION_CONE_DEG = 78
+export const GHOST_VISION_CONE_DEG = 64
 
 export const GHOST_VISION_HALF_ANGLE_RAD =
   ((GHOST_VISION_CONE_DEG * Math.PI) / 180) * 0.5
 
-/** Max sight distance along cone axis (world units). */
-export const GHOST_VISION_RANGE = 10.2
+/** Max sight distance along cone axis (world units). Keep modest so the floor cone hugs the ghost. */
+export const GHOST_VISION_RANGE = 5.85
 
 /** cos(halfAngle) for dot(forward, toPlayer) test. */
 export const GHOST_VISION_COS_HALF = Math.cos(GHOST_VISION_HALF_ANGLE_RAD)

@@ -53,6 +53,9 @@ export const CAMERA_OTS_PROBE_RADIUS = 0.36
 /** Enable pull-in when overlapping wall AABBs. */
 export const CAMERA_OTS_COLLISION = true
 
+/** Ghost contact costs one life; at 0 the run ends (see `Game.ts`). */
+export const PLAYER_MAX_LIVES = 3
+
 const CAM_MODE_KEY = 'ghostBusters.cameraMode'
 
 export function loadSavedCameraMode(): CameraMode | null {

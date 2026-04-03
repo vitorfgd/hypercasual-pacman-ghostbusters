@@ -50,11 +50,13 @@ export type PlayerCharacterAnimState = {
   recentPickupSec?: number
 }
 
+const clipNameNorm = (s: string) => s.toLowerCase().replace(/\s+/g, '')
+
 function findClip(
   clips: readonly AnimationClip[],
   keywords: string[],
 ): AnimationClip | null {
-  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '')
+  const norm = clipNameNorm
   for (const kw of keywords) {
     const k = norm(kw)
     for (const c of clips) {
@@ -71,11 +73,10 @@ function findClipPreferExact(
   exactFirst: readonly string[],
   fallbackKeywords: readonly string[],
 ): AnimationClip | null {
-  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, '')
   for (const ex of exactFirst) {
-    const k = norm(ex)
+    const k = clipNameNorm(ex)
     for (const c of clips) {
-      if (norm(c.name) === k) return c
+      if (clipNameNorm(c.name) === k) return c
     }
   }
   return findClip(clips, [...fallbackKeywords])
@@ -97,9 +98,9 @@ type GltfAnimBundle = {
 }
 
 /**
- * Player character: GLB with idle / collecting / running when a template is provided;
- * collecting plays only outside power-up; in power-up, idle vs running follows movement.
- * otherwise procedural capsule + sphere (legacy).
+ * Player character: GLB with **collecting-idle** / **collecting-running** (+ optional **collecting** pickup)
+ * when a template is provided; pickup burst uses **collecting** when present else falls back to idle.
+ * Otherwise procedural capsule + sphere (legacy).
  */
 export class PlayerCharacterVisual {
   readonly root: Group
@@ -171,19 +172,28 @@ export class PlayerCharacterVisual {
       const clips = gltfTemplate.animations
       const idleClip = findClipPreferExact(
         clips,
-        ['idle'],
-        ['idle', 'Idle'],
+        ['collecting-idle'],
+        ['collecting-idle', 'collectingidle', 'idle', 'Idle'],
       )
       const runClip = findClipPreferExact(
         clips,
-        ['running', 'run'],
-        ['running', 'run', 'Run', 'walk', 'Walk'],
+        ['collecting-running'],
+        [
+          'collecting-running',
+          'collectingrunning',
+          'running',
+          'run',
+          'Run',
+          'walk',
+          'Walk',
+        ],
       )
-      const collectClip = findClipPreferExact(
-        clips,
-        ['collecting', 'collect'],
-        ['collecting', 'collect', 'Collecting'],
-      )
+      /** Dedicated pickup burst only — not `collecting-idle` / `collecting-running`. */
+      const collectClip =
+        clips.find((c) => {
+          const n = clipNameNorm(c.name)
+          return n === 'collecting' || n === 'collect'
+        }) ?? null
 
       const mixer = new AnimationMixer(model)
       const idle = idleClip ? mixer.clipAction(idleClip) : null

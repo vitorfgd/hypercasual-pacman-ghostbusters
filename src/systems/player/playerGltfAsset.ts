@@ -42,7 +42,7 @@ export async function loadPlayerCharacterGltf(
     if (animations.length === 0) {
       return {
         ok: false,
-        error: `GLB loaded but no animations (expected idle, collecting, running). url=${url}`,
+        error: `GLB loaded but no animations (expected collecting-idle, collecting-running, optional collecting). url=${url}`,
       }
     }
     return { ok: true, template: { scenePrototype, animations } }

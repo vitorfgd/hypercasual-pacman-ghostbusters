@@ -52,21 +52,25 @@ When **`ROOM_k`** reaches 100% cleanliness (`Game.ts` → `onRoomCleared`):
 
 ---
 
-## 3. Game “loss” and failure conditions (specific)
+## 3. Lives, game over, and other failure conditions (specific)
 
-There is **no implemented game-over state**: **no lives counter**, **no death screen**, **no restart flow**, and **no fail condition** that stops the session.
+### 3.1 Lives (ghost hits only)
 
-What exists instead:
+- **`PLAYER_MAX_LIVES`** = **3** (`juiceConfig.ts`). Shown as **♥♥♥** in `#hud-lives`.
+- Each time a **ghost contact** deals damage (same gate as stack loss: not during i-frames / cinematic / disarmed): **lose 1 life**, full-screen **−1** impact (`spawnLifeLostImpact`), strong screen shake, hearts update. **Stack loss** still applies as before.
+- **Traps** do **not** remove lives (only stack fraction / slow).
+- At **0 lives**: **`gameOver`** = true → animation loop **stops**, **game over overlay** (title, flavor line, **TRY AGAIN** → `location.reload()`).
+
+### 3.2 Other situations (no life loss)
 
 | Situation | What happens |
 |-----------|----------------|
-| **Ghost contact** (while damage allowed) | **Not** a loss: a **random fraction** of **current** stack (config min/max, **at least 1** item if stack &gt; 0) is **removed from the top**, items **scatter** as recoverable drops (TTL), **short i-frames**, knockback, **magnet disabled** briefly, pickup lock briefly. Player keeps playing with a smaller stack. |
-| **Empty stack** | **Allowed**. Player can pick up new items; no penalty. |
-| **Trap fields** (`TrapFieldSystem`) | **Damage** traps remove a **fraction** of stack (config band); **slow** traps reduce move speed multiplier. **No** end of run. |
-| **Leaving deposit zone mid-deposit** | Deposit session **aborts** per `DepositController` rules (partial presentation); **not** a loss of run. |
-| **Room already cleared** | Clutter in that room no longer advances cleanliness (already at 100%). |
+| **Trap fields** (`TrapFieldSystem`) | **Damage** traps remove a **fraction** of stack; **slow** traps reduce move speed. **No** life loss. |
+| **Leaving deposit zone mid-deposit** | Session **aborts** per `DepositController`; **not** a life loss. |
+| **Empty stack** | **Allowed**; ghosts can still hit (life + stack rules if stack empty only skip pop). |
+| **Room already cleared** | No extra cleanliness from clutter. |
 
-**Design implication:** The “fail” space is **soft** — pressure comes from **stack loss**, **tempo**, and **ghost pressure**, not from a binary terminal state.
+**Design implication:** Runs end on **three ghost hits that deal damage**; short-term pressure still includes **stack stripping** on every such hit.
 
 ---
 
@@ -85,7 +89,7 @@ Each ghost uses **`GhostBehaviorState`**: **`wander`** | **`chase`**.
 
 ### 4.2 Vision cone (aggro)
 
-- **Shape**: **Aperture** `GHOST_VISION_CONE_DEG` (half-angle in radians `GHOST_VISION_HALF_ANGLE_RAD`). **Range** along forward: **`GHOST_VISION_RANGE`**.
+- **Shape**: **Aperture** `GHOST_VISION_CONE_DEG` (half-angle in radians `GHOST_VISION_HALF_ANGLE_RAD`). **Range** along forward: **`GHOST_VISION_RANGE`** (tuned **short** so the floor mesh sits **close** to the ghost).
 - **Test**: Player must be inside range; **dot** between ghost’s **forward** (smoothed move direction, or yaw) and **direction to player** must be ≥ **`GHOST_VISION_COS_HALF`**; optional **`GHOST_VISION_USE_LINE_OF_SIGHT`** segment test against **`WorldCollision`**.
 - **Visual**: **`GHOST_VISION_CONE_VISIBLE`**: semi-transparent **floor sector** mesh aligned with ghost facing; **brighter opacity** while in **chase** (relic or hunt).
 
@@ -164,7 +168,7 @@ Types include **wisp**, **relic**, **gem**, **clutter** — see `core/types/Game
 
 | Region | Content |
 |--------|---------|
-| **Top** | Carry **count / max**, **camera hint** (`C · far/near`), **money** |
+| **Top** | Carry **count / max**, **camera hint** (`C · far/near`), **lives** (hearts), **money** |
 | | **Room cleanliness** bar + title (when in a trackable room) |
 | **Bottom** | **Toss & cash in** when at max stack; **spawn** hint area |
 | Overlays | Hit flash, overload, deposit toast |
@@ -187,6 +191,7 @@ Vite, Three.js, `src/main.ts` → `Game`. GLB assets under `public/` with proced
 
 | Topic | Primary module |
 |--------|----------------|
+| Player lives / game over | `juiceConfig.ts` (`PLAYER_MAX_LIVES`), `Game.ts`, `juice/lifeHudJuice.ts` |
 | Player / ghost speeds | `gameplaySpeed.ts`, `ghostConfig.ts` |
 | Vision cone shape / LOS / hunt timers | `ghostConfig.ts` |
 | Ghost hit loss, i-frames, knockback | `ghostConfig.ts` |
@@ -204,8 +209,8 @@ Vite, Three.js, `src/main.ts` → `Game`. GLB assets under `public/` with proced
 ## 14. Minimal checklist (this build)
 
 1. **XZ** movement, wall collision, optional **OTS** camera + **C** toggle.
-2. **Stack**, ghost **hit** strips stack (no game over).
+2. **Stack**, ghost **hit** strips stack **and** costs **1 life**; at **0 lives**, **game over** + reload.
 3. **Clutter** → **room %** → **clear** → **capacity/speed** upgrade + **gate** or **ghost purge**.
-4. **Ghosts**: wander / chase (relic + vision hunt), **cone + LOS**, **high chase speeds**, contact damage, room clear removes/fades.
+4. **Ghosts**: wander / chase (relic + vision hunt), **compact cone + LOS**, **high chase speeds**, contact damage, room clear removes/fades.
 5. **Trash portal** deposits → **money** + overload presentation.
-6. **HUD**: carry, money, **room cleanliness**, toss at max stack.
+6. **HUD**: carry, **lives**, money, **room cleanliness**, toss at max stack.
