@@ -22,7 +22,6 @@ import {
   DOOR_LEAF_COLLIDER_SLICES,
   DOOR_MAX_SWING_RAD,
   DOOR_MIN_SWING_TO_REGISTER_CROSS,
-  DOOR_PASS_CLOSE_DELAY_SEC,
   DOOR_PASSAGE_CLEAR_SWING,
   DOOR_PUSH_ZONE_HALF_X,
   DOOR_PUSH_ZONE_HALF_Z,
@@ -407,10 +406,10 @@ export class DoorUnlockSystem {
           wasIn &&
           !inTrig &&
           pz < zDoor - DOOR_EXIT_SOUTH_MARGIN &&
-          this.pendingCloseRemain[i] === null &&
           !this.passed[i]
         ) {
-          this.pendingCloseRemain[i] = DOOR_PASS_CLOSE_DELAY_SEC
+          this.pendingCloseRemain[i] = null
+          this.beginDoorSlamShut(i)
         }
       }
 

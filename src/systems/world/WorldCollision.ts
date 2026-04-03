@@ -39,6 +39,7 @@ export function segmentIntersectWallAabbs(
  */
 export class WorldCollision {
   private readonly base: readonly AabbXZ[]
+  private structure: readonly AabbXZ[] = []
   private extra: readonly AabbXZ[] = []
 
   constructor(boxes: readonly AabbXZ[] = MANSION_WALL_COLLIDERS) {
@@ -50,8 +51,16 @@ export class WorldCollision {
     this.extra = boxes
   }
 
+  /** Runtime room structures (for example internal maze walls). */
+  setStructureColliders(boxes: AabbXZ[]): void {
+    this.structure = boxes
+  }
+
   private allWallBoxes(): readonly AabbXZ[] {
-    return this.extra.length === 0 ? this.base : [...this.base, ...this.extra]
+    const out: AabbXZ[] = [...this.base]
+    if (this.structure.length > 0) out.push(...this.structure)
+    if (this.extra.length > 0) out.push(...this.extra)
+    return out
   }
 
   /**
@@ -64,7 +73,9 @@ export class WorldCollision {
     radius: number,
     ignoreBaseWallColliders = false,
   ): { x: number; z: number } {
-    const boxes = ignoreBaseWallColliders ? this.extra : this.allWallBoxes()
+    const boxes = ignoreBaseWallColliders
+      ? [...this.structure, ...this.extra]
+      : this.allWallBoxes()
     let o = resolveCircleVsAabbs(x, z, radius, boxes)
     const m = MANSION_WORLD_HALF - radius
     o = {

@@ -6,7 +6,7 @@ import {
   GHOST_HIT_KNOCKBACK_SPEED,
 } from '../ghost/ghostConfig.ts'
 import type { WorldCollision } from '../world/WorldCollision.ts'
-import type { RoomBounds, RoomId } from '../world/mansionRoomData.ts'
+import type { RoomBounds } from '../world/mansionRoomData.ts'
 import type { GridNavContext } from '../world/RoomSystem.ts'
 import { boundsKey, worldToCellIndex } from '../grid/roomGridGeometry.ts'
 import {
@@ -32,37 +32,32 @@ import {
 export { PLAYER_BASE_MAX_SPEED as DEFAULT_PLAYER_MOVE_SPEED } from '../gameplaySpeed.ts'
 
 /**
- * Keep gameplay overlap generous for pickups / ghosts, but give world collision a slimmer
- * footprint so grid centers do not snag on thin wall or door AABBs.
+ * Keep gameplay overlap generous for pickups / ghosts, but use a slightly slimmer world
+ * collision capsule so grid centers do not snag on thin wall or door AABBs.
  */
-const PLAYER_WORLD_COLLISION_RADIUS = 0.42
-const PLAYER_WORLD_UNSTICK_RADIUS = 0.3
-const PLAYER_WORLD_UNSTICK_INTENT_EPS = 0.08
-const PLAYER_WORLD_UNSTICK_GAIN_EPS = 0.045
+const PLAYER_WORLD_COLLISION_RADIUS = 0.46
 
 export class PlayerController {
   private readonly navDebug: PlayerNavDebugSnapshot = createEmptyNavDebug()
   private readonly gridState: PlayerGridNavState
-  /** Last grid step kinematics (before knock). */
+  /** Last grid step kinematics (before knockback). */
   private lastGridVx = 0
   private lastGridVz = 0
-  /** Extra horizontal push from ghost hits (decays each frame) */
+  /** Extra horizontal push from ghost hits (decays each frame). */
   private knockX = 0
   private knockZ = 0
   /** Applied on top of upgrade max speed (power mode). */
   private powerSpeedMul = 1
-  /** Stack weight × trap slow (and other movement penalties). Clamped to (0,1]. */
+  /** Stack weight x trap slow (and other movement penalties). Clamped to (0,1]. */
   private movementSlowMul = 1
-  /** Horizontal radius for overlap tests (XZ) */
+  /** Horizontal radius for overlap tests (XZ). */
   readonly radius = 0.55
   private readonly playerRoot: Group
   private readonly worldCollision: WorldCollision
-  /** When set, room interiors skip base wall AABBs (door extras still apply). */
-  private readonly getRoomAt: ((x: number, z: number) => RoomId | null) | null
   private maxSpeed: number
   private targetYaw = 0
   private currentYaw = 0
-  private readonly turnSmooth = 14
+  private readonly turnSmooth = 18
   private prevFingerDown = false
   private startBoostRemaining = 0
 
@@ -71,11 +66,10 @@ export class PlayerController {
     worldCollision: WorldCollision,
     maxSpeed = PLAYER_BASE_MAX_SPEED,
     _dragUnused = 12,
-    getRoomAt?: (x: number, z: number) => RoomId | null,
+    _getRoomAt?: (x: number, z: number) => unknown,
   ) {
     this.playerRoot = playerRoot
     this.worldCollision = worldCollision
-    this.getRoomAt = getRoomAt ?? null
     this.maxSpeed = maxSpeed
     this.gridState = createPlayerGridNavState()
   }
@@ -125,56 +119,14 @@ export class PlayerController {
   }
 
   getHorizontalSpeed(): number {
-    return Math.hypot(this.lastGridVx + this.knockX, this.lastGridVz + this.knockZ)
+    return Math.hypot(
+      this.lastGridVx + this.knockX,
+      this.lastGridVz + this.knockZ,
+    )
   }
 
   getFacingYaw(): number {
     return this.currentYaw
-  }
-
-  private canIgnoreBaseWallsAt(x: number, z: number): boolean {
-    return this.getRoomAt !== null && this.getRoomAt(x, z) !== null
-  }
-
-  private resolvePlayerWorldCollision(
-    fromX: number,
-    fromZ: number,
-    targetX: number,
-    targetZ: number,
-  ): { x: number; z: number } {
-    const ignoreBaseWalls =
-      this.canIgnoreBaseWallsAt(fromX, fromZ) ||
-      this.canIgnoreBaseWallsAt(targetX, targetZ)
-    const resolved = this.worldCollision.resolveCircleXZ(
-      targetX,
-      targetZ,
-      PLAYER_WORLD_COLLISION_RADIUS,
-      ignoreBaseWalls,
-    )
-
-    if (!ignoreBaseWalls) {
-      return resolved
-    }
-
-    const intendedTravel = Math.hypot(targetX - fromX, targetZ - fromZ)
-    if (intendedTravel < PLAYER_WORLD_UNSTICK_INTENT_EPS) {
-      return resolved
-    }
-
-    const resolvedTravel = Math.hypot(resolved.x - fromX, resolved.z - fromZ)
-    const fallback = this.worldCollision.resolveCircleXZ(
-      targetX,
-      targetZ,
-      PLAYER_WORLD_UNSTICK_RADIUS,
-      true,
-    )
-    const fallbackTravel = Math.hypot(fallback.x - fromX, fallback.z - fromZ)
-
-    if (fallbackTravel > resolvedTravel + PLAYER_WORLD_UNSTICK_GAIN_EPS) {
-      return fallback
-    }
-
-    return resolved
   }
 
   /** Snapshot before `update` / `syncGridToWorld` for `RoomSystem.getNavGridBounds`. */
@@ -214,7 +166,7 @@ export class PlayerController {
   }
 
   /**
-   * After external moves (e.g. trash portal suction), resync grid cell to world position.
+   * After external moves, resync grid cell to world position.
    */
   syncGridToWorld(
     getNavGridBounds: (x: number, z: number) => RoomBounds,
@@ -234,7 +186,7 @@ export class PlayerController {
   /**
    * Grid-based movement: cardinal input only, cell centers, queued next direction + same-frame turns.
    * `getNavGridBounds` classifies the avatar (sticky near doors); `getRawGridBoundsAt` is plain
-   * geometry for neighbor probes — see `playerGridNav.ts`.
+   * geometry for neighbor probes - see `playerGridNav.ts`.
    */
   update(
     dt: number,
@@ -266,7 +218,7 @@ export class PlayerController {
       this.startBoostRemaining -= dt
     }
 
-    const cap =
+    const speedCap =
       this.maxSpeed *
       this.powerSpeedMul *
       this.movementSlowMul *
@@ -278,7 +230,7 @@ export class PlayerController {
       px,
       pz,
       dt,
-      cap,
+      speedCap,
       bounds,
       delta?.dr ?? null,
       delta?.dc ?? null,
@@ -290,12 +242,28 @@ export class PlayerController {
     this.lastGridVx = res.vx
     this.lastGridVz = res.vz
 
-    const x = res.x + this.knockX * dt
-    const z = res.z + this.knockZ * dt
+    const resolved = this.worldCollision.resolveCircleXZ(
+      res.x + this.knockX * dt,
+      res.z + this.knockZ * dt,
+      PLAYER_WORLD_COLLISION_RADIUS,
+      false,
+    )
 
-    const resolved = this.resolvePlayerWorldCollision(px, pz, x, z)
     this.playerRoot.position.x = resolved.x
     this.playerRoot.position.z = resolved.z
+    const boundsAfter = getNavGridBounds(resolved.x, resolved.z)
+    const correction = Math.hypot(
+      resolved.x - (res.x + this.knockX * dt),
+      resolved.z - (res.z + this.knockZ * dt),
+    )
+    if (correction > 0.08) {
+      resetPlayerGridNavAtPosition(
+        this.gridState,
+        resolved.x,
+        resolved.z,
+        boundsAfter,
+      )
+    }
 
     if (SHOW_PLAYER_NAV_DEBUG_HUD) {
       const nd = this.navDebug
@@ -303,16 +271,18 @@ export class PlayerController {
       nd.pz = pz
       nd.afterPhysicsX = resolved.x
       nd.afterPhysicsZ = resolved.z
-      nd.navBoundsKey = boundsKey(bounds)
+      nd.navBoundsKey = boundsKey(boundsAfter)
       nd.rawKeyAtPlayer = boundsKey(rawAtPlayer)
       nd.keysMatch = nd.navBoundsKey === nd.rawKeyAtPlayer
-      nd.cellFromNav = worldToCellIndex(bounds, px, pz)
+      nd.cellFromNav = worldToCellIndex(boundsAfter, resolved.x, resolved.z)
       nd.cellFromRaw = worldToCellIndex(rawAtPlayer, px, pz)
       nd.fingerDown = input.fingerDown
       nd.stickX = input.x
       nd.stickY = input.y
       nd.stickMag = Math.hypot(input.x, input.y)
       nd.gridInputDeadzone = PLAYER_GRID_INPUT_DEADZONE
+      nd.vx = this.lastGridVx + this.knockX
+      nd.vz = this.lastGridVz + this.knockZ
     }
 
     const hs = Math.hypot(res.vx, res.vz)

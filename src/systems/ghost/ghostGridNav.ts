@@ -96,20 +96,39 @@ function listOpenCardinals(
   return out
 }
 
+function findOpenDir(
+  open: OpenDir[],
+  dr: number,
+  dc: number,
+): OpenDir | null {
+  return open.find((o) => o.dr === dr && o.dc === dc) ?? null
+}
+
 function pickIdle(
   open: OpenDir[],
   incomingDr: number,
   incomingDc: number,
-  random: () => number,
+  patrolBias: -1 | 1,
 ): OpenDir {
-  let choices = open
-  if (open.length > 1) {
-    const filtered = open.filter(
-      (o) => !(o.dr === -incomingDr && o.dc === -incomingDc),
-    )
-    if (filtered.length > 0) choices = filtered
+  if (open.length === 1) return open[0]!
+  if (incomingDr === 0 && incomingDc === 0) {
+    return open[0]!
   }
-  return choices[Math.floor(random() * choices.length)]!
+  const forward = findOpenDir(open, incomingDr, incomingDc)
+  const left = findOpenDir(
+    open,
+    incomingDc,
+    -incomingDr,
+  )
+  const right = findOpenDir(
+    open,
+    -incomingDc,
+    incomingDr,
+  )
+  const back = findOpenDir(open, -incomingDr, -incomingDc)
+  const preferredTurn = patrolBias < 0 ? left : right
+  const alternateTurn = patrolBias < 0 ? right : left
+  return forward ?? preferredTurn ?? alternateTurn ?? back ?? open[0]!
 }
 
 function manhattan(
@@ -202,6 +221,7 @@ function pickAtIntersection(
   pCol: number,
   incomingDr: number,
   incomingDc: number,
+  patrolBias: -1 | 1,
   random: () => number,
 ): OpenDir {
   if (open.length === 1) return open[0]!
@@ -214,7 +234,7 @@ function pickAtIntersection(
   if (mode === 'chase') {
     return pickChase(open, atRow, atCol, pRow, pCol, random)
   }
-  return pickIdle(open, incomingDr, incomingDc, random)
+  return pickIdle(open, incomingDr, incomingDc, patrolBias)
 }
 
 function initFromPosition(
@@ -227,6 +247,7 @@ function initFromPosition(
   mode: GhostGridNavMode,
   pRow: number,
   pCol: number,
+  patrolBias: -1 | 1,
   random: () => number,
 ): { x: number; z: number } {
   const { row, col } = worldToCellIndex(bounds, px, pz, ROWS, COLS)
@@ -257,6 +278,7 @@ function initFromPosition(
     pCol,
     0,
     1,
+    patrolBias,
     random,
   )
 
@@ -290,6 +312,7 @@ export function stepGhostGridNav(
   playerZ: number,
   wc: WorldCollision,
   radius: number,
+  patrolBias: -1 | 1,
   random: () => number,
 ): { x: number; z: number; vx: number; vz: number; fx: number; fz: number } {
   const key = boundsKey(bounds)
@@ -312,6 +335,7 @@ export function stepGhostGridNav(
       mode,
       pRow,
       pCol,
+      patrolBias,
       random,
     )
     px = snap.x
@@ -352,6 +376,7 @@ export function stepGhostGridNav(
         pCol,
         state.incomingDr,
         state.incomingDc,
+        patrolBias,
         random,
       )
       state.incomingDr = pick.dr

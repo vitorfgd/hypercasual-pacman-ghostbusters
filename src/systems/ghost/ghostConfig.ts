@@ -122,7 +122,7 @@ export type GhostSpawnSpec = {
 
 /** Per-room ghost counts (ROOM_1 … ROOM_N). Last room is boss (0). Max tier = 3. */
 export const GHOSTS_PER_ROOM: readonly number[] = (() => {
-  const pattern = [1, 1, 2, 2, 2, 2, 3, 3, 3, 0]
+  const pattern = [1, 2, 2, 2, 3, 3, 3, 3, 3, 0]
   if (pattern.length !== NORMAL_ROOM_COUNT) {
     throw new Error('GHOSTS_PER_ROOM length must match NORMAL_ROOM_COUNT')
   }

@@ -38,6 +38,22 @@ type UpgradeDef = {
   ) => Omit<ApplyRunUpgradeResult, 'lives'> & { livesDelta?: number }
 }
 
+const STARTER_UPGRADE_IDS = [
+  'swift-stride',
+  'steady-hands',
+  'light-footing',
+] as const
+
+const SAFETY_UPGRADE_IDS = [
+  'spirit-shield',
+  'steady-hands',
+  'light-footing',
+  'second-wind',
+  'respite-charm',
+] as const
+
+const RISK_UPGRADE_IDS = ['echo-bait', 'spectral-swarm'] as const
+
 function shuffleInPlace<T>(arr: T[], random: () => number): void {
   for (let i = arr.length - 1; i > 0; i--) {
     const j = Math.floor(random() * (i + 1))
@@ -58,6 +74,21 @@ const DEFINITIONS: readonly UpgradeDef[] = [
       return {
         bannerSubtitle: 'YOU FEEL FASTER',
         floatText: `Speed ${state.speedLevel}/${MAX_SPEED_UPGRADE_LEVELS}`,
+        floatClass: 'float-hud--level-up',
+      }
+    },
+  },
+  {
+    id: 'spirit-shield',
+    title: 'Spirit shield',
+    description: 'Absorb one damage hit in each room.',
+    stackable: false,
+    isEligible: (s) => !s.roomShieldTaken,
+    apply: ({ state }) => {
+      state.roomShieldTaken = true
+      return {
+        bannerSubtitle: 'SPIRIT SHIELD',
+        floatText: 'One hit blocked in every room',
         floatClass: 'float-hud--level-up',
       }
     },
@@ -206,18 +237,38 @@ export function pickRunUpgradeOffers(
   random: () => number,
   state: RunUpgradeState,
   lives: number,
+  roomClearCount = 0,
 ): RunUpgradeOffer[] {
   const pool = DEFINITIONS.filter((d) => isDefEligible(d, state, lives))
-  const arr = [...pool]
-  shuffleInPlace(arr, random)
   const out: RunUpgradeOffer[] = []
   const seen = new Set<string>()
-  for (const d of arr) {
-    if (out.length >= 3) break
-    if (seen.has(d.id)) continue
-    seen.add(d.id)
-    out.push({ id: d.id, title: d.title, description: d.description })
+
+  const pushUnique = (defs: readonly UpgradeDef[]): void => {
+    for (const d of defs) {
+      if (out.length >= 3) break
+      if (seen.has(d.id)) continue
+      seen.add(d.id)
+      out.push({ id: d.id, title: d.title, description: d.description })
+    }
   }
+
+  const eligibleByIds = (ids: readonly string[]): UpgradeDef[] => {
+    const defs = pool.filter((d) => ids.includes(d.id))
+    shuffleInPlace(defs, random)
+    return defs
+  }
+
+  if (roomClearCount === 0) {
+    pushUnique(eligibleByIds(STARTER_UPGRADE_IDS))
+  } else if (roomClearCount === 1) {
+    pushUnique(eligibleByIds(SAFETY_UPGRADE_IDS).slice(0, 2))
+  } else if (roomClearCount >= 3) {
+    pushUnique(eligibleByIds(RISK_UPGRADE_IDS).slice(0, 1))
+  }
+
+  const arr = [...pool]
+  shuffleInPlace(arr, random)
+  pushUnique(arr)
   return out
 }
 

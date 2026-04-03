@@ -19,6 +19,17 @@ export function cellCenterWorld(
   }
 }
 
+export function cellSizeWorld(
+  b: RoomBounds,
+  rows: number = ROOM_GRID_ROWS,
+  cols: number = ROOM_GRID_COLS,
+): { width: number; depth: number } {
+  return {
+    width: (b.maxX - b.minX - 2 * GRID_ROOM_INSET) / cols,
+    depth: (b.maxZ - b.minZ - 2 * GRID_ROOM_INSET) / rows,
+  }
+}
+
 /** Which cell contains this world point (clamped to grid). */
 export function worldToCellIndex(
   b: RoomBounds,

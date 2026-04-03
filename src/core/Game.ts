@@ -28,9 +28,20 @@ import { spawnRoomClearedFloorLabel } from '../systems/scene/roomClearedFloorLab
 import { subscribeViewportResize } from '../systems/scene/resize.ts'
 import { CarryStack, UNLIMITED_STACK_MAX } from '../systems/stack/CarryStack.ts'
 import { StackVisual } from '../systems/stack/StackVisual.ts'
-import { createRelicItem, createWispItem } from '../themes/wisp/itemFactory.ts'
+import {
+  createPowerPelletItem,
+  createRelicItem,
+  createWispItem,
+} from '../themes/wisp/itemFactory.ts'
 import type { GameItem } from './types/GameItem.ts'
 import { createRunRandom } from './runRng.ts'
+import {
+  formatPersonalBestRoom,
+  formatPersonalBestTime,
+  loadSavedPersonalBest,
+  savePersonalBest,
+  type PersonalBestSnapshot,
+} from './personalBest.ts'
 import { speedForLevel } from '../systems/upgrades/upgradeConfig.ts'
 import {
   applyRunUpgrade,
@@ -100,6 +111,7 @@ import { PlayerMotionTrail } from '../juice/playerMotionTrail.ts'
 import {
   spawnFloatingHudText,
   spawnRoomClearedBanner,
+  spawnRoomEntryBanner,
 } from '../juice/floatingHud.ts'
 import { playJuiceSound } from '../juice/juiceSound.ts'
 import {
@@ -124,11 +136,15 @@ import { spawnGridWispsForPlans } from '../systems/grid/instantiateGridRoomConte
 import { spawnPowerPelletsForRun } from '../systems/grid/powerPelletSpawn.ts'
 import { pickGridGhostSpawnXZ } from '../systems/grid/gridGhostSpawn.ts'
 import {
+  flattenMazeWallPlacements,
   flattenTrapPlacements,
   planAllRoomGrids,
   type RoomGridPlan,
 } from '../systems/grid/planRoomGrids.ts'
+import { ROOM_GRID_COLS, ROOM_GRID_ROWS } from '../systems/grid/gridConfig.ts'
+import { cellCenterWorld } from '../systems/grid/roomGridGeometry.ts'
 import { TrapFieldSystem } from '../systems/traps/TrapFieldSystem.ts'
+import { GridMazeWallSystem } from '../systems/world/GridMazeWallSystem.ts'
 import { BossRoomController } from '../systems/boss/BossRoomController.ts'
 import {
   BOSS_CINE_RETURN_SEC,
@@ -209,6 +225,9 @@ export class Game {
   private readonly hudRoomCleanFill: HTMLElement | null
   private readonly hudRoomCleanPct: HTMLElement | null
   private readonly hudRoomCleanTitle: HTMLElement | null
+  private readonly hudSafePbRoomEl: HTMLElement | null
+  private readonly hudSafePbTimeEl: HTMLElement | null
+  private readonly hudSafePbActionsEl: HTMLElement | null
   private readonly hudCarryEl: HTMLElement | null
   private readonly hudCameraHintEl: HTMLElement | null
   private readonly hudLivesWrap: HTMLElement | null
@@ -219,7 +238,13 @@ export class Game {
   private readonly bossRoom: BossRoomController
   private runStatRoomsCleared = 0
   private runStatWispsCollected = 0
+  private runStatDeepestRoomReached = 0
+  private runStatBossReachedAtSec: number | null = null
   private readonly runStatUpgradesPicked: { id: string; title: string }[] = []
+  private personalBest: PersonalBestSnapshot = loadSavedPersonalBest()
+  private roomShieldAvailable = false
+  private shieldRefreshRoomId: RoomId | null = null
+  private leaderboardOverlayEl: HTMLElement | null = null
   /** Room reached 100% â€” waiting for player to pick an upgrade. */
   private roomUpgradePaused = false
   private roomUpgradePendingReveal: (() => void) | null = null
@@ -227,6 +252,7 @@ export class Game {
     typeof mountRoomUpgradePicker
   > | null
   private readonly trapField: TrapFieldSystem
+  private readonly mazeWalls: GridMazeWallSystem
   private readonly roomGridPlans: ReadonlyMap<NormalRoomId, RoomGridPlan>
   private readonly gridWispTotalsPerRoom: ReadonlyMap<RoomId, number>
   private readonly wispsCollectedPerRoom = new Map<RoomId, number>()
@@ -234,12 +260,20 @@ export class Game {
   private ghostHitSlowMoRemain = 0
   private hudStackHum: HTMLElement | null = null
   private depositShakeTimer: ReturnType<typeof setTimeout> | null = null
+  private ectoGlowTimer: ReturnType<typeof setTimeout> | null = null
   /** Hide north welcome banner after first exit from the safe hub room. */
   private hubWelcomeHidden = false
   private wasInSafeRoom = true
   private gameStartCountdownRemain = 3
   private gameStartCountdownStep = -1
   private readonly gameStartCountdownEl: HTMLElement
+  private firstDoorTutorialShown = false
+  private firstDoorTutorialPaused = false
+  private firstDoorTutorialPrewarmDone = false
+  private firstDoorTutorialClutterWarmDone = false
+  private readonly firstDoorTutorialOverlayEl: HTMLElement
+  private readonly firstDoorTutorialStatusEl: HTMLElement
+  private readonly firstDoorTutorialContinueEl: HTMLButtonElement
   private readonly navDebugHudEl: HTMLElement | null
   private lastNavIdleWarnSec = -999
 
@@ -260,6 +294,16 @@ export class Game {
   /** Reused by boss intro camera return (follow rig target + look). */
   private readonly gateCinePlayerLook = new Vector3()
   private readonly gateCineRigDesired = new Vector3()
+
+  private readonly onFirstDoorTutorialContinue = (): void => {
+    if (!this.firstDoorTutorialPaused) return
+    if (!this.firstDoorTutorialPrewarmDone) return
+    this.firstDoorTutorialPaused = false
+    this.firstDoorTutorialOverlayEl.classList.remove(
+      'door-tutorial-overlay--show',
+    )
+    this.firstDoorTutorialContinueEl.blur()
+  }
 
   /** Final room: short camera beat before `BossRoomController.startFight`. */
   private bossIntroCinematicRunning = false
@@ -332,6 +376,58 @@ export class Game {
     this.hudRoomCleanFill = host.querySelector('#hud-room-clean-fill')
     this.hudRoomCleanPct = host.querySelector('#hud-room-clean-pct')
     this.hudRoomCleanTitle = host.querySelector('#hud-room-clean-title')
+    let hudSafePbWrap: HTMLElement | null = null
+    let hudSafePbRoomEl: HTMLElement | null = null
+    let hudSafePbTimeEl: HTMLElement | null = null
+    let hudSafePbActionsEl: HTMLElement | null = null
+    if (this.hudRoomCleanWrap) {
+      hudSafePbWrap = document.createElement('div')
+      hudSafePbWrap.className = 'hud-room-clean__pb'
+
+      const roomRow = document.createElement('div')
+      roomRow.className = 'hud-room-clean__pb-row'
+      const roomLabel = document.createElement('span')
+      roomLabel.className = 'hud-room-clean__pb-label'
+      roomLabel.textContent = 'Best room'
+      hudSafePbRoomEl = document.createElement('span')
+      hudSafePbRoomEl.className = 'hud-room-clean__pb-value'
+      roomRow.append(roomLabel, hudSafePbRoomEl)
+
+      const timeRow = document.createElement('div')
+      timeRow.className = 'hud-room-clean__pb-row'
+      const timeLabel = document.createElement('span')
+      timeLabel.className = 'hud-room-clean__pb-label'
+      timeLabel.textContent = 'Best time'
+      hudSafePbTimeEl = document.createElement('span')
+      hudSafePbTimeEl.className = 'hud-room-clean__pb-value'
+      timeRow.append(timeLabel, hudSafePbTimeEl)
+
+      hudSafePbActionsEl = document.createElement('div')
+      hudSafePbActionsEl.className = 'hud-room-clean__pb-actions'
+
+      const bossBoardBtn = document.createElement('button')
+      bossBoardBtn.type = 'button'
+      bossBoardBtn.className = 'hud-room-clean__pb-btn'
+      bossBoardBtn.textContent = 'Boss rush'
+      bossBoardBtn.addEventListener('click', () => {
+        this.openLeaderboard('boss')
+      })
+
+      const depthBoardBtn = document.createElement('button')
+      depthBoardBtn.type = 'button'
+      depthBoardBtn.className = 'hud-room-clean__pb-btn'
+      depthBoardBtn.textContent = 'Deep run'
+      depthBoardBtn.addEventListener('click', () => {
+        this.openLeaderboard('depth')
+      })
+
+      hudSafePbActionsEl.append(bossBoardBtn, depthBoardBtn)
+      hudSafePbWrap.append(roomRow, timeRow, hudSafePbActionsEl)
+      this.hudRoomCleanWrap.appendChild(hudSafePbWrap)
+    }
+    this.hudSafePbRoomEl = hudSafePbRoomEl
+    this.hudSafePbTimeEl = hudSafePbTimeEl
+    this.hudSafePbActionsEl = hudSafePbActionsEl
     this.hudCameraHintEl = host.querySelector<HTMLElement>('#hud-camera-hint')
     this.hudLivesWrap = host.querySelector<HTMLElement>('#hud-lives')
     this.hudStackHum = host.querySelector('#hud-stack-hum')
@@ -340,11 +436,63 @@ export class Game {
     this.gameStartCountdownEl.setAttribute('aria-live', 'polite')
     this.gameStartCountdownEl.setAttribute('aria-atomic', 'true')
     this.gameViewport.appendChild(this.gameStartCountdownEl)
+    this.firstDoorTutorialOverlayEl = document.createElement('div')
+    this.firstDoorTutorialOverlayEl.className = 'door-tutorial-overlay'
+    this.firstDoorTutorialOverlayEl.setAttribute('role', 'dialog')
+    this.firstDoorTutorialOverlayEl.setAttribute('aria-modal', 'true')
+    this.firstDoorTutorialOverlayEl.setAttribute('aria-labelledby', 'door-tutorial-title')
+    this.firstDoorTutorialOverlayEl.setAttribute('aria-describedby', 'door-tutorial-copy')
+
+    const tutorialBackdrop = document.createElement('div')
+    tutorialBackdrop.className = 'door-tutorial-overlay__backdrop'
+
+    const tutorialPanel = document.createElement('div')
+    tutorialPanel.className = 'door-tutorial-overlay__panel'
+
+    const tutorialEyebrow = document.createElement('p')
+    tutorialEyebrow.className = 'door-tutorial-overlay__eyebrow'
+    tutorialEyebrow.textContent = 'First breach'
+
+    const tutorialTitle = document.createElement('h2')
+    tutorialTitle.id = 'door-tutorial-title'
+    tutorialTitle.className = 'door-tutorial-overlay__title'
+    tutorialTitle.textContent = 'Room 1 changes the rules'
+
+    const tutorialCopy = document.createElement('div')
+    tutorialCopy.id = 'door-tutorial-copy'
+    tutorialCopy.className = 'door-tutorial-overlay__copy'
+    tutorialCopy.innerHTML =
+      '<p>Ghosts patrol on the same grid you do. They stay predictable until you step into their vision cone.</p>' +
+      '<p>Break line of sight with walls, grab the room power-up, and sweep wisps before the room gets crowded.</p>'
+
+    const tutorialStatus = document.createElement('p')
+    tutorialStatus.className = 'door-tutorial-overlay__status'
+    tutorialStatus.textContent = 'Preparing the next rooms...'
+    this.firstDoorTutorialStatusEl = tutorialStatus
+
+    const tutorialContinue = document.createElement('button')
+    tutorialContinue.type = 'button'
+    tutorialContinue.className = 'door-tutorial-overlay__continue'
+    tutorialContinue.textContent = 'Preparing...'
+    tutorialContinue.disabled = true
+    tutorialContinue.addEventListener('click', this.onFirstDoorTutorialContinue)
+    this.firstDoorTutorialContinueEl = tutorialContinue
+
+    tutorialPanel.append(
+      tutorialEyebrow,
+      tutorialTitle,
+      tutorialCopy,
+      tutorialStatus,
+      tutorialContinue,
+    )
+    this.firstDoorTutorialOverlayEl.append(tutorialBackdrop, tutorialPanel)
+    this.gameViewport.appendChild(this.firstDoorTutorialOverlayEl)
     this.navDebugHudEl = host.querySelector('#nav-debug-hud')
     if (!SHOW_PLAYER_NAV_DEBUG_HUD && this.navDebugHudEl) {
       this.navDebugHudEl.style.display = 'none'
     }
     this.syncGameStartCountdown()
+    this.syncSafeRoomPersonalBestHud()
 
     this.camera = createCamera(
       host.clientWidth / Math.max(host.clientHeight, 1),
@@ -406,7 +554,11 @@ export class Game {
           this.syncRoomPickupAccessibilityFromDoors()
           const nextRoom = doorIndex + 1
           if (nextRoom >= 1 && nextRoom <= NORMAL_ROOM_COUNT) {
+            this.triggerRoomEntryJuice(nextRoom)
             this.ghostSystem.spawnGhostsForRoom(nextRoom)
+            if (doorIndex === 0) {
+              this.beginFirstDoorTutorial()
+            }
           }
         })
       },
@@ -426,6 +578,11 @@ export class Game {
       planAllRoomGrids(this.roomSystem, this.runRandom)
     this.roomGridPlans = roomGridPlans
     this.gridWispTotalsPerRoom = gridWispTotalsPerRoom
+    this.mazeWalls = new GridMazeWallSystem(
+      this.scene,
+      flattenMazeWallPlacements(roomGridPlans),
+    )
+    this.worldCollision.setStructureColliders(this.mazeWalls.getColliders())
     this.trapField = new TrapFieldSystem(
       this.scene,
       flattenTrapPlacements(roomGridPlans),
@@ -442,6 +599,21 @@ export class Game {
       this.itemWorld,
       (roomId) => this.roomSystem.isRoomAccessibleForGameplay(roomId),
       this.runRandom,
+    )
+    const finalBossPellet = cellCenterWorld(
+      this.roomSystem.getBounds(FINAL_NORMAL_ROOM_ID),
+      ROOM_GRID_ROWS - 2,
+      Math.floor(ROOM_GRID_COLS / 2),
+      ROOM_GRID_ROWS,
+      ROOM_GRID_COLS,
+    )
+    this.itemWorld.spawn(
+      createPowerPelletItem(`power_pellet_${FINAL_NORMAL_ROOM_ID}`, FINAL_NORMAL_ROOM_ID),
+      finalBossPellet.x,
+      finalBossPellet.z,
+      {
+        visible: this.roomSystem.isRoomAccessibleForGameplay(FINAL_NORMAL_ROOM_ID),
+      },
     )
     this.playerTrail = new PlayerMotionTrail(this.scene)
 
@@ -504,6 +676,7 @@ export class Game {
           this.runRandom,
           this.runUpgrades,
           this.lives,
+          this.runStatRoomsCleared,
         )
         const applyChosen = (offer: (typeof offers)[number]): void => {
           const res = applyRunUpgrade(offer.id, {
@@ -571,6 +744,14 @@ export class Game {
         this.perf.endFrame(this.renderer.info.render.calls, 0)
         return
       }
+      if (this.firstDoorTutorialPaused) {
+        this.lastTime = now
+        this.perf.beginFrame(now)
+        this.updateFirstDoorTutorialPause()
+        this.renderer.render(this.scene, this.camera)
+        this.perf.endFrame(this.renderer.info.render.calls, 0)
+        return
+      }
       const dt = Math.min(0.05, (now - this.lastTime) / 1000)
       this.lastTime = now
       this.perf.beginFrame(now)
@@ -600,6 +781,9 @@ export class Game {
         this.playerPos.x,
         this.playerPos.z,
       )
+      this.updateDeepestRoomReached(roomEarly)
+      this.updateBossReachStat(roomEarly)
+      this.refreshRoomShield(roomEarly)
       const inSafeRoomEarly = roomEarly === 'SAFE_CENTER'
       if (
         !this.hubWelcomeHidden &&
@@ -822,6 +1006,10 @@ export class Game {
         this.isInteractionCinematicBlocking(),
         this.powerModeRemain > 0,
       )
+      const coneAggroTriggers = this.ghostSystem.consumeVisionAggroEvents()
+      if (coneAggroTriggers > 0) {
+        this.triggerGhostAggroJuice(coneAggroTriggers)
+      }
 
       this.ghostHitInvuln = Math.max(0, this.ghostHitInvuln - dt)
       this.ghostHitPickupLockRemain = Math.max(
@@ -914,36 +1102,39 @@ export class Game {
           this.playerPos,
         )
 
-        this.lives = Math.max(0, this.lives - 1)
-        spawnLifeLostImpact(this.gameViewport)
-        this.triggerDepositScreenShake(true)
-        this.syncLivesHud()
-        if (this.lives <= 0) {
-          this.gameOver = true
-          this.runFailedCleanup = showRunFailedOverlay(
-            this.gameViewport,
-            {
-              roomsCleared: this.runStatRoomsCleared,
-              wispsCollected: this.runStatWispsCollected,
-              timeSec: this.elapsedSec,
-              upgrades: this.runStatUpgradesPicked.map((u) => ({
-                title: u.title,
-              })),
-            },
-            {
-              onRetry: () => {
-                this.runFailedCleanup?.()
-                this.runFailedCleanup = null
-                if (this.onRunFailedRetry) {
-                  void Promise.resolve(this.onRunFailedRetry()).catch(() => {
-                    location.reload()
-                  })
-                } else {
-                  location.reload()
-                }
+        if (!this.consumeRoomShield()) {
+          this.lives = Math.max(0, this.lives - 1)
+          spawnLifeLostImpact(this.gameViewport)
+          this.triggerDepositScreenShake(true)
+          this.syncLivesHud()
+          if (this.lives <= 0) {
+            this.commitRunPersonalBest()
+            this.gameOver = true
+            this.runFailedCleanup = showRunFailedOverlay(
+              this.gameViewport,
+              {
+                roomsCleared: this.runStatRoomsCleared,
+                wispsCollected: this.runStatWispsCollected,
+                timeSec: this.elapsedSec,
+                upgrades: this.runStatUpgradesPicked.map((u) => ({
+                  title: u.title,
+                })),
               },
-            },
-          )
+              {
+                onRetry: () => {
+                  this.runFailedCleanup?.()
+                  this.runFailedCleanup = null
+                  if (this.onRunFailedRetry) {
+                    void Promise.resolve(this.onRunFailedRetry()).catch(() => {
+                      location.reload()
+                    })
+                  } else {
+                    location.reload()
+                  }
+                },
+              },
+            )
+          }
         }
       }
       updateGhostHitBursts(this.burstParticles, dt)
@@ -1014,6 +1205,41 @@ export class Game {
     this.syncGameStartCountdown()
   }
 
+  private beginFirstDoorTutorial(): void {
+    if (this.firstDoorTutorialShown) return
+    this.firstDoorTutorialShown = true
+    this.firstDoorTutorialPaused = true
+    this.firstDoorTutorialPrewarmDone = false
+    this.firstDoorTutorialClutterWarmDone = false
+    this.firstDoorTutorialStatusEl.textContent = 'Preparing the next rooms...'
+    this.firstDoorTutorialContinueEl.disabled = true
+    this.firstDoorTutorialContinueEl.textContent = 'Preparing...'
+    this.firstDoorTutorialOverlayEl.classList.add('door-tutorial-overlay--show')
+    requestAnimationFrame(() => {
+      this.firstDoorTutorialContinueEl.focus()
+    })
+  }
+
+  private updateFirstDoorTutorialPause(): void {
+    if (!this.firstDoorTutorialClutterWarmDone) {
+      this.itemWorld.prewarmClutterPool(3)
+      this.syncRoomPickupAccessibilityFromDoors()
+      this.renderer.compile(this.scene, this.camera)
+      this.firstDoorTutorialClutterWarmDone = true
+    }
+    if (!this.firstDoorTutorialPrewarmDone) {
+      this.ghostSystem.prewarmFutureGhosts(48)
+      if (!this.ghostSystem.hasPendingFutureGhostPrewarm()) {
+        this.renderer.compile(this.scene, this.camera)
+        this.firstDoorTutorialPrewarmDone = true
+        this.firstDoorTutorialStatusEl.textContent =
+          'All set. Continue when you are ready.'
+        this.firstDoorTutorialContinueEl.disabled = false
+        this.firstDoorTutorialContinueEl.textContent = 'Continue'
+      }
+    }
+  }
+
   private syncGameStartCountdown(): void {
     const el = this.gameStartCountdownEl
     const step =
@@ -1034,6 +1260,248 @@ export class Game {
       void el.offsetWidth
       el.classList.add('game-start-countdown--tick')
     }
+  }
+
+  private updateDeepestRoomReached(roomId: RoomId | null): void {
+    if (!roomId || roomId === 'SAFE_CENTER' || !roomId.startsWith('ROOM_')) return
+    const roomNumber = Number(roomId.slice(5))
+    if (Number.isFinite(roomNumber)) {
+      this.runStatDeepestRoomReached = Math.max(
+        this.runStatDeepestRoomReached,
+        roomNumber,
+      )
+    }
+  }
+
+  private updateBossReachStat(roomId: RoomId | null): void {
+    if (
+      roomId === FINAL_NORMAL_ROOM_ID &&
+      this.runStatBossReachedAtSec === null
+    ) {
+      this.runStatBossReachedAtSec = this.elapsedSec
+    }
+  }
+
+  private refreshRoomShield(roomId: RoomId | null): void {
+    if (!this.runUpgrades.roomShieldTaken) return
+    if (!roomId || roomId === 'SAFE_CENTER' || !roomId.startsWith('ROOM_')) return
+    if (this.shieldRefreshRoomId === roomId) return
+    this.shieldRefreshRoomId = roomId
+    this.roomShieldAvailable = true
+    spawnFloatingHudText(
+      this.gameViewport,
+      'Shield ready',
+      'float-hud--pickup',
+      { topPct: 24, leftPct: 50, durationSec: 0.9 },
+    )
+  }
+
+  private consumeRoomShield(label = 'Shielded!'): boolean {
+    if (!this.roomShieldAvailable) return false
+    this.roomShieldAvailable = false
+    this.triggerEctoGlow(180)
+    playJuiceSound('power_pickup', { pitch: 0.84 })
+    spawnFloatingHudText(this.gameViewport, label, 'float-hud--level-up', {
+      topPct: 26,
+      leftPct: 50,
+      durationSec: 1.05,
+    })
+    return true
+  }
+
+  private syncSafeRoomPersonalBestHud(): void {
+    if (!this.hudSafePbRoomEl || !this.hudSafePbTimeEl) return
+    this.hudSafePbRoomEl.textContent = formatPersonalBestRoom(
+      this.personalBest.bestRoomReached,
+    )
+    this.hudSafePbTimeEl.textContent =
+      this.personalBest.bestTimeSec > 0
+        ? formatPersonalBestTime(this.personalBest.bestTimeSec)
+        : '0:00'
+    this.hudSafePbActionsEl?.setAttribute(
+      'data-boss-ready',
+      this.personalBest.bestBossReachTimeSec === null ? 'false' : 'true',
+    )
+  }
+
+  private commitRunPersonalBest(): void {
+    const bestBossReachTimeSec =
+      this.runStatBossReachedAtSec === null
+        ? this.personalBest.bestBossReachTimeSec
+        : this.personalBest.bestBossReachTimeSec === null
+          ? this.runStatBossReachedAtSec
+          : Math.min(
+              this.personalBest.bestBossReachTimeSec,
+              this.runStatBossReachedAtSec,
+            )
+    const next: PersonalBestSnapshot = {
+      bestRoomReached: Math.max(
+        this.personalBest.bestRoomReached,
+        this.runStatDeepestRoomReached,
+      ),
+      bestTimeSec: Math.max(this.personalBest.bestTimeSec, this.elapsedSec),
+      bestBossReachTimeSec,
+    }
+    if (
+      next.bestRoomReached === this.personalBest.bestRoomReached &&
+      next.bestTimeSec === this.personalBest.bestTimeSec &&
+      next.bestBossReachTimeSec === this.personalBest.bestBossReachTimeSec
+    ) {
+      return
+    }
+    this.personalBest = next
+    savePersonalBest(next)
+    this.syncSafeRoomPersonalBestHud()
+  }
+
+  private openLeaderboard(kind: 'boss' | 'depth'): void {
+    this.closeLeaderboard()
+    const overlay = document.createElement('div')
+    overlay.className = 'leaderboard-overlay leaderboard-overlay--show'
+
+    const backdrop = document.createElement('div')
+    backdrop.className = 'leaderboard-overlay__backdrop'
+    backdrop.addEventListener('click', () => this.closeLeaderboard())
+
+    const panel = document.createElement('div')
+    panel.className = 'leaderboard-overlay__panel'
+
+    const title = document.createElement('h2')
+    title.className = 'leaderboard-overlay__title'
+    title.textContent = kind === 'boss' ? 'Boss Rush Board' : 'Deep Run Board'
+
+    const sub = document.createElement('p')
+    sub.className = 'leaderboard-overlay__sub'
+    sub.textContent =
+      kind === 'boss'
+        ? 'Fastest runs to reach the boss room.'
+        : 'Best runs by deepest room reached.'
+
+    const list = document.createElement('div')
+    list.className = 'leaderboard-overlay__list'
+    for (const row of this.buildLeaderboardRows(kind)) {
+      const item = document.createElement('div')
+      item.className = 'leaderboard-overlay__row'
+      if (row.highlight) item.classList.add('leaderboard-overlay__row--you')
+
+      const rank = document.createElement('span')
+      rank.className = 'leaderboard-overlay__rank'
+      rank.textContent = String(row.rank)
+
+      const name = document.createElement('span')
+      name.className = 'leaderboard-overlay__name'
+      name.textContent = row.name
+
+      const value = document.createElement('span')
+      value.className = 'leaderboard-overlay__value'
+      value.textContent = row.value
+
+      item.append(rank, name, value)
+      list.appendChild(item)
+    }
+
+    const close = document.createElement('button')
+    close.type = 'button'
+    close.className = 'leaderboard-overlay__close'
+    close.textContent = 'Close'
+    close.addEventListener('click', () => this.closeLeaderboard())
+
+    panel.append(title, sub, list, close)
+    overlay.append(backdrop, panel)
+    this.gameViewport.appendChild(overlay)
+    this.leaderboardOverlayEl = overlay
+  }
+
+  private closeLeaderboard(): void {
+    this.leaderboardOverlayEl?.remove()
+    this.leaderboardOverlayEl = null
+  }
+
+  private buildLeaderboardRows(
+    kind: 'boss' | 'depth',
+  ): { rank: number; name: string; value: string; highlight?: boolean }[] {
+    if (kind === 'boss') {
+      const rows = [
+        { name: 'Mara', timeSec: 231 },
+        { name: 'Noel', timeSec: 244 },
+        { name: 'Aya', timeSec: 256 },
+        { name: 'Vex', timeSec: 271 },
+        { name: 'Ciro', timeSec: 286 },
+        { name: 'June', timeSec: 298 },
+      ]
+      if (this.personalBest.bestBossReachTimeSec !== null) {
+        rows.push({
+          name: 'You',
+          timeSec: this.personalBest.bestBossReachTimeSec,
+        })
+      }
+      rows.sort((a, b) => a.timeSec - b.timeSec)
+      return rows.slice(0, 8).map((row, i) => ({
+        rank: i + 1,
+        name: row.name,
+        value: formatPersonalBestTime(row.timeSec),
+        highlight: row.name === 'You',
+      }))
+    }
+
+    const rows = [
+      { name: 'Mara', room: 10, timeSec: 634 },
+      { name: 'Ciro', room: 9, timeSec: 522 },
+      { name: 'Noel', room: 9, timeSec: 491 },
+      { name: 'Aya', room: 8, timeSec: 446 },
+      { name: 'June', room: 8, timeSec: 418 },
+      { name: 'Vex', room: 7, timeSec: 352 },
+    ]
+    if (this.personalBest.bestRoomReached > 0 || this.personalBest.bestTimeSec > 0) {
+      rows.push({
+        name: 'You',
+        room: this.personalBest.bestRoomReached,
+        timeSec: this.personalBest.bestTimeSec,
+      })
+    }
+    rows.sort((a, b) => {
+      if (b.room !== a.room) return b.room - a.room
+      return b.timeSec - a.timeSec
+    })
+    return rows.slice(0, 8).map((row, i) => ({
+      rank: i + 1,
+      name: row.name,
+      value: `${formatPersonalBestRoom(row.room)} · ${formatPersonalBestTime(row.timeSec)}`,
+      highlight: row.name === 'You',
+    }))
+  }
+
+  private triggerRoomEntryJuice(roomIndex: number): void {
+    spawnRoomEntryBanner(
+      this.gameViewport,
+      `Room ${roomIndex}`,
+      roomIndex === 2 ? 'Stay out of their cone' : 'Sweep fast, stay moving',
+    )
+    this.triggerEctoGlow(300)
+    playJuiceSound('ghost_pulse', { pitch: 0.94 + roomIndex * 0.015 })
+  }
+
+  private triggerGhostAggroJuice(coneAggroTriggers: number): void {
+    this.triggerEctoGlow(240)
+    playJuiceSound('ghost_pulse', { pitch: 1.06 })
+    const label = coneAggroTriggers > 1 ? 'SPOTTED' : 'SEEN'
+    spawnFloatingHudText(this.gameViewport, label, 'float-hud--alert', {
+      topPct: 22,
+      leftPct: 50,
+      durationSec: 0.8,
+    })
+  }
+
+  private triggerEctoGlow(durationMs: number): void {
+    if (this.ectoGlowTimer) {
+      clearTimeout(this.ectoGlowTimer)
+      this.ectoGlowTimer = null
+    }
+    this.gameViewport.classList.add('game-viewport--glow-ecto')
+    this.ectoGlowTimer = setTimeout(() => {
+      this.gameViewport.classList.remove('game-viewport--glow-ecto')
+      this.ectoGlowTimer = null
+    }, durationMs)
   }
 
   private syncRoomPickupAccessibilityFromDoors(): void {
@@ -1057,6 +1525,10 @@ export class Game {
     this.runUpgrades.reset()
     this.runStatRoomsCleared = 0
     this.runStatWispsCollected = 0
+    this.runStatDeepestRoomReached = 0
+    this.runStatBossReachedAtSec = null
+    this.roomShieldAvailable = false
+    this.shieldRefreshRoomId = null
     this.wispsCollectedPerRoom.clear()
     this.runStatUpgradesPicked.length = 0
     this.roomUpgradePendingReveal = null
@@ -1131,6 +1603,7 @@ export class Game {
   }
 
   private openBossRunSuccessOverlay(): void {
+    this.commitRunPersonalBest()
     this.runSuccessCleanup = showRunSuccessOverlay(
       this.gameViewport,
       {
@@ -1193,6 +1666,7 @@ export class Game {
   /** Boss intro or post-boss outro â€” block movement and pickups. */
   private isInteractionCinematicBlocking(): boolean {
     return (
+      this.firstDoorTutorialPaused ||
       this.roomClearIntroCinematicRunning ||
       this.roomClearDoorCinematicRunning ||
       this.bossIntroCinematicRunning ||
@@ -1423,15 +1897,28 @@ export class Game {
     const titleEl = this.hudRoomCleanTitle
     if (!wrap || !fill || !pctEl || !titleEl) return
 
+    if (roomId === 'SAFE_CENTER') {
+      wrap.classList.remove('hud-room-clean--inactive', 'hud-room-clean--cleared')
+      wrap.classList.add('hud-room-clean--safe')
+      titleEl.textContent = 'Safe room'
+      pctEl.textContent = 'PB'
+      fill.style.transform = 'scaleX(0)'
+      this.syncSafeRoomPersonalBestHud()
+      wrap.querySelector('[role="progressbar"]')?.setAttribute(
+        'aria-valuenow',
+        '0',
+      )
+      return
+    }
+
+    wrap.classList.remove('hud-room-clean--safe')
     const trackable =
       roomId !== null &&
-      roomId !== 'SAFE_CENTER' &&
       roomId.startsWith('ROOM_')
 
     if (!trackable) {
       wrap.classList.add('hud-room-clean--inactive')
-      titleEl.textContent =
-        roomId === 'SAFE_CENTER' ? 'Safe zone' : 'Room'
+      titleEl.textContent = 'Room'
       pctEl.textContent = 'â€”'
       fill.style.transform = 'scaleX(0)'
       return
@@ -1564,36 +2051,39 @@ export class Game {
 
   /** Spike trap: always âˆ’1 life (no stack loss); mesh has no physics collider â€” overlap only. */
   private applyTrapLifeLoss(): void {
-    this.lives = Math.max(0, this.lives - 1)
-    spawnLifeLostImpact(this.gameViewport)
-    this.triggerDepositScreenShake(true)
-    this.syncLivesHud()
-    if (this.lives <= 0) {
-      this.gameOver = true
-      this.runFailedCleanup = showRunFailedOverlay(
-        this.gameViewport,
-        {
-          roomsCleared: this.runStatRoomsCleared,
-          wispsCollected: this.runStatWispsCollected,
-          timeSec: this.elapsedSec,
-          upgrades: this.runStatUpgradesPicked.map((u) => ({
-            title: u.title,
-          })),
-        },
-        {
-          onRetry: () => {
-            this.runFailedCleanup?.()
-            this.runFailedCleanup = null
-            if (this.onRunFailedRetry) {
-              void Promise.resolve(this.onRunFailedRetry()).catch(() => {
-                location.reload()
-              })
-            } else {
-              location.reload()
-            }
+    if (!this.consumeRoomShield('Shield blocked')) {
+      this.lives = Math.max(0, this.lives - 1)
+      spawnLifeLostImpact(this.gameViewport)
+      this.triggerDepositScreenShake(true)
+      this.syncLivesHud()
+      if (this.lives <= 0) {
+        this.commitRunPersonalBest()
+        this.gameOver = true
+        this.runFailedCleanup = showRunFailedOverlay(
+          this.gameViewport,
+          {
+            roomsCleared: this.runStatRoomsCleared,
+            wispsCollected: this.runStatWispsCollected,
+            timeSec: this.elapsedSec,
+            upgrades: this.runStatUpgradesPicked.map((u) => ({
+              title: u.title,
+            })),
           },
-        },
-      )
+          {
+            onRetry: () => {
+              this.runFailedCleanup?.()
+              this.runFailedCleanup = null
+              if (this.onRunFailedRetry) {
+                void Promise.resolve(this.onRunFailedRetry()).catch(() => {
+                  location.reload()
+                })
+              } else {
+                location.reload()
+              }
+            },
+          },
+        )
+      }
     }
 
     const ang = this.runRandom() * Math.PI * 2
@@ -1644,6 +2134,7 @@ export class Game {
   }
 
   dispose(): void {
+    this.closeLeaderboard()
     this.runFailedCleanup?.()
     this.runFailedCleanup = null
     this.runSuccessCleanup?.()
@@ -1652,6 +2143,10 @@ export class Game {
     if (this.depositShakeTimer) {
       clearTimeout(this.depositShakeTimer)
       this.depositShakeTimer = null
+    }
+    if (this.ectoGlowTimer) {
+      clearTimeout(this.ectoGlowTimer)
+      this.ectoGlowTimer = null
     }
     if (this.hitFlashTimer) {
       clearTimeout(this.hitFlashTimer)
@@ -1664,6 +2159,7 @@ export class Game {
     this.gameViewport.classList.remove(
       'game-viewport--ghost-invuln',
       'game-viewport--power-mode',
+      'game-viewport--glow-ecto',
     )
     this.cameraRig.setPowerModeActive(false)
     disposeAllGhostHitBursts(this.burstParticles)
@@ -1676,6 +2172,7 @@ export class Game {
     this.roomClearFloorDisposers.length = 0
     this.hubTitleFloorLabel.dispose()
     this.trapField.dispose()
+    this.mazeWalls.dispose()
     this.playerTrail.dispose()
     this.ghostSystem.dispose()
     disposeSharedGhostVisionConeGeometry()
@@ -1687,6 +2184,11 @@ export class Game {
     window.removeEventListener('keydown', this.onCameraModeKey)
     this.keyboardMove.dispose()
     this.joystick.dispose()
+    this.firstDoorTutorialContinueEl.removeEventListener(
+      'click',
+      this.onFirstDoorTutorialContinue,
+    )
+    this.firstDoorTutorialOverlayEl.remove()
     this.gameStartCountdownEl.remove()
     this.unsubscribeResize()
     this.renderer.dispose()

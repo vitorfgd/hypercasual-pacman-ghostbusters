@@ -10,12 +10,14 @@ import {
   GRID_PLAN_MAX_ATTEMPTS,
   GRID_TRAP_FRACTION_MAX,
   GRID_TRAP_FRACTION_MIN,
+  GRID_WALL_FRACTION_MAX,
+  GRID_WALL_FRACTION_MIN,
   GRID_WISP_FRACTION_MAX,
   GRID_WISP_FRACTION_MIN,
   ROOM_GRID_COLS,
   ROOM_GRID_ROWS,
 } from './gridConfig.ts'
-import { cellCenterWorld } from './roomGridGeometry.ts'
+import { cellCenterWorld, cellSizeWorld } from './roomGridGeometry.ts'
 import type { TrapPlacement } from '../traps/TrapFieldSystem.ts'
 
 export type GridWispSpawn = {
@@ -34,14 +36,24 @@ export type GridTrapSpawn = {
   col: number
 }
 
+export type GridWallSpawn = {
+  x: number
+  z: number
+  row: number
+  col: number
+  width: number
+  depth: number
+}
+
 export type RoomGridPlan = {
   roomId: NormalRoomId
   bounds: RoomBounds
   wisps: readonly GridWispSpawn[]
   traps: readonly GridTrapSpawn[]
+  walls: readonly GridWallSpawn[]
 }
 
-type Cell = 'empty' | 'wisp' | 'trap'
+type Cell = 'empty' | 'wisp' | 'trap' | 'wall'
 
 /** BFS from `start` — traps block; wisps and empty are walkable. */
 function allWispsReachable(
@@ -71,7 +83,7 @@ function allWispsReachable(
       const k = key(nr, nc)
       if (seen.has(k)) continue
       const cell = grid[nr]![nc]!
-      if (cell === 'trap') continue
+      if (cell === 'trap' || cell === 'wall') continue
       seen.add(k)
       q.push([nr, nc])
     }
@@ -101,11 +113,16 @@ function planOneRoom(
     const trapFrac =
       GRID_TRAP_FRACTION_MIN +
       random() * (GRID_TRAP_FRACTION_MAX - GRID_TRAP_FRACTION_MIN)
+    const wallFrac =
+      GRID_WALL_FRACTION_MIN +
+      random() * (GRID_WALL_FRACTION_MAX - GRID_WALL_FRACTION_MIN)
 
     let targetW = Math.max(2, Math.floor(totalCells * wispFrac))
     let targetT = Math.max(1, Math.floor(totalCells * trapFrac))
-    targetW = Math.min(targetW, totalCells - 1 - targetT)
-    targetT = Math.min(targetT, totalCells - 1 - targetW)
+    let targetWall = Math.max(2, Math.floor(totalCells * wallFrac))
+    targetW = Math.max(2, Math.min(targetW, totalCells - 4))
+    targetWall = Math.max(1, Math.min(targetWall, totalCells - 1 - targetW - targetT))
+    targetT = Math.max(1, Math.min(targetT, totalCells - 1 - targetW - targetWall))
 
     const indices: number[] = []
     for (let i = 0; i < totalCells; i++) indices.push(i)
@@ -128,6 +145,35 @@ function planOneRoom(
       grid[r]![c] = 'wisp'
       wispKeys.add(`${r},${c}`)
       placed++
+    }
+
+    const wallCandidates: [number, number][] = []
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (grid[r]![c] !== 'empty') continue
+        if (r === startRow && c === startCol) continue
+        if (r >= rows - 2 && Math.abs(c - startCol) <= 1) continue
+        wallCandidates.push([r, c])
+      }
+    }
+    for (let i = wallCandidates.length - 1; i > 0; i--) {
+      const j = Math.floor(random() * (i + 1))
+      ;[wallCandidates[i], wallCandidates[j]] = [
+        wallCandidates[j]!,
+        wallCandidates[i]!,
+      ]
+    }
+    let wallsPlaced = 0
+    for (const [r, c] of wallCandidates) {
+      if (wallsPlaced >= targetWall) break
+      grid[r]![c] = 'wall'
+      if (
+        allWispsReachable(grid, rows, cols, startRow, startCol, wispKeys)
+      ) {
+        wallsPlaced++
+      } else {
+        grid[r]![c] = 'empty'
+      }
     }
 
     const trapCandidates: [number, number][] = []
@@ -175,18 +221,40 @@ function planOneRoom(
     }
 
     const traps: GridTrapSpawn[] = []
+    const walls: GridWallSpawn[] = []
+    const cellSize = cellSizeWorld(bounds, rows, cols)
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
-        if (grid[r]![c] !== 'trap') continue
+        const cell = grid[r]![c]
+        if (cell === 'trap') {
+          const { x, z } = cellCenterWorld(bounds, r, c, rows, cols)
+          traps.push({ x, z, row: r, col: c })
+          continue
+        }
+        if (cell !== 'wall') continue
         const { x, z } = cellCenterWorld(bounds, r, c, rows, cols)
-        traps.push({ x, z, row: r, col: c })
+        walls.push({
+          x,
+          z,
+          row: r,
+          col: c,
+          width: cellSize.width * 0.78,
+          depth: cellSize.depth * 0.78,
+        })
       }
     }
 
-    return { roomId, bounds, wisps, traps }
+    return { roomId, bounds, wisps, traps, walls }
   }
 
   return null
+}
+
+export type MazeWallPlacement = {
+  x: number
+  z: number
+  width: number
+  depth: number
 }
 
 /**
@@ -229,6 +297,23 @@ export function flattenTrapPlacements(
   for (const plan of plans.values()) {
     for (const t of plan.traps) {
       out.push({ x: t.x, z: t.z })
+    }
+  }
+  return out
+}
+
+export function flattenMazeWallPlacements(
+  plans: ReadonlyMap<NormalRoomId, RoomGridPlan>,
+): MazeWallPlacement[] {
+  const out: MazeWallPlacement[] = []
+  for (const plan of plans.values()) {
+    for (const wall of plan.walls) {
+      out.push({
+        x: wall.x,
+        z: wall.z,
+        width: wall.width,
+        depth: wall.depth,
+      })
     }
   }
   return out

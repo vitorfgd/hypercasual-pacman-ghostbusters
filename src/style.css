@@ -325,6 +325,51 @@ body {
     0 2px 12px rgba(0, 0, 0, 0.55);
 }
 
+.room-entry-banner {
+  position: absolute;
+  top: clamp(14%, 18vh, 22%);
+  left: 50%;
+  z-index: 22;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  transform: translate(-50%, -8px) scale(0.94);
+  opacity: 0;
+  pointer-events: none;
+  transition:
+    opacity 0.22s ease,
+    transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.room-entry-banner--show {
+  opacity: 1;
+  transform: translate(-50%, 0) scale(1);
+}
+
+.room-entry-banner--out {
+  opacity: 0;
+  transform: translate(-50%, -16px) scale(1.04);
+}
+
+.room-entry-banner__title {
+  font: 900 clamp(22px, 6vw, 34px) system-ui, sans-serif;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #fef1bf;
+  text-shadow:
+    0 0 18px rgba(255, 208, 90, 0.8),
+    0 2px 10px rgba(0, 0, 0, 0.58);
+}
+
+.room-entry-banner__sub {
+  font: 800 clamp(11px, 3vw, 14px) system-ui, sans-serif;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: #98f2d0;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.55);
+}
+
 /* Top HUD: capacity | camera | lives (one row) */
 .hud-top {
   position: absolute;
@@ -355,6 +400,11 @@ body {
 
 .hud-room-clean--inactive {
   opacity: 0.5;
+}
+
+.hud-room-clean--safe {
+  background: rgba(10, 16, 22, 0.72);
+  border-color: rgba(255, 220, 150, 0.18);
 }
 
 .hud-room-clean__row {
@@ -400,6 +450,288 @@ body {
     rgba(140, 220, 180, 0.95) 100%
   );
   box-shadow: 0 0 10px rgba(100, 200, 150, 0.25);
+}
+
+.hud-room-clean__pb {
+  display: none;
+  margin-top: 7px;
+  gap: 5px;
+}
+
+.hud-room-clean__pb-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.hud-room-clean__pb-label {
+  font: 600 11px system-ui, sans-serif;
+  color: rgba(230, 222, 205, 0.7);
+  letter-spacing: 0.02em;
+}
+
+.hud-room-clean__pb-value {
+  font: 700 12px ui-monospace, Consolas, 'Cascadia Code', monospace;
+  color: #fff0c6;
+  text-align: right;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.45);
+}
+
+.hud-room-clean__pb-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 3px;
+  pointer-events: auto;
+}
+
+.hud-room-clean__pb-btn {
+  flex: 1 1 0;
+  cursor: pointer;
+  padding: 6px 8px;
+  border: 1px solid rgba(255, 216, 150, 0.2);
+  border-radius: 999px;
+  background: rgba(18, 20, 30, 0.9);
+  color: #fff0c6;
+  font: 700 11px system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  transition:
+    transform 0.12s ease,
+    filter 0.12s ease,
+    border-color 0.12s ease;
+}
+
+.hud-room-clean__pb-btn:hover {
+  filter: brightness(1.07);
+  border-color: rgba(255, 216, 150, 0.38);
+  transform: translateY(-1px);
+}
+
+.hud-room-clean__pb-btn:active {
+  transform: translateY(1px);
+}
+
+.hud-room-clean--safe .hud-room-clean__track {
+  display: none;
+}
+
+.hud-room-clean--safe .hud-room-clean__pb {
+  display: grid;
+}
+
+.leaderboard-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 160;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.door-tutorial-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 170;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.door-tutorial-overlay--show {
+  display: flex;
+}
+
+.door-tutorial-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 50% 32%, rgba(120, 180, 255, 0.14), transparent 24%),
+    radial-gradient(ellipse 92% 76% at 50% 42%, rgba(7, 14, 26, 0.78) 0%, rgba(2, 5, 10, 0.94) 100%);
+  backdrop-filter: blur(4px);
+}
+
+.door-tutorial-overlay__panel {
+  position: relative;
+  z-index: 1;
+  width: min(92%, 29rem);
+  padding: 1.15rem 1.1rem 1rem;
+  border-radius: 18px;
+  border: 1px solid rgba(160, 214, 255, 0.24);
+  background:
+    linear-gradient(180deg, rgba(16, 24, 36, 0.98) 0%, rgba(8, 12, 20, 0.99) 100%);
+  box-shadow:
+    0 20px 54px rgba(0, 0, 0, 0.56),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.door-tutorial-overlay__eyebrow {
+  margin: 0 0 0.45rem;
+  font: 800 0.76rem/1 system-ui, sans-serif;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(151, 224, 255, 0.82);
+  text-align: center;
+}
+
+.door-tutorial-overlay__title {
+  margin: 0 0 0.7rem;
+  text-align: center;
+  font: 900 clamp(1.35rem, 5vw, 1.8rem) / 1.06 system-ui, sans-serif;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #f4f8ff;
+  text-shadow: 0 3px 16px rgba(0, 0, 0, 0.38);
+}
+
+.door-tutorial-overlay__copy {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0 0 0.85rem;
+  color: rgba(226, 236, 248, 0.88);
+  font: 600 0.93rem/1.52 system-ui, sans-serif;
+}
+
+.door-tutorial-overlay__copy p {
+  margin: 0;
+}
+
+.door-tutorial-overlay__status {
+  margin: 0 0 0.9rem;
+  text-align: center;
+  font: 700 0.8rem/1.35 system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: rgba(151, 224, 255, 0.76);
+}
+
+.door-tutorial-overlay__continue {
+  width: 100%;
+  cursor: pointer;
+  padding: 0.85rem 1rem;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #d8f2ff 0%, #88bfd9 100%);
+  color: #08101a;
+  font: 900 0.92rem system-ui, sans-serif;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  transition:
+    transform 0.16s ease,
+    filter 0.16s ease,
+    opacity 0.16s ease;
+}
+
+.door-tutorial-overlay__continue:hover:not(:disabled) {
+  transform: translateY(-1px);
+  filter: brightness(1.05);
+}
+
+.door-tutorial-overlay__continue:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+.door-tutorial-overlay__continue:disabled {
+  cursor: wait;
+  opacity: 0.68;
+}
+
+.leaderboard-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(
+    ellipse 88% 72% at 50% 40%,
+    rgba(10, 16, 24, 0.7) 0%,
+    rgba(4, 8, 14, 0.9) 56%,
+    rgba(0, 0, 0, 0.96) 100%
+  );
+  backdrop-filter: blur(2px);
+}
+
+.leaderboard-overlay__panel {
+  position: relative;
+  z-index: 1;
+  width: min(94%, 24rem);
+  padding: 1rem 1rem 0.95rem;
+  border-radius: 14px;
+  background: linear-gradient(
+    165deg,
+    rgba(20, 24, 34, 0.98) 0%,
+    rgba(10, 12, 20, 0.99) 100%
+  );
+  border: 1px solid rgba(255, 220, 150, 0.2);
+  box-shadow:
+    0 20px 48px rgba(0, 0, 0, 0.58),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.leaderboard-overlay__title {
+  margin: 0 0 0.3rem;
+  text-align: center;
+  font: 800 clamp(1.2rem, 4.4vw, 1.55rem) system-ui, sans-serif;
+  letter-spacing: 0.1em;
+  color: #fff0c6;
+  text-transform: uppercase;
+}
+
+.leaderboard-overlay__sub {
+  margin: 0 0 0.85rem;
+  text-align: center;
+  font: 500 0.82rem/1.4 system-ui, sans-serif;
+  color: rgba(235, 228, 214, 0.72);
+}
+
+.leaderboard-overlay__list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.38rem;
+  margin-bottom: 0.9rem;
+}
+
+.leaderboard-overlay__row {
+  display: grid;
+  grid-template-columns: 2rem minmax(0, 1fr) auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.55rem 0.65rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.leaderboard-overlay__row--you {
+  background: rgba(255, 220, 120, 0.1);
+  box-shadow: inset 0 0 0 1px rgba(255, 220, 120, 0.18);
+}
+
+.leaderboard-overlay__rank {
+  font: 800 0.88rem ui-monospace, Consolas, 'Cascadia Code', monospace;
+  color: rgba(255, 236, 188, 0.92);
+}
+
+.leaderboard-overlay__name {
+  font: 700 0.88rem system-ui, sans-serif;
+  color: rgba(242, 244, 250, 0.94);
+}
+
+.leaderboard-overlay__value {
+  font: 700 0.8rem ui-monospace, Consolas, 'Cascadia Code', monospace;
+  color: rgba(198, 236, 222, 0.92);
+  text-align: right;
+}
+
+.leaderboard-overlay__close {
+  width: 100%;
+  cursor: pointer;
+  padding: 0.72rem 1rem;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffe8b2 0%, #d8b86f 100%);
+  color: #120c04;
+  font: 800 0.9rem system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .hud-room-clean--cleared .hud-room-clean__fill {
@@ -1154,6 +1486,16 @@ body {
 
 .float-hud--pickup {
   color: #b8f5c8;
+}
+
+.float-hud--alert {
+  color: #96ffe9;
+  font-weight: 900;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-shadow:
+    0 0 12px rgba(90, 255, 220, 0.72),
+    0 2px 10px rgba(0, 0, 0, 0.56);
 }
 
 .float-hud--bank-big {

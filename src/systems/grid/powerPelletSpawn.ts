@@ -9,7 +9,7 @@ import { cellCenterWorld } from './roomGridGeometry.ts'
 import { createPowerPelletItem } from '../../themes/wisp/itemFactory.ts'
 
 /**
- * One power pellet in a subset of rooms — placed on an empty grid cell biased “risky”
+ * One power pellet in every planned room — placed on an empty grid cell biased “risky”
  * (northern rows + slight lateral offset from center).
  */
 export function spawnPowerPelletsForRun(
@@ -20,7 +20,6 @@ export function spawnPowerPelletsForRun(
 ): void {
   for (const [roomId, plan] of plans) {
     if (roomId === FINAL_NORMAL_ROOM_ID) continue
-    if (random() > 0.44) continue
     const cell = pickRiskyPowerPelletCell(plan, random)
     if (!cell) continue
     const id = `power_pellet_${roomId}_${cell.row}_${cell.col}`
@@ -40,14 +39,17 @@ function pickRiskyPowerPelletCell(
   const occ = new Set<string>()
   for (const w of plan.wisps) occ.add(`${w.row},${w.col}`)
   for (const t of plan.traps) occ.add(`${t.row},${t.col}`)
+  for (const wall of plan.walls) occ.add(`${wall.row},${wall.col}`)
 
   const startRow = rows - 1
   const startCol = Math.floor(cols / 2)
+  const reachable = collectReachableCells(rows, cols, startRow, startCol, occ)
 
   const candidates: { row: number; col: number; score: number }[] = []
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
       if (occ.has(`${r},${c}`)) continue
+      if (!reachable.has(`${r},${c}`)) continue
       if (r === startRow && c === startCol) continue
       const score =
         r * 1.15 + Math.abs(c - cols * 0.5) * 0.35 + random() * 0.12
@@ -66,4 +68,36 @@ function pickRiskyPowerPelletCell(
     cols,
   )
   return { x, z, row: pick.row, col: pick.col }
+}
+
+function collectReachableCells(
+  rows: number,
+  cols: number,
+  startRow: number,
+  startCol: number,
+  blocked: ReadonlySet<string>,
+): Set<string> {
+  const seen = new Set<string>()
+  const q: [number, number][] = [[startRow, startCol]]
+  const key = (r: number, c: number) => `${r},${c}`
+  seen.add(key(startRow, startCol))
+  while (q.length > 0) {
+    const [r, c] = q.pop()!
+    const dirs = [
+      [1, 0],
+      [-1, 0],
+      [0, 1],
+      [0, -1],
+    ] as const
+    for (const [dr, dc] of dirs) {
+      const nr = r + dr
+      const nc = c + dc
+      if (nr < 0 || nr >= rows || nc < 0 || nc >= cols) continue
+      const k = key(nr, nc)
+      if (seen.has(k) || blocked.has(k)) continue
+      seen.add(k)
+      q.push([nr, nc])
+    }
+  }
+  return seen
 }

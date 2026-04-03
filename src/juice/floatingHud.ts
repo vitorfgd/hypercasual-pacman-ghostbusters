@@ -69,3 +69,33 @@ export function spawnRoomClearedBanner(
     setTimeout(() => el.remove(), 380)
   }, ROOM_CLEARED_SEC * 1000)
 }
+
+const ROOM_ENTRY_SEC = 1.85
+
+export function spawnRoomEntryBanner(
+  viewport: HTMLElement,
+  titleText: string,
+  subtitleText: string,
+): void {
+  const el = document.createElement('div')
+  el.className = 'room-entry-banner'
+  el.setAttribute('aria-live', 'polite')
+
+  const title = document.createElement('div')
+  title.className = 'room-entry-banner__title'
+  title.textContent = titleText
+
+  const sub = document.createElement('div')
+  sub.className = 'room-entry-banner__sub'
+  sub.textContent = subtitleText
+
+  el.append(title, sub)
+  viewport.appendChild(el)
+  requestAnimationFrame(() => {
+    el.classList.add('room-entry-banner--show')
+  })
+  setTimeout(() => {
+    el.classList.add('room-entry-banner--out')
+    setTimeout(() => el.remove(), 280)
+  }, ROOM_ENTRY_SEC * 1000)
+}

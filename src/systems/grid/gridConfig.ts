@@ -16,4 +16,8 @@ export const GRID_WISP_FRACTION_MAX = 0.38
 export const GRID_TRAP_FRACTION_MIN = 0.06
 export const GRID_TRAP_FRACTION_MAX = 0.12
 
+/** Internal wall density — sparse blocks that turn rooms into simple mazes. */
+export const GRID_WALL_FRACTION_MIN = 0.06
+export const GRID_WALL_FRACTION_MAX = 0.1
+
 export const GRID_PLAN_MAX_ATTEMPTS = 120

@@ -158,6 +158,7 @@ export class GhostSystem {
   private ghostAnimTime = 0
   /** Run-wide modifier (e.g. Spectral bargain). Applied after per-room `speedMul`. */
   private runtimeSpeedMul = 1
+  private visionAggroEvents = 0
 
   private readonly spawnsByRoom: readonly (readonly GhostSpawnSpec[])[]
   private readonly spawnedRoomIndices = new Set<number>()
@@ -247,6 +248,10 @@ export class GhostSystem {
     }
   }
 
+  hasPendingFutureGhostPrewarm(): boolean {
+    return this.pendingDormantSpawnSpecs.length > 0
+  }
+
   private flushPendingMapSpawns(): void {
     let n = 0
     while (
@@ -268,6 +273,12 @@ export class GhostSystem {
 
   getRuntimeSpeedMultiplier(): number {
     return this.runtimeSpeedMul
+  }
+
+  consumeVisionAggroEvents(): number {
+    const n = this.visionAggroEvents
+    this.visionAggroEvents = 0
+    return n
   }
 
   /** Runtime spawn (e.g. haunted clutter). Uses the same `Ghost` behavior as map spawns. */
@@ -368,6 +379,9 @@ export class GhostSystem {
         visionConeEntranceDoorOpen,
         this.runtimeSpeedMul,
       )
+      if (g.consumeVisionAggroTriggered()) {
+        this.visionAggroEvents += 1
+      }
       if (
         !g.isRoomClearPurging() &&
         !g.isGateClearFading() &&
@@ -558,12 +572,15 @@ class Ghost {
   private huntConeLostAccum = 0
   /** After hunt ends, cone cannot re-trigger for this long. */
   private visionCooldownRemain = 0
+  private visionAggroTriggered = false
   private visionDebugLine: Line | null = null
   private visionConeMesh: Mesh | null = null
   private readonly role: GhostSpawnRole
 
   /** Pac-Man-style cell movement in room interiors, hub, and corridors (same bounds as player grid). */
   private readonly gridNav: GhostGridNavState = createGhostGridNavState()
+  /** Deterministic patrol handedness for intersections. */
+  private readonly patrolBias: -1 | 1
 
   constructor(
     ghostGroup: Group,
@@ -590,6 +607,8 @@ class Ghost {
     }
     this.speedMul = sm
     this.collisionRadius = GHOST_COLLISION_RADIUS * visualMul
+    this.patrolBias =
+      ((spec.roomIndex + (spec.color & 1)) & 1) === 0 ? -1 : 1
     this.root = createGhostVisual(spec.color, ghostGltf, visualMul)
     this.root.position.set(spec.x, 0, spec.z)
     ghostGroup.add(this.root)
@@ -646,6 +665,12 @@ class Ghost {
 
   isActive(): boolean {
     return this.active
+  }
+
+  consumeVisionAggroTriggered(): boolean {
+    const triggered = this.visionAggroTriggered
+    this.visionAggroTriggered = false
+    return triggered
   }
 
   activate(): void {
@@ -1189,6 +1214,7 @@ class Ghost {
         ) {
           this.chaseWindupRemain = 0
           this.state = 'chase'
+          this.visionAggroTriggered = true
           this.huntBurstRemain =
             GHOST_HUNT_DURATION_MIN +
             Math.random() *
@@ -1271,6 +1297,7 @@ class Ghost {
       playerPos.z,
       this.worldCollision,
       this.collisionRadius,
+      this.patrolBias,
       Math.random,
     )
     this.root.position.x = gStep.x

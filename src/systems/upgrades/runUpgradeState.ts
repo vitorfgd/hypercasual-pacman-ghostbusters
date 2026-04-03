@@ -15,6 +15,8 @@ export class RunUpgradeState {
   encumbranceReliefStacks = 0
   /** One-time room-clear utility. */
   respiteCharmTaken = false
+  /** Unlocks one free damage block per room entered. */
+  roomShieldTaken = false
 
   /** Non-stackable upgrade ids already chosen this run. */
   readonly takenOnceIds = new Set<string>()
@@ -27,6 +29,7 @@ export class RunUpgradeState {
     this.ghostHitLossReduction = 0
     this.encumbranceReliefStacks = 0
     this.respiteCharmTaken = false
+    this.roomShieldTaken = false
     this.takenOnceIds.clear()
   }
 

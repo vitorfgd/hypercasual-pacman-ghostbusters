@@ -4,33 +4,33 @@
  * All values: world units/sec (XZ).
  */
 
-/** Default max grid / run speed (before upgrades & pulse mult). Deliberate, not slippery. */
-export const PLAYER_BASE_MAX_SPEED = 8.0
+/** Default move speed (before upgrades & pulse mult). Tuned for analog movement. */
+export const PLAYER_BASE_MAX_SPEED = 7.7
 
 /**
  * Brief multiplier when the stick goes from idle → active — keep subtle for grid control.
  */
-export const PLAYER_START_BOOST_MULT = 1.05
-export const PLAYER_START_BOOST_DURATION_SEC = 0.08
+export const PLAYER_START_BOOST_MULT = 1.1
+export const PLAYER_START_BOOST_DURATION_SEC = 0.1
 
 const P = PLAYER_BASE_MAX_SPEED
 
-/** Hub / corridor steering (non-grid). Slower than player when roaming. */
-export const GHOST_WANDER_SPEED = P * 0.68
+/** Hub / corridor steering. Slower than player when roaming, but not harmless. */
+export const GHOST_WANDER_SPEED = P * 0.5
 
-/** Chase — a bit below base player max so grid escapes read; upgrades still widen the gap. */
-export const GHOST_CHASE_SPEED = P * 0.93
+/** Chase sits close to player speed so line choice matters. */
+export const GHOST_CHASE_SPEED = P * 0.91
 
-/** Vision hunt — small bump over chase, still under a full sprint feel. */
-export const GHOST_HUNT_SPEED = P * 0.96
+/** Vision hunt gets a slight edge, forcing smarter cornering and routing. */
+export const GHOST_HUNT_SPEED = P * 0.98
 
 /** Power mode flee — clearly below player so you can catch them. */
-export const GHOST_FRIGHT_SPEED = P * 0.72
+export const GHOST_FRIGHT_SPEED = P * 0.78
 
 /**
  * Grid (Pac-Man-style): same ratios as steering path; primary balance for rooms.
  */
-export const GHOST_GRID_WANDER_SPEED = P * 0.68
-export const GHOST_GRID_CHASE_SPEED = P * 0.93
-export const GHOST_GRID_HUNT_SPEED = P * 0.96
-export const GHOST_GRID_FRIGHT_SPEED = P * 0.72
+export const GHOST_GRID_WANDER_SPEED = P * 0.5
+export const GHOST_GRID_CHASE_SPEED = P * 0.91
+export const GHOST_GRID_HUNT_SPEED = P * 0.98
+export const GHOST_GRID_FRIGHT_SPEED = P * 0.78
