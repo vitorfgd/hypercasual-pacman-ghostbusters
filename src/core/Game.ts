@@ -90,8 +90,11 @@ import {
   DEPOSIT_ARC_EASE,
   GHOST_HIT_SLOW_MO_SCALE,
   GHOST_HIT_SLOW_MO_SEC,
+  loadSavedCameraMode,
+  saveCameraMode,
   STACK_DROP_RECOVERY_TTL_SEC,
   STACK_DROP_SCATTER_RADIUS,
+  type CameraMode,
 } from '../juice/juiceConfig.ts'
 import {
   spawnBagDisposeBurst,
@@ -216,6 +219,8 @@ export class Game {
   private readonly moneyHud: MoneyHud | null
   private readonly gameViewport: HTMLElement
   private readonly velScratch = new Vector3()
+  /** Ground-plane camera forward for OTS movement (XZ only). */
+  private readonly camForwardScratch = new Vector3()
   private readonly playerPos = new Vector3()
   private lastGhostInvuln = false
   private readonly perf = new PerfMonitor()
@@ -230,6 +235,7 @@ export class Game {
   private readonly hudOverloadEl: HTMLElement | null
   private readonly hudOverloadAmountEl: HTMLElement | null
   private readonly hudDisposeBagBtn: HTMLButtonElement | null
+  private readonly hudCameraHintEl: HTMLElement | null
   private readonly trapField: TrapFieldSystem
   private readonly trashPortals: TrashPortalSystem
   private readonly playerTrail: PlayerMotionTrail
@@ -266,6 +272,21 @@ export class Game {
   private readonly gateCinePlayerLook = new Vector3()
   private readonly gateCineRigDesired = new Vector3()
   private gateCinematicDoorOpened = false
+
+  private readonly onCameraModeKey = (e: KeyboardEvent): void => {
+    if (e.code !== 'KeyC') return
+    if (e.repeat) return
+    const t = e.target
+    if (t instanceof HTMLElement && (t.isContentEditable || t.closest('input, textarea, select'))) {
+      return
+    }
+    e.preventDefault()
+    const next: CameraMode =
+      this.cameraRig.getMode() === 'top_down' ? 'over_shoulder' : 'top_down'
+    this.cameraRig.setMode(next)
+    saveCameraMode(next)
+    this.syncCameraModeHud()
+  }
 
   constructor(
     host: HTMLElement,
@@ -322,6 +343,7 @@ export class Game {
     this.hudDisposeBagBtn = host.querySelector<HTMLButtonElement>(
       '#hud-dispose-bag',
     )
+    this.hudCameraHintEl = host.querySelector<HTMLElement>('#hud-camera-hint')
     this.hudStackHum = host.querySelector('#hud-stack-hum')
 
     this.camera = createCamera(
@@ -339,9 +361,19 @@ export class Game {
     this.keyboardMove = new KeyboardMoveInput()
     this.player = new PlayerController(playerRoot, this.worldCollision)
     this.playerCharacter = playerCharacter
-    this.cameraRig = new CameraRig(this.camera, playerRoot, () =>
-      computeStackWeight(this.stack.count, this.stack.maxCapacity),
+    const savedCam = loadSavedCameraMode()
+    this.cameraRig = new CameraRig(
+      this.camera,
+      playerRoot,
+      () => computeStackWeight(this.stack.count, this.stack.maxCapacity),
+      {
+        worldCollision: this.worldCollision,
+        getFacingYaw: () => this.player.getFacingYaw(),
+        initialMode: savedCam ?? 'top_down',
+      },
     )
+    window.addEventListener('keydown', this.onCameraModeKey)
+    this.syncCameraModeHud()
 
     this.economy = new Economy()
     this.moneyHud = hudMoney
@@ -570,6 +602,8 @@ export class Game {
       )
       if (this.gateCinematicRunning) {
         move = { x: 0, y: 0, fingerDown: false, active: false }
+      } else {
+        move = this.applyOtsCameraRelativeMove(move)
       }
 
       this.player.getPosition(this.playerPos)
@@ -861,6 +895,50 @@ export class Game {
     this.itemWorld.updateClutterGateReveal(this.doorUnlock)
   }
 
+  private syncCameraModeHud(): void {
+    const el = this.hudCameraHintEl
+    if (!el) return
+    const mode = this.cameraRig.getMode()
+    el.textContent = mode === 'over_shoulder' ? 'C · near' : 'C · far'
+    el.setAttribute(
+      'aria-label',
+      mode === 'over_shoulder' ? 'Camera: near view. Press C for far view.' : 'Camera: far view. Press C for near view.',
+    )
+  }
+
+  /**
+   * Over-shoulder: move relative to where the camera looks (ground plane), not world +X/+Z.
+   * Top-down keeps the original screen-aligned axes.
+   */
+  private applyOtsCameraRelativeMove(move: {
+    x: number
+    y: number
+    fingerDown: boolean
+    active: boolean
+  }): { x: number; y: number; fingerDown: boolean; active: boolean } {
+    if (this.cameraRig.getMode() !== 'over_shoulder') return move
+    this.camera.getWorldDirection(this.camForwardScratch)
+    this.camForwardScratch.y = 0
+    const fl = Math.hypot(this.camForwardScratch.x, this.camForwardScratch.z)
+    if (fl > 1e-5) {
+      this.camForwardScratch.multiplyScalar(1 / fl)
+    } else {
+      this.camForwardScratch.set(0, 0, -1)
+    }
+    const fx = this.camForwardScratch.x
+    const fz = this.camForwardScratch.z
+    const rx = fz
+    const rz = -fx
+    const nx = move.x
+    const nz = move.y
+    return {
+      x: nx * rx + (-nz) * fx,
+      y: nx * rz + (-nz) * fz,
+      fingerDown: move.fingerDown,
+      active: move.active,
+    }
+  }
+
   private gateCinematicSlowMoActive(): boolean {
     if (!this.gateCinematicRunning) return false
     const e = this.gateCinematicElapsed
@@ -955,6 +1033,7 @@ export class Game {
     } else {
       this.camera.position.copy(this.gateCineRigDesired)
       this.camera.lookAt(this.gateCinePlayerLook)
+      this.cameraRig.resetOtsLookBlend()
       this.gateCinematicRunning = false
       this.gateCinematicElapsed = 0
       this.gateCinematicDoorOpened = false
@@ -1476,6 +1555,7 @@ export class Game {
     this.playerCharacter.dispose()
     disposePlayerGltfTemplate(this.playerGltfTemplate)
     disposeGhostSharedGeometry()
+    window.removeEventListener('keydown', this.onCameraModeKey)
     this.keyboardMove.dispose()
     this.joystick.dispose()
     this.unsubscribeResize()

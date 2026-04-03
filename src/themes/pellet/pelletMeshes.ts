@@ -1,11 +1,14 @@
 import {
   BoxGeometry,
   Color,
+  ConeGeometry,
+  CylinderGeometry,
   Group,
   Mesh,
   MeshStandardMaterial,
   OctahedronGeometry,
   SphereGeometry,
+  TorusGeometry,
   type Object3D,
 } from 'three'
 import type {
@@ -316,21 +319,62 @@ export function createClutterPickupMesh(clutterVariant: ClutterVariant): Group {
     chunk.castShadow = true
     chunk.receiveShadow = true
     root.add(chunk)
-  } else {
-    const geo = new BoxGeometry(0.2, 0.14, 0.26)
+  } else if (clutterVariant === 3) {
+    const geo = new CylinderGeometry(0.1, 0.12, 0.22, 10)
     const mat = new MeshStandardMaterial({
       color,
       roughness,
       metalness,
       ...em,
     })
-    const chunk = new Mesh(geo, mat)
-    chunk.position.y = 0.07
-    chunk.rotation.y = Math.random() * Math.PI * 2
-    chunk.rotation.z = (Math.random() - 0.5) * 0.5
-    chunk.castShadow = true
-    chunk.receiveShadow = true
-    root.add(chunk)
+    const m = new Mesh(geo, mat)
+    m.position.y = 0.11
+    m.rotation.y = Math.random() * Math.PI * 2
+    m.castShadow = true
+    m.receiveShadow = true
+    root.add(m)
+  } else if (clutterVariant === 4) {
+    const geo = new ConeGeometry(0.14, 0.26, 8)
+    const mat = new MeshStandardMaterial({
+      color,
+      roughness,
+      metalness,
+      ...em,
+    })
+    const m = new Mesh(geo, mat)
+    m.position.y = 0.13
+    m.rotation.y = Math.random() * Math.PI * 2
+    m.castShadow = true
+    m.receiveShadow = true
+    root.add(m)
+  } else if (clutterVariant === 5) {
+    const geo = new TorusGeometry(0.1, 0.035, 8, 16)
+    const mat = new MeshStandardMaterial({
+      color,
+      roughness,
+      metalness,
+      ...em,
+    })
+    const m = new Mesh(geo, mat)
+    m.position.y = 0.1
+    m.rotation.x = Math.PI / 2
+    m.rotation.z = Math.random() * Math.PI * 2
+    m.castShadow = true
+    m.receiveShadow = true
+    root.add(m)
+  } else {
+    const geo = new SphereGeometry(0.13, 10, 8)
+    const mat = new MeshStandardMaterial({
+      color,
+      roughness,
+      metalness,
+      ...em,
+    })
+    const m = new Mesh(geo, mat)
+    m.position.y = 0.13
+    m.castShadow = true
+    m.receiveShadow = true
+    root.add(m)
   }
 
   /** Match previous GLB fit baseline (0.58) so fallback scales with `CLUTTER_PICKUP_TARGET_MAX_DIM`. */
@@ -349,6 +393,12 @@ function clutterStackDim(variant: ClutterVariant): number {
       return 0.12
     case 2:
       return 0.09
+    case 3:
+      return 0.1
+    case 4:
+      return 0.095
+    case 5:
+      return 0.085
     default:
       return 0.09
   }
@@ -364,13 +414,21 @@ export function createClutterStackMesh(clutterVariant: ClutterVariant): Object3D
   const d = clutterStackDim(clutterVariant)
   const { color, roughness, metalness } = clutterMat(clutterVariant)
   const em = clutterEmissive(color)
-  let geo: BoxGeometry
+  let geo: BoxGeometry | CylinderGeometry | ConeGeometry | TorusGeometry | SphereGeometry
   if (clutterVariant === 0) {
     geo = new BoxGeometry(d * 3.2, d * 0.45, d * 2.4)
   } else if (clutterVariant === 1) {
     geo = new BoxGeometry(d, d, d)
-  } else {
+  } else if (clutterVariant === 2) {
     geo = new BoxGeometry(d * 0.9, d * 0.7, d * 1.1)
+  } else if (clutterVariant === 3) {
+    geo = new CylinderGeometry(d * 0.85, d, d * 1.6, 8)
+  } else if (clutterVariant === 4) {
+    geo = new ConeGeometry(d * 1.1, d * 1.9, 6)
+  } else if (clutterVariant === 5) {
+    geo = new TorusGeometry(d * 0.95, d * 0.32, 6, 12)
+  } else {
+    geo = new SphereGeometry(d * 1.05, 8, 6)
   }
   const mesh = new Mesh(
     geo,

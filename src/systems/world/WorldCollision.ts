@@ -3,6 +3,33 @@ import { resolveCircleVsAabbs } from './collisionXZ.ts'
 import { MANSION_WALL_COLLIDERS } from './mansionWalls.ts'
 import { MANSION_WORLD_HALF } from './mansionGeometry.ts'
 
+function pointInsideAabbXZ(px: number, pz: number, b: AabbXZ): boolean {
+  return px >= b.minX && px <= b.maxX && pz >= b.minZ && pz <= b.maxZ
+}
+
+/**
+ * True if the open segment (x0,z0)→(x1,z1) intersects interior of any AABB (wall slab).
+ */
+export function segmentIntersectWallAabbs(
+  x0: number,
+  z0: number,
+  x1: number,
+  z1: number,
+  boxes: readonly AabbXZ[],
+  samples: number,
+): boolean {
+  const n = Math.max(2, Math.floor(samples))
+  for (let i = 0; i <= n; i++) {
+    const t = i / n
+    const px = x0 + (x1 - x0) * t
+    const pz = z0 + (z1 - z0) * t
+    for (const b of boxes) {
+      if (pointInsideAabbXZ(px, pz, b)) return true
+    }
+  }
+  return false
+}
+
 /**
  * World wall collision: circle vs static AABBs + soft outer clamp.
  */
@@ -29,5 +56,18 @@ export class WorldCollision {
       z: Math.max(-m, Math.min(m, o.z)),
     }
     return o
+  }
+
+  /** Ghost vision LOS: unobstructed segment through walkable plane (wall AABBs as blockers). */
+  lineOfSightClearXZ(
+    x0: number,
+    z0: number,
+    x1: number,
+    z1: number,
+    samples = 10,
+  ): boolean {
+    const boxes =
+      this.extra.length === 0 ? this.base : [...this.base, ...this.extra]
+    return !segmentIntersectWallAabbs(x0, z0, x1, z1, boxes, samples)
   }
 }

@@ -5,20 +5,16 @@ export async function mountGame(host: HTMLElement): Promise<Game> {
   const ghostCfgPromise = import('../ghost/ghostConfig.ts')
   const ghostLoadPromise = import('../ghost/ghostGltfAsset.ts')
   const playerLoadPromise = import('../player/playerGltfAsset.ts')
-  void (async () => {
-    const [{ loadWispPickupGltf, WISP_GLTF_URL }] = await Promise.all([
-      import('../wisp/wispGltfAsset.ts'),
-    ])
-    const { loadRelicGltfs, RELIC_GLTF_URLS } = await import('../relic/relicGltfAsset.ts')
-    const { loadClutterGltfs, CLUTTER_GLTF_URLS } = await import(
-      '../clutter/clutterGltfAsset.ts'
-    )
-    await Promise.all([
-      loadWispPickupGltf(WISP_GLTF_URL),
-      loadRelicGltfs(RELIC_GLTF_URLS),
-      loadClutterGltfs(CLUTTER_GLTF_URLS),
-    ])
-  })()
+
+  const [
+    { loadWispPickupGltf, WISP_GLTF_URL },
+    { loadRelicGltfs, RELIC_GLTF_URLS },
+    { loadClutterGltfs, CLUTTER_GLTF_URLS },
+  ] = await Promise.all([
+    import('../wisp/wispGltfAsset.ts'),
+    import('../relic/relicGltfAsset.ts'),
+    import('../clutter/clutterGltfAsset.ts'),
+  ])
 
   const [
     { GHOST_GLTF_URL },
@@ -36,11 +32,19 @@ export async function mountGame(host: HTMLElement): Promise<Game> {
     m.loadGateGltf(),
   )
 
+  /** Wisp / relic / clutter must finish before `Game` — prefilled clutter reads GLB prototypes at spawn. */
+  const pickupLoadsPromise = Promise.all([
+    loadWispPickupGltf(WISP_GLTF_URL),
+    loadRelicGltfs(RELIC_GLTF_URLS),
+    loadClutterGltfs(CLUTTER_GLTF_URLS),
+  ])
+
   const [ghostLoaded, playerLoaded, bagLoaded, _gateLoaded] = await Promise.all([
     loadGhostEnemyGltf(GHOST_GLTF_URL),
     loadPlayerCharacterGltf(PLAYER_GLTF_URL),
     loadCarryBagGltf(CARRY_BAG_GLTF_URL),
     gateLoadPromise,
+    pickupLoadsPromise,
   ])
 
   if (!ghostLoaded.ok) {

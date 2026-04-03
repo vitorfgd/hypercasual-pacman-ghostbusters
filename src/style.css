@@ -460,6 +460,14 @@ body {
   text-align: center;
 }
 
+.hud-stat--cam {
+  margin-left: 6px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  font: 600 12px system-ui, sans-serif;
+  color: rgba(255, 255, 255, 0.72);
+}
+
 .hud-stat--money {
   margin-left: auto;
   background: linear-gradient(

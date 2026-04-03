@@ -3,7 +3,10 @@ import { clone as cloneSkeletonSafe } from 'three/examples/jsm/utils/SkeletonUti
 import type { ClutterVariant } from '../../core/types/GameItem.ts'
 import { publicAsset } from '../../core/publicAsset.ts'
 
-/** Seven Meshy clutter props — filenames map to `ClutterVariant` 0…6. */
+/**
+ * Seven clutter props — `ClutterVariant` 0…6.
+ * Place files under `public/assets/clutter/` with these exact names so all variants use your GLBs.
+ */
 export const CLUTTER_GLTF_URLS: readonly string[] = [
   publicAsset('assets/clutter/clutter_0.glb'),
   publicAsset('assets/clutter/clutter_1.glb'),
@@ -84,6 +87,12 @@ export async function loadClutterGltfs(
       }
     }),
   )
+  const loaded = clutterPrototypes.filter((p) => p !== null).length
+  if (loaded < 7) {
+    console.warn(
+      `[clutter] Loaded ${loaded}/7 GLBs — missing or failed files fall back to procedural shapes. Expected under public/: assets/clutter/clutter_0.glb … clutter_6.glb`,
+    )
+  }
   return anyOk
 }
 

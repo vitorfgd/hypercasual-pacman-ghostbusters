@@ -8,20 +8,60 @@ import { ROOMS, roomCenter, type RoomId } from '../world/mansionRoomData.ts'
 export {
   GHOST_CHASE_SPEED,
   GHOST_FRIGHT_SPEED,
+  GHOST_HUNT_SPEED,
   GHOST_WANDER_SPEED,
 } from '../gameplaySpeed.ts'
 
-/** When player is within this horizontal distance, ghost switches to chase */
+/**
+ * @deprecated Normal rooms use vision cone; kept for relic chase / tuning reference.
+ */
 export const GHOST_DETECT_RADIUS = 6.8
 
 /**
- * After chasing, ghost returns to wander only past this distance (hysteresis vs detect).
- * Must be ≥ `GHOST_DETECT_RADIUS` or ghosts flicker at the edge.
+ * Relic chase: release chase when player is beyond this distance (omnidirectional).
  */
-export const GHOST_LOSE_CHASE_RADIUS = 9.2
+export const GHOST_LOSE_CHASE_RADIUS = 11.5
+
+/** Full cone aperture in degrees (60–90). Half-angle used for dot test. */
+export const GHOST_VISION_CONE_DEG = 78
+
+export const GHOST_VISION_HALF_ANGLE_RAD =
+  ((GHOST_VISION_CONE_DEG * Math.PI) / 180) * 0.5
+
+/** Max sight distance along cone axis (world units). */
+export const GHOST_VISION_RANGE = 10.2
+
+/** cos(halfAngle) for dot(forward, toPlayer) test. */
+export const GHOST_VISION_COS_HALF = Math.cos(GHOST_VISION_HALF_ANGLE_RAD)
+
+/** Sample segment ghost→player against wall AABBs (disable for perf / simpler AI). */
+export const GHOST_VISION_USE_LINE_OF_SIGHT = true
+
+/** Hunt burst duration (seconds). */
+export const GHOST_HUNT_DURATION_MIN = 2.1
+export const GHOST_HUNT_DURATION_MAX = 3.7
+
+/** After a hunt ends, cannot spot player again for this long (reduces re-trigger spam). */
+export const GHOST_VISION_COOLDOWN_SEC = 1.85
+
+/** End hunt early if player is farther than this (escape valve). */
+export const GHOST_HUNT_ABORT_RANGE = 17.5
+
+/** Wireframe cone under ghost feet (dev only). */
+export const GHOST_VISION_DEBUG = false
+
+/** Filled vision cone on the floor — matches aggro cone (range + half-angle). */
+export const GHOST_VISION_CONE_VISIBLE = true
+/** Base opacity (higher when actively chasing). */
+export const GHOST_VISION_CONE_OPACITY = 0.2
+export const GHOST_VISION_CONE_OPACITY_CHASE = 0.38
+/** Ectoplasm tint (hex). */
+export const GHOST_VISION_CONE_COLOR = 0x55eecc
+/** Arc smoothness. */
+export const GHOST_VISION_CONE_SEGMENTS = 40
 
 /** Steering: chase / fright — snappier pursuit */
-export const GHOST_STEERING_ACCEL_CHASE = 15.5
+export const GHOST_STEERING_ACCEL_CHASE = 26
 
 /** Steering: wander — softer, less twitchy */
 export const GHOST_STEERING_ACCEL_WANDER = 9.2
@@ -31,7 +71,7 @@ export const GHOST_STEERING_ACCEL_FRIGHT = 12
 
 /** Lerp speed for desired direction (higher = snappier turns) */
 export const GHOST_DIRECTION_SMOOTH_WANDER = 4.2
-export const GHOST_DIRECTION_SMOOTH_CHASE = 10.5
+export const GHOST_DIRECTION_SMOOTH_CHASE = 15
 export const GHOST_DIRECTION_SMOOTH_FRIGHT = 4.8
 
 /** Yaw lerp (rad/s scale in exp) — face smoothed intent, not raw velocity (avoids spin on wall slides). */

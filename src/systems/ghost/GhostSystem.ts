@@ -1,7 +1,14 @@
 import type { Group } from 'three'
 import {
+  BufferAttribute,
+  BufferGeometry,
   Color,
+  DoubleSide,
+  Float32BufferAttribute,
+  Line,
+  LineBasicMaterial,
   Mesh,
+  MeshBasicMaterial,
   MeshPhysicalMaterial,
   MeshStandardMaterial,
   Vector3,
@@ -14,14 +21,16 @@ import {
   GHOST_CHASE_SPEED,
   GHOST_COLLISION_RADIUS,
   GHOST_DEPOSIT_EXCLUSION_PADDING,
-  GHOST_DETECT_RADIUS,
   GHOST_DIRECTION_SMOOTH_CHASE,
   GHOST_DIRECTION_SMOOTH_FRIGHT,
   GHOST_DIRECTION_SMOOTH_WANDER,
   GHOST_FACING_TURN_DEFAULT,
   GHOST_FACING_TURN_FRIGHT,
   GHOST_FRIGHT_SPEED,
-  GHOST_LOSE_CHASE_RADIUS,
+  GHOST_HUNT_ABORT_RANGE,
+  GHOST_HUNT_DURATION_MAX,
+  GHOST_HUNT_DURATION_MIN,
+  GHOST_HUNT_SPEED,
   GHOST_MELEE_REARM_PADDING,
   GHOST_POST_HIT_CHASE_LOCKOUT_SEC,
   GHOST_POST_HIT_DISENGAGE_SPEED,
@@ -34,6 +43,17 @@ import {
   GHOST_STEERING_ACCEL_FRIGHT,
   GHOST_STEERING_ACCEL_WANDER,
   GHOST_WANDER_SPEED,
+  GHOST_VISION_COOLDOWN_SEC,
+  GHOST_VISION_CONE_COLOR,
+  GHOST_VISION_CONE_OPACITY,
+  GHOST_VISION_CONE_OPACITY_CHASE,
+  GHOST_VISION_CONE_SEGMENTS,
+  GHOST_VISION_CONE_VISIBLE,
+  GHOST_VISION_COS_HALF,
+  GHOST_VISION_DEBUG,
+  GHOST_VISION_HALF_ANGLE_RAD,
+  GHOST_VISION_RANGE,
+  GHOST_VISION_USE_LINE_OF_SIGHT,
   GHOST_WANDER_TURN_MAX,
   GHOST_WANDER_TURN_MIN,
   ghostRoomSpeedMul,
@@ -41,6 +61,41 @@ import {
   type GhostSpawnSpec,
 } from './ghostConfig.ts'
 import { ROOMS } from '../world/mansionRoomData.ts'
+
+/** Floor sector matching `playerInVisionCone` (range + half-angle, opening along local +Z). */
+function createGhostVisionConeMesh(): Mesh {
+  const R = GHOST_VISION_RANGE
+  const half = GHOST_VISION_HALF_ANGLE_RAD
+  const segs = GHOST_VISION_CONE_SEGMENTS
+  const y = 0.04
+  const positions: number[] = []
+  positions.push(0, y, 0)
+  for (let i = 0; i <= segs; i++) {
+    const t = i / segs
+    const a = -half + t * (2 * half)
+    positions.push(Math.sin(a) * R, y, Math.cos(a) * R)
+  }
+  const indices: number[] = []
+  for (let i = 0; i < segs; i++) {
+    indices.push(0, 1 + i, 2 + i)
+  }
+  const geom = new BufferGeometry()
+  geom.setAttribute('position', new Float32BufferAttribute(positions, 3))
+  geom.setIndex(indices)
+  geom.computeVertexNormals()
+  const mat = new MeshBasicMaterial({
+    color: GHOST_VISION_CONE_COLOR,
+    transparent: true,
+    opacity: GHOST_VISION_CONE_OPACITY,
+    depthWrite: false,
+    side: DoubleSide,
+  })
+  const mesh = new Mesh(geom, mat)
+  mesh.name = 'ghostVisionCone'
+  mesh.renderOrder = 3
+  mesh.frustumCulled = false
+  return mesh
+}
 
 export type GhostBehaviorState = 'wander' | 'chase'
 
@@ -298,6 +353,13 @@ class Ghost {
   private smoothedTx = 0
   private smoothedTz = 1
 
+  /** Vision-cone hunt burst (non-relic); speed uses `GHOST_HUNT_SPEED`. */
+  private huntBurstRemain = 0
+  /** After hunt ends, cone cannot re-trigger for this long. */
+  private visionCooldownRemain = 0
+  private visionDebugLine: Line | null = null
+  private visionConeMesh: Mesh | null = null
+
   constructor(
     ghostGroup: Group,
     worldCollision: WorldCollision,
@@ -338,6 +400,28 @@ class Ghost {
         }
       }
     })
+
+    if (GHOST_VISION_DEBUG) {
+      const geom = new BufferGeometry()
+      const pos = new Float32Array(9)
+      geom.setAttribute('position', new BufferAttribute(pos, 3))
+      const mat = new LineBasicMaterial({
+        color: 0x55eecc,
+        transparent: true,
+        opacity: 0.42,
+        depthWrite: false,
+      })
+      const line = new Line(geom, mat)
+      line.name = 'ghostVisionDebug'
+      line.renderOrder = 4
+      this.visionDebugLine = line
+      this.root.add(line)
+    }
+
+    if (GHOST_VISION_CONE_VISIBLE) {
+      this.visionConeMesh = createGhostVisionConeMesh()
+      this.root.add(this.visionConeMesh)
+    }
   }
 
   isEaten(): boolean {
@@ -467,6 +551,46 @@ class Ghost {
     this.prevPowerMode = powerMode
   }
 
+  /** Player inside forward cone + range; optional wall LOS. */
+  private playerInVisionCone(
+    px: number,
+    pz: number,
+    playerPos: Vector3,
+  ): boolean {
+    const dx = playerPos.x - px
+    const dz = playerPos.z - pz
+    const distSq = dx * dx + dz * dz
+    const r2 = GHOST_VISION_RANGE * GHOST_VISION_RANGE
+    if (distSq > r2 || distSq < 1e-8) return false
+    const dist = Math.sqrt(distSq)
+    const nx = dx / dist
+    const nz = dz / dist
+    const sl = Math.hypot(this.smoothedTx, this.smoothedTz)
+    let fx: number
+    let fz: number
+    if (sl > 0.12) {
+      fx = this.smoothedTx / sl
+      fz = this.smoothedTz / sl
+    } else {
+      const y = this.root.rotation.y
+      fx = Math.sin(y)
+      fz = Math.cos(y)
+    }
+    if (fx * nx + fz * nz < GHOST_VISION_COS_HALF) return false
+    if (
+      GHOST_VISION_USE_LINE_OF_SIGHT &&
+      !this.worldCollision.lineOfSightClearXZ(
+        px,
+        pz,
+        playerPos.x,
+        playerPos.z,
+      )
+    ) {
+      return false
+    }
+    return true
+  }
+
   update(
     dt: number,
     realDt: number,
@@ -561,6 +685,7 @@ class Ghost {
     const allowChase = canHuntPlayer && !cinematicRoamOnly
     if (cinematicRoamOnly && this.state === 'chase') {
       this.state = 'wander'
+      this.huntBurstRemain = 0
       this.pickWanderTimer()
       this.wanderAngle = Math.random() * Math.PI * 2
     }
@@ -585,6 +710,8 @@ class Ghost {
     } else if (playerInSafeCenter && !relicCarried) {
       if (this.state === 'chase') {
         this.state = 'wander'
+        this.huntBurstRemain = 0
+        this.visionCooldownRemain = 0
         this.pickWanderTimer()
         this.wanderAngle = Math.random() * Math.PI * 2
       }
@@ -611,6 +738,7 @@ class Ghost {
     } else if (relicCarried && !allowChase) {
       if (this.state === 'chase') {
         this.state = 'wander'
+        this.huntBurstRemain = 0
         this.pickWanderTimer()
         this.wanderAngle = Math.random() * Math.PI * 2
       }
@@ -623,31 +751,56 @@ class Ghost {
       tz = Math.sin(this.wanderAngle)
       targetSpeed = GHOST_WANDER_SPEED
     } else {
-      const detectR2 = GHOST_DETECT_RADIUS * GHOST_DETECT_RADIUS
-      const loseR2 = GHOST_LOSE_CHASE_RADIUS * GHOST_LOSE_CHASE_RADIUS
-
-      if (this.state === 'wander') {
-        if (
-          this.chaseLockout <= 0 &&
-          allowChase &&
-          dist * dist <= detectR2
-        ) {
-          this.state = 'chase'
-        }
-      } else {
-        if (dist * dist > loseR2) {
+      if (this.huntBurstRemain > 0) {
+        this.huntBurstRemain -= dt
+        if (this.huntBurstRemain <= 0) {
+          this.huntBurstRemain = 0
           this.state = 'wander'
+          this.visionCooldownRemain = GHOST_VISION_COOLDOWN_SEC
           this.pickWanderTimer()
           this.wanderAngle = Math.random() * Math.PI * 2
         }
       }
+      if (this.visionCooldownRemain > 0) {
+        this.visionCooldownRemain -= dt
+      }
+
+      const sawPlayer = this.playerInVisionCone(px, pz, playerPos)
+
+      let hunting = this.huntBurstRemain > 0
+      if (hunting && dist > GHOST_HUNT_ABORT_RANGE) {
+        this.huntBurstRemain = 0
+        this.state = 'wander'
+        this.visionCooldownRemain = GHOST_VISION_COOLDOWN_SEC
+        this.pickWanderTimer()
+        this.wanderAngle = Math.random() * Math.PI * 2
+        hunting = false
+      }
+
+      if (this.state === 'wander') {
+        if (
+          !hunting &&
+          this.chaseLockout <= 0 &&
+          allowChase &&
+          this.visionCooldownRemain <= 0 &&
+          sawPlayer
+        ) {
+          this.state = 'chase'
+          this.huntBurstRemain =
+            GHOST_HUNT_DURATION_MIN +
+            Math.random() *
+              (GHOST_HUNT_DURATION_MAX - GHOST_HUNT_DURATION_MIN)
+        }
+      }
+
+      hunting = this.huntBurstRemain > 0
 
       if (this.state === 'chase') {
         if (dist > 1e-4) {
           const inv = 1 / dist
           tx = dx * inv
           tz = dz * inv
-          targetSpeed = GHOST_CHASE_SPEED
+          targetSpeed = hunting ? GHOST_HUNT_SPEED : GHOST_CHASE_SPEED
         } else {
           tx = 0
           tz = 0
@@ -678,7 +831,7 @@ class Ghost {
       dirSmooth = GHOST_DIRECTION_SMOOTH_FRIGHT
     } else if (
       this.state === 'chase' &&
-      (relicCarried || !playerInSafeCenter)
+      (relicCarried || this.huntBurstRemain > 0)
     ) {
       dirSmooth = GHOST_DIRECTION_SMOOTH_CHASE
     }
@@ -699,7 +852,7 @@ class Ghost {
       steerAccel = GHOST_STEERING_ACCEL_FRIGHT
     } else if (
       this.state === 'chase' &&
-      (relicCarried || !playerInSafeCenter)
+      (relicCarried || this.huntBurstRemain > 0)
     ) {
       steerAccel = GHOST_STEERING_ACCEL_CHASE
     }
@@ -730,7 +883,8 @@ class Ghost {
     /** Run clip during pulse flee and during chase; idle only for calm wander. */
     const chaseAnim =
       frightened ||
-      (this.state === 'chase' && (relicCarried || !playerInSafeCenter))
+      (this.state === 'chase' &&
+        (relicCarried || this.huntBurstRemain > 0))
     const anim = this.root.userData.updateGhostAnimation as
       | ((
           dt: number,
@@ -741,6 +895,44 @@ class Ghost {
         ) => void)
       | undefined
     anim?.(dt, timeSec, this.velocity.x, this.velocity.z, chaseAnim)
+
+    if (this.visionConeMesh) {
+      const show =
+        !this.eaten &&
+        this.roomClearPurgeRemain <= 0 &&
+        this.gateClearFadeRemain <= 0
+      this.visionConeMesh.visible = show
+      if (show) {
+        const mat = this.visionConeMesh.material as MeshBasicMaterial
+        const chasing =
+          this.state === 'chase' &&
+          (relicCarried || this.huntBurstRemain > 0)
+        mat.opacity = chasing
+          ? GHOST_VISION_CONE_OPACITY_CHASE
+          : GHOST_VISION_CONE_OPACITY
+      }
+    }
+
+    if (this.visionDebugLine) {
+      const R = GHOST_VISION_RANGE
+      const a = GHOST_VISION_HALF_ANGLE_RAD
+      const lx = Math.sin(a) * R
+      const lz = Math.cos(a) * R
+      const rx = Math.sin(-a) * R
+      const rz = Math.cos(-a) * R
+      const g = this.visionDebugLine.geometry as BufferGeometry
+      const arr = g.attributes.position!.array as Float32Array
+      arr[0] = 0
+      arr[1] = 0.05
+      arr[2] = 0
+      arr[3] = lx
+      arr[4] = 0.05
+      arr[5] = lz
+      arr[6] = rx
+      arr[7] = 0.05
+      arr[8] = rz
+      g.attributes.position!.needsUpdate = true
+    }
 
     this.applyEdgeNudge(targetSpeed)
     this.excludeFromSafeCenterRoom()
@@ -855,6 +1047,12 @@ class Ghost {
       | (() => void)
       | undefined
     disposeAnim?.()
+    if (this.visionDebugLine) {
+      this.visionDebugLine.geometry.dispose()
+      ;(this.visionDebugLine.material as LineBasicMaterial).dispose()
+      this.visionDebugLine = null
+    }
+    this.visionConeMesh = null
     this.root.position.set(0, 0, 0)
     this.root.traverse((o) => {
       if (o instanceof Mesh) {

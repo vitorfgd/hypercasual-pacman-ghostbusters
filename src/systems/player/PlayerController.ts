@@ -99,6 +99,11 @@ export class PlayerController {
     return Math.hypot(this.velocity.x, this.velocity.z)
   }
 
+  /** Current facing on Y (radians), aligned with movement intent — for OTS camera. */
+  getFacingYaw(): number {
+    return this.currentYaw
+  }
+
   /** Push away from ghost; direction is from ghost center toward player. */
   applyGhostKnockback(
     ghostX: number,
@@ -124,7 +129,8 @@ export class PlayerController {
 
   /**
    * Reads intent from the input system only (no pointer logic here).
-   * Joystick y is screen-down; world forward on XZ is -Z for this camera setup.
+   * Joystick y is screen-down. Top-down: (x,y) maps to world +X / +Z.
+   * Over-shoulder: `Game` rotates this to camera-relative axes first.
    */
   update(dt: number, input: JoystickVector): void {
     if (!input.fingerDown) {
