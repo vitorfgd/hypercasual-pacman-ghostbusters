@@ -82,9 +82,18 @@ export class GhostSystem {
   getActiveGhostCount(): number {
     let n = 0
     for (const g of this.ghosts) {
-      if (!g.isEaten() && !g.isRoomClearPurging()) n++
+      if (!g.isEaten() && !g.isRoomClearPurging() && !g.isGateClearFading()) n++
     }
     return n
+  }
+
+  /** Cleared room: fade ghosts out during the early cinematic (replaces immediate purge). */
+  beginGateClearFadeForRoom(roomIndex: number, durationSec: number): void {
+    for (const g of this.ghosts) {
+      if (g.getRoomIndex() === roomIndex && !g.isEaten()) {
+        g.beginGateClearFade(durationSec)
+      }
+    }
   }
 
   /** Shrink away and remove all ghosts tied to `ROOM_{roomIndex}` (1…5). */
@@ -98,6 +107,7 @@ export class GhostSystem {
 
   update(
     dt: number,
+    realDt: number,
     playerPos: Vector3,
     playerCarryingRelic: boolean,
     gateCinematicRoamOnly = false,
@@ -113,6 +123,7 @@ export class GhostSystem {
     for (const g of this.ghosts) {
       g.update(
         dt,
+        realDt,
         playerPos,
         frightened,
         this.ghostAnimTime,
@@ -120,7 +131,7 @@ export class GhostSystem {
         playerCarryingRelic,
         gateCinematicRoamOnly,
       )
-      if (!g.isRoomClearPurging()) {
+      if (!g.isRoomClearPurging() && !g.isGateClearFading()) {
         g.updateVulnerableAppearance(false, this.ghostAnimTime)
       }
     }
@@ -143,7 +154,7 @@ export class GhostSystem {
     playerRadius: number,
   ): boolean {
     for (const g of this.ghosts) {
-      if (g.isEaten() || g.isRoomClearPurging()) continue
+      if (g.isEaten() || g.isRoomClearPurging() || g.isGateClearFading()) continue
       const needR =
         playerRadius + g.collisionRadius + GHOST_MELEE_REARM_PADDING
       const needR2 = needR * needR
@@ -167,7 +178,7 @@ export class GhostSystem {
   ): GhostHitResult {
     if (invulnerable) return { kind: 'none' }
     for (const g of this.ghosts) {
-      if (g.isEaten() || g.isRoomClearPurging()) continue
+      if (g.isEaten() || g.isRoomClearPurging() || g.isGateClearFading()) continue
       if (!g.canDealContactDamage()) continue
       const r = playerRadius + g.collisionRadius
       const r2 = r * r
@@ -192,7 +203,7 @@ export class GhostSystem {
   ): void {
     const eps2 = 0.28 * 0.28
     for (const g of this.ghosts) {
-      if (g.isEaten() || g.isRoomClearPurging()) continue
+      if (g.isEaten() || g.isRoomClearPurging() || g.isGateClearFading()) continue
       const dx = g.root.position.x - ghostX
       const dz = g.root.position.z - ghostZ
       if (dx * dx + dz * dz <= eps2) {
@@ -212,7 +223,8 @@ export class GhostSystem {
   /** Push ghost centers apart so multiple chasers do not stack on the player. */
   private separateOverlappingGhosts(): void {
     const list = this.ghosts.filter(
-      (g) => !g.isEaten() && !g.isRoomClearPurging(),
+      (g) =>
+        !g.isEaten() && !g.isRoomClearPurging() && !g.isGateClearFading(),
     )
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
@@ -269,6 +281,11 @@ class Ghost {
   private eaten = false
   /** Room-cleared purge: shrink then remove (no respawn). */
   private roomClearPurgeRemain = 0
+  /** Gate cinematic: fade / lift / shrink before removal (cleared room only). */
+  private gateClearFadeRemain = 0
+  private gateClearFadeTotal = 1
+  private fadeBaseScale = 1
+  private fadeBaseY = 0
   private destroyAfterPurgePending = false
   /** >0 while scaling down after capture; respawn timer starts after shrink. */
   private eatShrinkRemaining = 0
@@ -335,8 +352,25 @@ class Ghost {
     return this.roomClearPurgeRemain > 0
   }
 
+  isGateClearFading(): boolean {
+    return this.gateClearFadeRemain > 0
+  }
+
+  /** Room clear with gate cinematic — opacity + drift + scale; then removed. */
+  beginGateClearFade(durationSec: number): void {
+    if (this.eaten) return
+    if (this.roomClearPurgeRemain > 0) return
+    if (this.gateClearFadeRemain > 0) return
+    this.gateClearFadeRemain = durationSec
+    this.gateClearFadeTotal = Math.max(0.05, durationSec)
+    this.fadeBaseScale = this.root.scale.x
+    this.fadeBaseY = this.root.position.y
+    this.velocity.set(0, 0, 0)
+  }
+
   beginRoomClearPurge(): void {
     if (this.eaten) return
+    if (this.gateClearFadeRemain > 0) return
     if (this.roomClearPurgeRemain > 0) return
     this.roomClearPurgeRemain = GHOST_ROOM_PURGE_SHRINK_SEC
     this.velocity.set(0, 0, 0)
@@ -435,6 +469,7 @@ class Ghost {
 
   update(
     dt: number,
+    realDt: number,
     playerPos: Vector3,
     frightened: boolean,
     timeSec: number,
@@ -442,6 +477,29 @@ class Ghost {
     relicCarried: boolean,
     cinematicRoamOnly: boolean,
   ): void {
+    if (this.gateClearFadeRemain > 0) {
+      this.gateClearFadeRemain -= realDt
+      const u = Math.max(
+        0,
+        this.gateClearFadeRemain / this.gateClearFadeTotal,
+      )
+      const vis = u
+      const s = this.fadeBaseScale * (0.18 + 0.82 * vis)
+      this.root.scale.setScalar(s)
+      this.root.position.y =
+        this.fadeBaseY + (1 - vis) * 0.95
+      for (const m of this.materials) {
+        m.transparent = true
+        m.opacity = vis
+        m.depthWrite = vis > 0.35
+      }
+      if (this.gateClearFadeRemain <= 0) {
+        this.gateClearFadeRemain = 0
+        this.destroyAfterPurgePending = true
+      }
+      return
+    }
+
     if (this.roomClearPurgeRemain > 0) {
       this.roomClearPurgeRemain -= dt
       const t = Math.max(0, this.roomClearPurgeRemain / GHOST_ROOM_PURGE_SHRINK_SEC)

@@ -74,9 +74,12 @@ import type { AreaId } from '../systems/world/RoomSystem.ts'
 import { RoomSystem } from '../systems/world/RoomSystem.ts'
 import { getDoorBlockerZ, roomIndexFromId } from '../systems/doors/doorLayout.ts'
 import {
+  GATE_CINE_APPROACH_GATE_SEC,
+  GATE_CINE_GHOST_FADE_SEC,
   GATE_CINE_HOLD_AFTER_OPEN_SEC,
   GATE_CINE_RETURN_TO_PLAYER_SEC,
-  GATE_CINE_TOTAL_SEC,
+  GATE_CINE_SLOW_MO_SEC,
+  GATE_CINE_SLOW_SIM_SCALE,
   GATE_CINE_ZOOM_OUT_SEC,
   GATE_OPEN_TOTAL_SEC,
 } from '../systems/doors/doorUnlockConfig.ts'
@@ -256,10 +259,13 @@ export class Game {
   private gateCinematicElapsed = 0
   private gateCinematicDoorIndex = 0
   private readonly gateCineStartPos = new Vector3()
-  private readonly gateCineWidePos = new Vector3()
+  private readonly gateCinePullBackPos = new Vector3()
+  private readonly gateCineGateViewPos = new Vector3()
   private readonly gateCineLookAt = new Vector3()
   private readonly gateCineLookBlend = new Vector3()
+  private readonly gateCinePlayerLook = new Vector3()
   private readonly gateCineRigDesired = new Vector3()
+  private gateCinematicDoorOpened = false
 
   constructor(
     host: HTMLElement,
@@ -425,7 +431,6 @@ export class Game {
       onRoomCleared: (roomId, doorIndex) => {
         const idx = roomIndexFromId(roomId)
         if (idx !== null && idx >= 1) {
-          this.ghostSystem.purgeGhostsForRoom(idx)
           const levels = {
             capacityLevel: this.capacityUpgradeLevel,
             speedLevel: this.speedUpgradeLevel,
@@ -452,10 +457,15 @@ export class Game {
               { topPct: 26, leftPct: 50, durationSec: 2.4 },
             )
           }
-        }
-        if (doorIndex !== null) {
-          this.beginGateOpeningCinematic(doorIndex)
-          this.doorUnlock.openDoorFully(doorIndex)
+          if (doorIndex !== null) {
+            this.ghostSystem.beginGateClearFadeForRoom(
+              idx,
+              GATE_CINE_GHOST_FADE_SEC,
+            )
+            this.beginGateOpeningCinematic(doorIndex)
+          } else {
+            this.ghostSystem.purgeGhostsForRoom(idx)
+          }
         }
       },
     })
@@ -610,9 +620,12 @@ export class Game {
       this.player.setDragWeightMultiplier(stackWeightDragMultiplier(weight))
       this.syncStackJuiceHud(weight)
 
-      const simDt =
+      let simDt =
         this.ghostHitSlowMoRemain > 0 ? dt * GHOST_HIT_SLOW_MO_SCALE : dt
       this.ghostHitSlowMoRemain = Math.max(0, this.ghostHitSlowMoRemain - dt)
+      if (this.gateCinematicSlowMoActive()) {
+        simDt *= GATE_CINE_SLOW_SIM_SCALE
+      }
 
       this.player.update(simDt, move)
       this.trashPortals.applySuction(
@@ -646,6 +659,7 @@ export class Game {
 
       this.ghostSystem.update(
         simDt,
+        dt,
         this.playerPos,
         this.stack.hasRelic(),
         this.gateCinematicRunning,
@@ -847,15 +861,36 @@ export class Game {
     this.itemWorld.updateClutterGateReveal(this.doorUnlock)
   }
 
+  private gateCinematicSlowMoActive(): boolean {
+    if (!this.gateCinematicRunning) return false
+    const e = this.gateCinematicElapsed
+    const t0 = GATE_CINE_ZOOM_OUT_SEC
+    const t1 = t0 + GATE_CINE_SLOW_MO_SEC
+    return e >= t0 && e < t1
+  }
+
   private beginGateOpeningCinematic(doorIndex: number): void {
     this.gateCinematicDoorIndex = doorIndex
     this.gateCinematicElapsed = 0
     this.gateCinematicRunning = true
+    this.gateCinematicDoorOpened = false
     this.gateCineStartPos.copy(this.camera.position)
+    this.player.getPosition(this.playerPos)
     const zDoor = getDoorBlockerZ(doorIndex)
     this.gateCineLookAt.set(0, 1.14, zDoor)
-    /** Pull back + up so the gate stays readable (zoom-out vs. start pose). */
-    this.gateCineWidePos.set(0, 12.85, zDoor + 11.35)
+
+    let hdx = this.camera.position.x - this.playerPos.x
+    let hdz = this.camera.position.z - this.playerPos.z
+    const hlen = Math.hypot(hdx, hdz) || 1
+    hdx /= hlen
+    hdz /= hlen
+    const pullDist = 4.35
+    this.gateCinePullBackPos.set(
+      this.camera.position.x + hdx * pullDist,
+      this.camera.position.y + 1.05,
+      this.camera.position.z + hdz * pullDist,
+    )
+    this.gateCineGateViewPos.set(0, 10.85, zDoor + 7.85)
   }
 
   private updateGateOpeningCinematic(dt: number): void {
@@ -866,35 +901,63 @@ export class Game {
     this.gateCineLookAt.set(0, 1.14, zDoor)
 
     const tZoom = GATE_CINE_ZOOM_OUT_SEC
-    const tHoldEnd =
-      GATE_OPEN_TOTAL_SEC + GATE_CINE_HOLD_AFTER_OPEN_SEC
-    const tEnd = GATE_CINE_TOTAL_SEC
+    const tSlowEnd = tZoom + GATE_CINE_SLOW_MO_SEC
+    const tApproachEnd = tSlowEnd + GATE_CINE_APPROACH_GATE_SEC
+    const tGateAnimEnd = tApproachEnd + GATE_OPEN_TOTAL_SEC
+    const tHoldEnd = tGateAnimEnd + GATE_CINE_HOLD_AFTER_OPEN_SEC
+    const tEnd = tHoldEnd + GATE_CINE_RETURN_TO_PLAYER_SEC
 
+    if (e >= tApproachEnd && !this.gateCinematicDoorOpened) {
+      this.gateCinematicDoorOpened = true
+      this.doorUnlock.openDoorFully(this.gateCinematicDoorIndex)
+    }
+
+    this.player.getPosition(this.playerPos)
+    this.gateCinePlayerLook.set(this.playerPos.x, 1.12, this.playerPos.z)
     this.cameraRig.getDesiredCameraPosition(this.gateCineRigDesired)
 
     if (e < tZoom) {
       const u = easeInOutCubic(Math.min(1, e / tZoom))
-      this.camera.position.lerpVectors(this.gateCineStartPos, this.gateCineWidePos, u)
+      this.camera.position.lerpVectors(
+        this.gateCineStartPos,
+        this.gateCinePullBackPos,
+        u,
+      )
+      this.gateCineLookBlend.lerpVectors(this.gateCinePlayerLook, this.gateCineLookAt, u)
+      this.camera.lookAt(this.gateCineLookBlend)
+    } else if (e < tSlowEnd) {
+      this.camera.position.copy(this.gateCinePullBackPos)
+      this.camera.lookAt(this.gateCineLookAt)
+    } else if (e < tApproachEnd) {
+      const u = easeInOutCubic(
+        Math.min(1, (e - tSlowEnd) / GATE_CINE_APPROACH_GATE_SEC),
+      )
+      this.camera.position.lerpVectors(
+        this.gateCinePullBackPos,
+        this.gateCineGateViewPos,
+        u,
+      )
       this.camera.lookAt(this.gateCineLookAt)
     } else if (e < tHoldEnd) {
-      this.camera.position.copy(this.gateCineWidePos)
+      this.camera.position.copy(this.gateCineGateViewPos)
       this.camera.lookAt(this.gateCineLookAt)
     } else if (e < tEnd) {
       const u = easeInOutCubic(
         Math.min(1, (e - tHoldEnd) / GATE_CINE_RETURN_TO_PLAYER_SEC),
       )
       this.camera.position.lerpVectors(
-        this.gateCineWidePos,
+        this.gateCineGateViewPos,
         this.gateCineRigDesired,
         u,
       )
-      this.gateCineLookBlend.lerpVectors(this.gateCineLookAt, this.playerPos, u)
+      this.gateCineLookBlend.lerpVectors(this.gateCineLookAt, this.gateCinePlayerLook, u)
       this.camera.lookAt(this.gateCineLookBlend)
     } else {
       this.camera.position.copy(this.gateCineRigDesired)
-      this.camera.lookAt(this.playerPos)
+      this.camera.lookAt(this.gateCinePlayerLook)
       this.gateCinematicRunning = false
       this.gateCinematicElapsed = 0
+      this.gateCinematicDoorOpened = false
     }
   }
 
