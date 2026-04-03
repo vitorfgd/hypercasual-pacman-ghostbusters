@@ -6,26 +6,16 @@ import {
 } from 'three'
 import type { Scene } from 'three'
 import type { DoorUnlockSystem } from '../doors/DoorUnlockSystem.ts'
-import {
-  GATE_ANTICIPATION_SEC,
-  GATE_OPEN_DELAY_SEC,
-  GATE_SINK_DURATION_SEC,
-} from '../doors/doorUnlockConfig.ts'
 import { roomIndexFromId } from '../doors/doorLayout.ts'
 import { NORMAL_ROOM_IDS, ROOMS, type RoomId } from './mansionRoomData.ts'
-import type { RoomSystem } from './RoomSystem.ts'
 import {
-  ROOM_LOCK_COVER_FADE_DELAY_SEC,
   ROOM_LOCK_COVER_FLOOR_Y,
   ROOM_LOCK_COVER_HEIGHT,
   ROOM_LOCK_COVER_HORIZONTAL_PAD,
 } from './roomLockCoverConfig.ts'
 
-/** Locked shells for every normal room except the first (visible until previous gate opens). */
-const COVER_ROOMS: RoomId[] = NORMAL_ROOM_IDS.filter((id) => id !== 'ROOM_1')
-
-/** Same as gate sink start in `DoorUnlockSystem.applyGatePose` — not duplicated animation, only timing sync. */
-const GATE_SINK_T0 = GATE_OPEN_DELAY_SEC + GATE_ANTICIPATION_SEC
+/** Every normal room stays blacked out until the previous double door swings open. */
+const COVER_ROOMS: RoomId[] = [...NORMAL_ROOM_IDS]
 
 /** Subtle ease for opacity (smoothstep). */
 function easeOpacityFade(t: number): number {
@@ -33,35 +23,22 @@ function easeOpacityFade(t: number): number {
   return u * u * (3 - 2 * u)
 }
 
-/**
- * Opacity 1→0 over the sink window: optional delay at sink start, then fade in the remaining time
- * so at `sub === GATE_SINK_DURATION_SEC` opacity is 0 (matches gate fully down).
- */
-function coverOpacityFromOpeningElapsed(openingElapsed: number): number {
-  const sub = openingElapsed - GATE_SINK_T0
-  if (sub <= 0) return 1
-  if (sub >= GATE_SINK_DURATION_SEC) return 0
-
-  const d = Math.min(ROOM_LOCK_COVER_FADE_DELAY_SEC, GATE_SINK_DURATION_SEC * 0.35)
-  if (sub < d) return 1
-
-  const fadeDur = GATE_SINK_DURATION_SEC - d
-  const u = Math.min(1, (sub - d) / fadeDur)
+/** Blackout fades 1→0 as the revealing door swings 0→1 (see `DoorUnlockSystem.getDoorSwingOpen01`). */
+function coverOpacityFromDoorSwing(swing01: number): number {
+  const u = Math.max(0, Math.min(1, swing01))
   return 1 - easeOpacityFade(u)
 }
 
 /**
- * Black box shell per locked room (floor→ceiling, padded XZ) so interiors stay hidden from every angle;
- * opacity syncs with gate **sink** only (no gate code changes).
+ * Black box shell per room (floor→ceiling, padded XZ) so interiors stay hidden until the
+ * matching door swing reveals them.
  */
 export class RoomLockCoverSystem {
   private readonly root = new Group()
   private readonly meshes = new Map<RoomId, Mesh>()
-  private readonly roomSystem: RoomSystem
   private readonly doorUnlock: DoorUnlockSystem
 
-  constructor(scene: Scene, roomSystem: RoomSystem, doorUnlock: DoorUnlockSystem) {
-    this.roomSystem = roomSystem
+  constructor(scene: Scene, doorUnlock: DoorUnlockSystem) {
     this.doorUnlock = doorUnlock
     this.root.name = 'roomLockCovers'
     scene.add(this.root)
@@ -77,9 +54,12 @@ export class RoomLockCoverSystem {
       const cx = (b.minX + b.maxX) * 0.5
       const cz = (b.minZ + b.maxZ) * 0.5
 
+      // `transparent: true` with full opacity still uses the transparent render queue and
+      // can sort after opaque geometry (doors), painting black over door faces. Only enable
+      // transparency while the shell is actually fading.
       const mat = new MeshBasicMaterial({
         color: 0x000000,
-        transparent: true,
+        transparent: false,
         opacity: 1,
         depthWrite: true,
         depthTest: true,
@@ -97,25 +77,17 @@ export class RoomLockCoverSystem {
   /** Call each frame after `DoorUnlockSystem.update`. */
   update(): void {
     for (const [roomId, mesh] of this.meshes) {
-      if (this.roomSystem.isRoomAccessibleForGameplay(roomId)) {
-        mesh.visible = false
-        continue
-      }
-
-      mesh.visible = true
       const idx = roomIndexFromId(roomId)
-      if (idx === null || idx < 2) continue
+      if (idx === null || idx < 1) continue
 
       const doorIndex = idx - 1
-      const el = this.doorUnlock.getDoorOpeningElapsed(doorIndex)
+      const swing = this.doorUnlock.getDoorSwingOpen01(doorIndex)
       const mat = mesh.material as MeshBasicMaterial
 
-      if (el === null) {
-        mat.opacity = 1
-        continue
-      }
-
-      mat.opacity = coverOpacityFromOpeningElapsed(el)
+      const op = coverOpacityFromDoorSwing(swing)
+      mat.opacity = op
+      mat.transparent = op < 0.999
+      mesh.visible = op > 0.004
     }
   }
 

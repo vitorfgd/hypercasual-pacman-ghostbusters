@@ -66,7 +66,6 @@ import {
   MAX_ACTIVE_GHOSTS,
   partitionGhostSpawnsByRoom,
   pickGhostColorForRoomIndex,
-  ROOM_CLEAR_UPGRADE_INTRO_SEC,
 } from '../systems/ghost/ghostConfig.ts'
 import {
   disposeGhostGltfTemplate,
@@ -82,14 +81,15 @@ import type { AreaId } from '../systems/world/RoomSystem.ts'
 import { RoomSystem } from '../systems/world/RoomSystem.ts'
 import { getDoorBlockerZ, roomIndexFromId } from '../systems/doors/doorLayout.ts'
 import {
-  GATE_CINE_APPROACH_GATE_SEC,
-  GATE_CINE_GHOST_FADE_SEC,
-  GATE_CINE_HOLD_AFTER_OPEN_SEC,
-  GATE_CINE_RETURN_TO_PLAYER_SEC,
-  GATE_CINE_SLOW_MO_SEC,
-  GATE_CINE_SLOW_SIM_SCALE,
-  GATE_CINE_ZOOM_OUT_SEC,
-  GATE_OPEN_TOTAL_SEC,
+  ROOM_CLEAR_CINE_POST_SLOW_HOLD_SEC,
+  ROOM_CLEAR_CINE_SLOW_MO_SEC,
+  ROOM_CLEAR_CINE_SLOW_SIM_SCALE,
+  ROOM_CLEAR_CINE_ZOOM_OUT_SEC,
+  ROOM_CLEAR_DOOR_CINE_APPROACH_SEC,
+  ROOM_CLEAR_DOOR_CINE_HOLD_SEC,
+  ROOM_CLEAR_DOOR_CINE_RETURN_SEC,
+  ROOM_CLEAR_GHOST_FADE_SEC,
+  ROOM_CLEAR_INTRO_GHOST_FADE_SEC,
 } from '../systems/doors/doorUnlockConfig.ts'
 import { RoomCleanlinessSystem } from '../systems/world/RoomCleanlinessSystem.ts'
 import {
@@ -143,7 +143,10 @@ import {
   spawnRelicScreenSparkBurst,
 } from '../juice/relicHud.ts'
 import { PerfMonitor } from '../systems/debug/PerfMonitor.ts'
-import { DoorUnlockSystem } from '../systems/doors/DoorUnlockSystem.ts'
+import {
+  DoorUnlockSystem,
+  type DoorPlayerSample,
+} from '../systems/doors/DoorUnlockSystem.ts'
 import { RoomLockCoverSystem } from '../systems/world/RoomLockCoverSystem.ts'
 import {
   computeStackWeight,
@@ -268,8 +271,6 @@ export class Game {
   private readonly runStatUpgradesPicked: { id: string; title: string }[] = []
   /** Room reached 100% — waiting for player to pick an upgrade. */
   private roomUpgradePaused = false
-  /** Delay before showing upgrade UI after a room clear (brief beat). */
-  private roomUpgradeIntroRemain: number | null = null
   private roomUpgradePendingReveal: (() => void) | null = null
   private readonly roomUpgradePicker: ReturnType<
     typeof mountRoomUpgradePicker
@@ -298,18 +299,23 @@ export class Game {
   private hubWelcomeHidden = false
   private wasInSafeRoom = true
 
-  /** Gate-opening cinematic: zoom out → gate lowers → hold → return to follow cam. */
-  private gateCinematicRunning = false
-  private gateCinematicElapsed = 0
-  private gateCinematicDoorIndex = 0
-  private readonly gateCineStartPos = new Vector3()
-  private readonly gateCinePullBackPos = new Vector3()
-  private readonly gateCineGateViewPos = new Vector3()
-  private readonly gateCineLookAt = new Vector3()
-  private readonly gateCineLookBlend = new Vector3()
+  /** Room clear: zoom out + slow-mo while ghosts fade; then upgrade picker. */
+  private roomClearIntroCinematicRunning = false
+  private roomClearIntroCinematicElapsed = 0
+  /** After upgrade: short door hero shot + “Unlocked” feedback, then return. */
+  private roomClearDoorCinematicRunning = false
+  private roomClearDoorCinematicElapsed = 0
+  private roomClearDoorCinematicDoorIndex = 0
+  private roomClearDoorUnlockFeedbackDone = false
+  private readonly roomClearCineStartPos = new Vector3()
+  private readonly roomClearCinePullBackPos = new Vector3()
+  private readonly roomClearCineDoorViewPos = new Vector3()
+  private readonly roomClearCineLookAtDoor = new Vector3()
+  private readonly roomClearCineLookBlend = new Vector3()
+
+  /** Reused by boss intro camera return (follow rig target + look). */
   private readonly gateCinePlayerLook = new Vector3()
   private readonly gateCineRigDesired = new Vector3()
-  private gateCinematicDoorOpened = false
 
   /** Final room: short camera beat before `BossRoomController.startFight`. */
   private bossIntroCinematicRunning = false
@@ -471,17 +477,17 @@ export class Game {
           this.ghostSystem.spawnGhostsForRoom(nextRoom)
         }
       },
+      onDoorSlamShut: (_doorIndex: number) => {
+        this.triggerDepositScreenShake(false)
+        playJuiceSound('overload_impact', { pitch: 0.52 })
+      },
     })
 
     this.roomSystem.configureRoomAccess((roomId) =>
       this.doorUnlock.canAccessRoomForSpawning(roomId),
     )
 
-    this.roomLockCovers = new RoomLockCoverSystem(
-      this.scene,
-      this.roomSystem,
-      this.doorUnlock,
-    )
+    this.roomLockCovers = new RoomLockCoverSystem(this.scene, this.doorUnlock)
 
     this.trashPortals = new TrashPortalSystem(this.roomSystem)
 
@@ -563,6 +569,10 @@ export class Game {
         const idx = roomIndexFromId(roomId)
         if (idx === null || idx < 1) return
 
+        if (doorIndex !== null) {
+          this.doorUnlock.unlockDoor(doorIndex)
+        }
+
         const offers = pickRunUpgradeOffers(
           this.runRandom,
           this.runUpgrades,
@@ -606,8 +616,8 @@ export class Game {
           'float-hud--pickup',
           { topPct: 30, leftPct: 50, durationSec: 1.1 },
         )
-        this.roomUpgradeIntroRemain = ROOM_CLEAR_UPGRADE_INTRO_SEC
         this.roomUpgradePendingReveal = revealUpgrades
+        this.beginRoomClearIntroCinematic(idx)
       },
     })
 
@@ -718,16 +728,6 @@ export class Game {
       this.elapsedSec += dt
       this.perf.beginFrame(now)
 
-      if (this.roomUpgradeIntroRemain !== null) {
-        this.roomUpgradeIntroRemain -= dt
-        if (this.roomUpgradeIntroRemain <= 0) {
-          this.roomUpgradeIntroRemain = null
-          const reveal = this.roomUpgradePendingReveal
-          this.roomUpgradePendingReveal = null
-          reveal?.()
-        }
-      }
-
       let move = mergeMoveInput(
         this.joystick.getVector(),
         this.keyboardMove.getVector(),
@@ -758,10 +758,6 @@ export class Game {
         this.playerPos.x,
         this.playerPos.z,
       )
-
-      this.doorUnlock.update(dt, this.elapsedSec)
-      this.itemWorld.updateClutterGateReveal(this.doorUnlock)
-      this.roomLockCovers.update()
 
       const roomPre = this.roomSystem.getRoomAt(this.playerPos.x, this.playerPos.z)
       if (
@@ -802,11 +798,11 @@ export class Game {
       let simDt =
         this.ghostHitSlowMoRemain > 0 ? dt * GHOST_HIT_SLOW_MO_SCALE : dt
       this.ghostHitSlowMoRemain = Math.max(0, this.ghostHitSlowMoRemain - dt)
-      if (this.gateCinematicSlowMoActive()) {
-        simDt *= GATE_CINE_SLOW_SIM_SCALE
-      }
       if (this.bossIntroSlowMoActive()) {
         simDt *= BOSS_CINE_SLOW_SIM_SCALE
+      }
+      if (this.roomClearIntroCinematicSlowMoActive()) {
+        simDt *= ROOM_CLEAR_CINE_SLOW_SIM_SCALE
       }
 
       this.player.update(simDt, move)
@@ -818,6 +814,16 @@ export class Game {
         this.player.radius,
       )
       this.player.getPosition(this.playerPos)
+      this.player.getVelocity(this.velScratch)
+      const doorPlayer: DoorPlayerSample = {
+        x: this.playerPos.x,
+        z: this.playerPos.z,
+        radius: this.player.radius,
+        vz: this.velScratch.z,
+      }
+      this.doorUnlock.update(dt, this.elapsedSec, doorPlayer)
+      this.itemWorld.updateClutterGateReveal(this.doorUnlock)
+      this.roomLockCovers.update()
 
       this.trashPortals.update(
         dt,
@@ -1068,8 +1074,10 @@ export class Game {
         ghostInvuln: this.ghostHitInvuln > 0,
         recentPickupSec: 0,
       })
-      if (this.gateCinematicRunning) {
-        this.updateGateOpeningCinematic(dt)
+      if (this.roomClearIntroCinematicRunning) {
+        this.updateRoomClearIntroCinematic(dt)
+      } else if (this.roomClearDoorCinematicRunning) {
+        this.updateRoomClearDoorCinematic(dt)
       } else if (this.bossIntroCinematicRunning) {
         this.updateBossIntroCinematic(dt)
       } else {
@@ -1133,7 +1141,6 @@ export class Game {
     this.runStatRoomsCleared = 0
     this.runStatClutterCollected = 0
     this.runStatUpgradesPicked.length = 0
-    this.roomUpgradeIntroRemain = null
     this.roomUpgradePendingReveal = null
     this.syncRunUpgradeModifiers()
   }
@@ -1183,11 +1190,7 @@ export class Game {
     }
 
     if (doorIndex !== null) {
-      this.ghostSystem.beginGateClearFadeForRoom(
-        roomIndex,
-        GATE_CINE_GHOST_FADE_SEC,
-      )
-      this.beginGateOpeningCinematic(doorIndex)
+      this.beginRoomClearDoorCinematic(doorIndex)
     } else {
       this.ghostSystem.purgeGhostsForRoom(roomIndex)
     }
@@ -1199,7 +1202,7 @@ export class Game {
     spawnRoomClearedBanner(this.gameViewport, 'Mansion cleared')
     this.ghostSystem.beginGateClearFadeForRoom(
       NORMAL_ROOM_COUNT,
-      GATE_CINE_GHOST_FADE_SEC,
+      ROOM_CLEAR_GHOST_FADE_SEC,
     )
     spawnFloatingHudText(
       this.gameViewport,
@@ -1271,21 +1274,14 @@ export class Game {
     }
   }
 
-  /** Gate intro, boss intro, or post-boss outro — block movement and pickups. */
+  /** Boss intro or post-boss outro — block movement and pickups. */
   private isInteractionCinematicBlocking(): boolean {
     return (
-      this.gateCinematicRunning ||
+      this.roomClearIntroCinematicRunning ||
+      this.roomClearDoorCinematicRunning ||
       this.bossIntroCinematicRunning ||
       this.bossVictoryOutroRemain !== null
     )
-  }
-
-  private gateCinematicSlowMoActive(): boolean {
-    if (!this.gateCinematicRunning) return false
-    const e = this.gateCinematicElapsed
-    const t0 = GATE_CINE_ZOOM_OUT_SEC
-    const t1 = t0 + GATE_CINE_SLOW_MO_SEC
-    return e >= t0 && e < t1
   }
 
   private bossIntroSlowMoActive(): boolean {
@@ -1355,96 +1351,152 @@ export class Game {
     }
   }
 
-  private beginGateOpeningCinematic(doorIndex: number): void {
-    this.gateCinematicDoorIndex = doorIndex
-    this.gateCinematicElapsed = 0
-    this.gateCinematicRunning = true
-    this.gateCinematicDoorOpened = false
-    this.gateCineStartPos.copy(this.camera.position)
-    this.player.getPosition(this.playerPos)
-    const zDoor = getDoorBlockerZ(doorIndex)
-    this.gateCineLookAt.set(0, 1.14, zDoor)
+  private roomClearIntroCinematicSlowMoActive(): boolean {
+    if (!this.roomClearIntroCinematicRunning) return false
+    const e = this.roomClearIntroCinematicElapsed
+    const t0 = ROOM_CLEAR_CINE_ZOOM_OUT_SEC
+    const t1 = t0 + ROOM_CLEAR_CINE_SLOW_MO_SEC
+    return e >= t0 && e < t1
+  }
 
+  private beginRoomClearIntroCinematic(roomIndex: number): void {
+    this.roomClearIntroCinematicRunning = true
+    this.roomClearIntroCinematicElapsed = 0
+    this.roomClearCineStartPos.copy(this.camera.position)
+    this.player.getPosition(this.playerPos)
     let hdx = this.camera.position.x - this.playerPos.x
     let hdz = this.camera.position.z - this.playerPos.z
     const hlen = Math.hypot(hdx, hdz) || 1
     hdx /= hlen
     hdz /= hlen
     const pullDist = 4.35
-    this.gateCinePullBackPos.set(
+    this.roomClearCinePullBackPos.set(
       this.camera.position.x + hdx * pullDist,
       this.camera.position.y + 1.05,
       this.camera.position.z + hdz * pullDist,
     )
-    this.gateCineGateViewPos.set(0, 10.85, zDoor + 7.85)
+    this.ghostSystem.beginGateClearFadeForRoom(
+      roomIndex,
+      ROOM_CLEAR_INTRO_GHOST_FADE_SEC,
+    )
   }
 
-  private updateGateOpeningCinematic(dt: number): void {
-    if (!this.gateCinematicRunning) return
-    this.gateCinematicElapsed += dt
-    const e = this.gateCinematicElapsed
-    const zDoor = getDoorBlockerZ(this.gateCinematicDoorIndex)
-    this.gateCineLookAt.set(0, 1.14, zDoor)
+  private updateRoomClearIntroCinematic(dt: number): void {
+    if (!this.roomClearIntroCinematicRunning) return
+    this.roomClearIntroCinematicElapsed += dt
+    const e = this.roomClearIntroCinematicElapsed
+    const tZoom = ROOM_CLEAR_CINE_ZOOM_OUT_SEC
+    const tSlowEnd = tZoom + ROOM_CLEAR_CINE_SLOW_MO_SEC
+    const tEnd = tSlowEnd + ROOM_CLEAR_CINE_POST_SLOW_HOLD_SEC
 
-    const tZoom = GATE_CINE_ZOOM_OUT_SEC
-    const tSlowEnd = tZoom + GATE_CINE_SLOW_MO_SEC
-    const tApproachEnd = tSlowEnd + GATE_CINE_APPROACH_GATE_SEC
-    const tGateAnimEnd = tApproachEnd + GATE_OPEN_TOTAL_SEC
-    const tHoldEnd = tGateAnimEnd + GATE_CINE_HOLD_AFTER_OPEN_SEC
-    const tEnd = tHoldEnd + GATE_CINE_RETURN_TO_PLAYER_SEC
+    this.player.getPosition(this.playerPos)
+    this.gateCinePlayerLook.set(this.playerPos.x, 1.12, this.playerPos.z)
 
-    if (e >= tApproachEnd && !this.gateCinematicDoorOpened) {
-      this.gateCinematicDoorOpened = true
-      this.doorUnlock.openDoorFully(this.gateCinematicDoorIndex)
+    if (e < tZoom) {
+      const u = easeInOutCubic(Math.min(1, e / tZoom))
+      this.camera.position.lerpVectors(
+        this.roomClearCineStartPos,
+        this.roomClearCinePullBackPos,
+        u,
+      )
+      this.camera.lookAt(this.gateCinePlayerLook)
+    } else if (e < tSlowEnd) {
+      this.camera.position.copy(this.roomClearCinePullBackPos)
+      this.camera.lookAt(this.gateCinePlayerLook)
+    } else if (e < tEnd) {
+      this.camera.position.copy(this.roomClearCinePullBackPos)
+      this.camera.lookAt(this.gateCinePlayerLook)
+    } else {
+      this.roomClearIntroCinematicRunning = false
+      this.roomClearIntroCinematicElapsed = 0
+      this.player.getPosition(this.playerPos)
+      this.gateCinePlayerLook.set(this.playerPos.x, 1.12, this.playerPos.z)
+      this.cameraRig.getDesiredCameraPosition(this.gateCineRigDesired)
+      this.camera.position.copy(this.gateCineRigDesired)
+      this.camera.lookAt(this.gateCinePlayerLook)
+      this.cameraRig.resetOtsLookBlend()
+      const reveal = this.roomUpgradePendingReveal
+      this.roomUpgradePendingReveal = null
+      reveal?.()
     }
+  }
+
+  private beginRoomClearDoorCinematic(doorIndex: number): void {
+    this.roomClearDoorCinematicRunning = true
+    this.roomClearDoorCinematicElapsed = 0
+    this.roomClearDoorCinematicDoorIndex = doorIndex
+    this.roomClearDoorUnlockFeedbackDone = false
+    this.roomClearCineStartPos.copy(this.camera.position)
+    this.player.getPosition(this.playerPos)
+    const zDoor = getDoorBlockerZ(doorIndex)
+    this.roomClearCineLookAtDoor.set(0, 1.14, zDoor)
+    this.roomClearCineDoorViewPos.set(0, 10.85, zDoor + 7.85)
+    this.gateCinePlayerLook.set(this.playerPos.x, 1.12, this.playerPos.z)
+    this.cameraRig.getDesiredCameraPosition(this.gateCineRigDesired)
+  }
+
+  private updateRoomClearDoorCinematic(dt: number): void {
+    if (!this.roomClearDoorCinematicRunning) return
+    this.roomClearDoorCinematicElapsed += dt
+    const e = this.roomClearDoorCinematicElapsed
+    const zDoor = getDoorBlockerZ(this.roomClearDoorCinematicDoorIndex)
+    this.roomClearCineLookAtDoor.set(0, 1.14, zDoor)
+
+    const tApproach = ROOM_CLEAR_DOOR_CINE_APPROACH_SEC
+    const tHoldEnd = tApproach + ROOM_CLEAR_DOOR_CINE_HOLD_SEC
+    const tEnd = tHoldEnd + ROOM_CLEAR_DOOR_CINE_RETURN_SEC
 
     this.player.getPosition(this.playerPos)
     this.gateCinePlayerLook.set(this.playerPos.x, 1.12, this.playerPos.z)
     this.cameraRig.getDesiredCameraPosition(this.gateCineRigDesired)
 
-    if (e < tZoom) {
-      const u = easeInOutCubic(Math.min(1, e / tZoom))
+    if (e < tApproach) {
+      const u = easeInOutCubic(Math.min(1, e / tApproach))
       this.camera.position.lerpVectors(
-        this.gateCineStartPos,
-        this.gateCinePullBackPos,
+        this.roomClearCineStartPos,
+        this.roomClearCineDoorViewPos,
         u,
       )
-      this.gateCineLookBlend.lerpVectors(this.gateCinePlayerLook, this.gateCineLookAt, u)
-      this.camera.lookAt(this.gateCineLookBlend)
-    } else if (e < tSlowEnd) {
-      this.camera.position.copy(this.gateCinePullBackPos)
-      this.camera.lookAt(this.gateCineLookAt)
-    } else if (e < tApproachEnd) {
-      const u = easeInOutCubic(
-        Math.min(1, (e - tSlowEnd) / GATE_CINE_APPROACH_GATE_SEC),
-      )
-      this.camera.position.lerpVectors(
-        this.gateCinePullBackPos,
-        this.gateCineGateViewPos,
+      this.roomClearCineLookBlend.lerpVectors(
+        this.gateCinePlayerLook,
+        this.roomClearCineLookAtDoor,
         u,
       )
-      this.camera.lookAt(this.gateCineLookAt)
+      this.camera.lookAt(this.roomClearCineLookBlend)
     } else if (e < tHoldEnd) {
-      this.camera.position.copy(this.gateCineGateViewPos)
-      this.camera.lookAt(this.gateCineLookAt)
+      this.camera.position.copy(this.roomClearCineDoorViewPos)
+      this.camera.lookAt(this.roomClearCineLookAtDoor)
+      if (!this.roomClearDoorUnlockFeedbackDone) {
+        this.roomClearDoorUnlockFeedbackDone = true
+        playJuiceSound('relic_collect', { pitch: 1.12 })
+        spawnFloatingHudText(
+          this.gameViewport,
+          'Unlocked',
+          'float-hud--level-up',
+          { topPct: 38, leftPct: 50, durationSec: 1.85 },
+        )
+      }
     } else if (e < tEnd) {
       const u = easeInOutCubic(
-        Math.min(1, (e - tHoldEnd) / GATE_CINE_RETURN_TO_PLAYER_SEC),
+        Math.min(1, (e - tHoldEnd) / ROOM_CLEAR_DOOR_CINE_RETURN_SEC),
       )
       this.camera.position.lerpVectors(
-        this.gateCineGateViewPos,
+        this.roomClearCineDoorViewPos,
         this.gateCineRigDesired,
         u,
       )
-      this.gateCineLookBlend.lerpVectors(this.gateCineLookAt, this.gateCinePlayerLook, u)
-      this.camera.lookAt(this.gateCineLookBlend)
+      this.roomClearCineLookBlend.lerpVectors(
+        this.roomClearCineLookAtDoor,
+        this.gateCinePlayerLook,
+        u,
+      )
+      this.camera.lookAt(this.roomClearCineLookBlend)
     } else {
       this.camera.position.copy(this.gateCineRigDesired)
       this.camera.lookAt(this.gateCinePlayerLook)
       this.cameraRig.resetOtsLookBlend()
-      this.gateCinematicRunning = false
-      this.gateCinematicElapsed = 0
-      this.gateCinematicDoorOpened = false
+      this.roomClearDoorCinematicRunning = false
+      this.roomClearDoorCinematicElapsed = 0
     }
   }
 
@@ -1926,7 +1978,7 @@ export class Game {
     return computeStackWeight(this.stack.count, this.stack.maxCapacity)
   }
 
-  /** Gate sink progress 0…1 (for future door UI). */
+  /** Double door swing progress 0…1 (for UI / debugging). */
   getDoorOpenProgress(doorIndex: number): number {
     return this.doorUnlock.getDoorOpenProgress(doorIndex)
   }

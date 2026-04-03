@@ -33,6 +33,7 @@ import {
   GHOST_FACING_TURN_FRIGHT,
   GHOST_FRIGHT_SPEED,
   GHOST_HUNT_ABORT_RANGE,
+  GHOST_HUNT_CONE_LOST_BREAK_SEC,
   GHOST_HUNT_DURATION_MAX,
   GHOST_HUNT_DURATION_MIN,
   GHOST_HUNT_SPEED,
@@ -424,6 +425,8 @@ class Ghost {
 
   /** Vision-cone hunt burst (non-relic); speed uses `GHOST_HUNT_SPEED`. */
   private huntBurstRemain = 0
+  /** Accumulates while in hunt burst but player not in vision cone (non-relic). */
+  private huntConeLostAccum = 0
   /** After hunt ends, cone cannot re-trigger for this long. */
   private visionCooldownRemain = 0
   private visionDebugLine: Line | null = null
@@ -958,6 +961,20 @@ class Ghost {
       }
 
       const sawPlayer = this.playerInVisionCone(px, pz, playerPos)
+
+      if (this.huntBurstRemain > 0 && !relicCarried && !sawPlayer) {
+        this.huntConeLostAccum += realDt
+        if (this.huntConeLostAccum >= GHOST_HUNT_CONE_LOST_BREAK_SEC) {
+          this.huntBurstRemain = 0
+          this.state = 'wander'
+          this.visionCooldownRemain = GHOST_VISION_COOLDOWN_SEC
+          this.pickWanderTimer()
+          this.wanderAngle = Math.random() * Math.PI * 2
+          this.huntConeLostAccum = 0
+        }
+      } else {
+        this.huntConeLostAccum = 0
+      }
 
       let hunting = this.huntBurstRemain > 0
       if (hunting && dist > GHOST_HUNT_ABORT_RANGE) {

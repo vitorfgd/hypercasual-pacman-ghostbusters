@@ -13,7 +13,6 @@ export const ROOM_LOCK_COVER_HEIGHT = 20
 export const ROOM_LOCK_COVER_HORIZONTAL_PAD = 0.12
 
 /**
- * Hold full opacity at the start of the gate **sink** phase, then fade 1→0 over the remainder
- * of `GATE_SINK_DURATION_SEC` (see `doorUnlockConfig.ts`).
+ * Legacy name — blackout opacity is driven by door swing (`RoomLockCoverSystem`), not sink timing.
  */
 export const ROOM_LOCK_COVER_FADE_DELAY_SEC = 0.08

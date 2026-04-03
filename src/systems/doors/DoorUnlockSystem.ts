@@ -1,9 +1,11 @@
 import type { Scene } from 'three'
 import {
   BoxGeometry,
+  Color,
   Group as ThreeGroup,
   Mesh,
   MeshStandardMaterial,
+  PointLight,
 } from 'three'
 import type { WorldCollision } from '../world/WorldCollision.ts'
 import type { AabbXZ } from '../world/collisionXZ.ts'
@@ -11,109 +13,279 @@ import { DOOR_HALF } from '../world/mansionGeometry.ts'
 import type { RoomId } from '../world/mansionRoomData.ts'
 import { DOOR_COUNT, getDoorBlockerZ, roomIndexFromId } from './doorLayout.ts'
 import {
-  DOOR_HUB_STARTS_FULLY_OPEN,
-  GATE_ANTICIPATION_SEC,
-  GATE_OPEN_DELAY_SEC,
+  DOOR_COLLIDER_THICKNESS,
+  DOOR_CROSS_Z_EPS,
+  DOOR_EXIT_SOUTH_MARGIN,
+  DOOR_LEAF_COLLIDER_SLICES,
+  DOOR_MAX_SWING_RAD,
+  DOOR_MIN_SWING_TO_REGISTER_CROSS,
+  DOOR_OPENING_RESISTANCE,
+  DOOR_PASS_CLOSE_DELAY_SEC,
+  DOOR_PASSAGE_CLEAR_SWING,
+  DOOR_PUSH_STRENGTH,
+  DOOR_PUSH_ZONE_HALF_X,
+  DOOR_PUSH_ZONE_HALF_Z,
+  DOOR_RETREAT_CANCEL_MARGIN,
+  DOOR_SLAM_SHUT_SEC,
+  DOOR_STATIC_BREAK_SPEED,
+  DOOR_STATIC_FRICTION_THRESHOLD,
+  DOOR_SWING_DAMPING,
+  DOOR_TRIGGER_HALF_X,
+  DOOR_TRIGGER_HALF_Z,
+  DOUBLE_DOOR_VISUAL_SCALE_XZ,
+  DOUBLE_DOOR_VISUAL_SCALE_Y,
+  DOUBLE_DOOR_VISUAL_Z_NUDGE,
+  DOOR_LIGHT_BASE_WARM_COLOR,
+  DOOR_LIGHT_BASE_WARM_MIX,
+  DOOR_LIGHT_DISTANCE,
+  DOOR_LIGHT_LOCKED_COLOR,
+  DOOR_LIGHT_LOCKED_FLICKER_AMP,
+  DOOR_LIGHT_LOCKED_FLICKER_HZ,
+  DOOR_LIGHT_LOCKED_INTENSITY,
+  DOOR_LIGHT_PASSED_COLOR,
+  DOOR_LIGHT_PASSED_INTENSITY,
+  DOOR_LIGHT_POS_Y,
+  DOOR_LIGHT_POS_Z,
+  DOOR_LIGHT_PUSH_PULSE_MUL,
+  DOOR_LIGHT_PUSH_PULSE_SEC,
+  DOOR_LIGHT_PUSH_VEL_THRESHOLD,
+  DOOR_LIGHT_UNLOCK_TRANSITION_SEC,
+  DOOR_LIGHT_UNLOCKED_COLOR,
+  DOOR_LIGHT_UNLOCKED_INTENSITY,
   GATE_PANEL_HEIGHT,
-  GATE_SHAKE_AMPLITUDE,
-  GATE_SHAKE_FREQ,
-  GATE_SINK_DEPTH,
-  GATE_SINK_DURATION_SEC,
 } from './doorUnlockConfig.ts'
-import { tryCloneGateMesh } from './gateGltfAsset.ts'
+import { tryCloneDoubleDoorVisual } from './doubleDoorGltfAsset.ts'
 
 export type DoorUnlockSystemOptions = {
   scene: Scene
   worldCollision: WorldCollision
   onDoorPassageCleared?: (doorIndex: number) => void
+  /** Fired once when a progression door begins its slam shut (impact frame). */
+  onDoorSlamShut?: (doorIndex: number) => void
 }
 
-function easeInOutCubic(t: number): number {
-  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
+function easeHeavy(t: number): number {
+  const u = Math.max(0, Math.min(1, t))
+  return u * u * (3 - 2 * u)
 }
 
-const OPEN_TOTAL_SEC =
-  GATE_OPEN_DELAY_SEC + GATE_ANTICIPATION_SEC + GATE_SINK_DURATION_SEC
+function easeInQuad(t: number): number {
+  const u = Math.max(0, Math.min(1, t))
+  return u * u
+}
+
+/** Tight AABB for one slice of a door leaf (local X from spanA→spanB along the leaf). */
+function rotLeafSliceAabb(
+  hingeX: number,
+  hingeZ: number,
+  yaw: number,
+  spanA: number,
+  spanB: number,
+  halfDepth: number,
+): AabbXZ {
+  const lo = Math.min(spanA, spanB)
+  const hi = Math.max(spanA, spanB)
+  const c = Math.cos(yaw)
+  const s = Math.sin(yaw)
+  const corners: [number, number][] = [
+    [lo, -halfDepth],
+    [hi, -halfDepth],
+    [hi, halfDepth],
+    [lo, halfDepth],
+  ]
+  let minX = Infinity
+  let maxX = -Infinity
+  let minZ = Infinity
+  let maxZ = -Infinity
+  for (const [lx, lz] of corners) {
+    const wx = hingeX + lx * c - lz * s
+    const wz = hingeZ + lx * s + lz * c
+    minX = Math.min(minX, wx)
+    maxX = Math.max(maxX, wx)
+    minZ = Math.min(minZ, wz)
+    maxZ = Math.max(maxZ, wz)
+  }
+  return { minX, maxX, minZ, maxZ }
+}
+
+/** Circle (player) vs doorway trigger AABB overlap (XZ). */
+function circleIntersectsDoorTrigger(
+  px: number,
+  pz: number,
+  radius: number,
+  zDoor: number,
+): boolean {
+  const minX = -DOOR_TRIGGER_HALF_X
+  const maxX = DOOR_TRIGGER_HALF_X
+  const minZ = zDoor - DOOR_TRIGGER_HALF_Z
+  const maxZ = zDoor + DOOR_TRIGGER_HALF_Z
+  const cx = Math.max(minX, Math.min(maxX, px))
+  const cz = Math.max(minZ, Math.min(maxZ, pz))
+  const dx = px - cx
+  const dz = pz - cz
+  return dx * dx + dz * dz <= radius * radius + 1e-5
+}
 
 /**
- * North-chain gates: hub passage starts open; doors 1…N−1 sink when that room hits 100% cleanliness.
+ * Double doors: unlock on cleanliness, push to open, forward-only via trigger + delayed slam.
  */
 export class DoorUnlockSystem {
   private readonly worldCollision: WorldCollision
   private readonly onDoorPassageCleared?: (doorIndex: number) => void
+  private readonly onDoorSlamShut?: (doorIndex: number) => void
 
   private readonly root = new ThreeGroup()
-  /** Player may pass — after animation finishes (or hub door starts open). */
-  private readonly passageOpen: boolean[] = Array.from(
-    { length: DOOR_COUNT },
-    (_, i) => i === 0 && DOOR_HUB_STARTS_FULLY_OPEN,
-  )
-  /** Seconds since `openDoorFully` — null = idle. */
-  private readonly openingElapsed: (number | null)[] = Array.from(
-    { length: DOOR_COUNT },
-    () => null,
-  )
+  /** Cleanliness satisfied — may push until passed / boss trap. */
+  private readonly keyUnlocked: boolean[] = Array.from({ length: DOOR_COUNT }, (_, i) => i === 0)
+  /** Player has crossed forward; door is permanently closed (progression). */
+  private readonly passed: boolean[] = Array.from({ length: DOOR_COUNT }, () => false)
+  /** Boss fight seal — same blocking as passed, distinct for southern access rules. */
+  private readonly bossTrapped = new Set<number>()
+
+  private readonly swing: number[] = Array.from({ length: DOOR_COUNT }, () => 0)
+  private readonly swingVel: number[] = Array.from({ length: DOOR_COUNT }, () => 0)
   private readonly passageNotified: boolean[] = Array.from(
     { length: DOOR_COUNT },
     () => false,
   )
 
-  private readonly gateRoots: (ThreeGroup | null)[] = Array.from(
+  private readonly commitsForward: boolean[] = Array.from(
+    { length: DOOR_COUNT },
+    () => false,
+  )
+  private readonly pendingCloseRemain: (number | null)[] = Array.from(
     { length: DOOR_COUNT },
     () => null,
   )
-  private readonly gateContents: (ThreeGroup | null)[] = Array.from(
+  private readonly slamRemain: (number | null)[] = Array.from(
     { length: DOOR_COUNT },
     () => null,
   )
-  /**
-   * Extra solid collider while passage stays “open” for access checks — e.g. boss seals return path.
-   */
-  private readonly bossTrapDoorIndices = new Set<number>()
+  private readonly slamStartSwing: number[] = Array.from(
+    { length: DOOR_COUNT },
+    () => 0,
+  )
+  private readonly triggerInsidePrev: boolean[] = Array.from(
+    { length: DOOR_COUNT },
+    () => false,
+  )
+
+  private lastPlayerZ: number | null = null
+
+  private readonly doorRoots: (ThreeGroup | null)[] = Array.from(
+    { length: DOOR_COUNT },
+    () => null,
+  )
+  private readonly leftPivots: (ThreeGroup | null)[] = Array.from(
+    { length: DOOR_COUNT },
+    () => null,
+  )
+  private readonly rightPivots: (ThreeGroup | null)[] = Array.from(
+    { length: DOOR_COUNT },
+    () => null,
+  )
+
+  private readonly doorPointLights: (PointLight | null)[] = Array.from(
+    { length: DOOR_COUNT },
+    () => null,
+  )
+  /** Remaining seconds for red→green ease when `unlockDoor` fires. */
+  private readonly unlockLightTransitionRemain: number[] = Array.from(
+    { length: DOOR_COUNT },
+    () => 0,
+  )
+  private readonly pushPulseRemain: number[] = Array.from(
+    { length: DOOR_COUNT },
+    () => 0,
+  )
+  private readonly prevSwingVel: number[] = Array.from(
+    { length: DOOR_COUNT },
+    () => 0,
+  )
+
+  private readonly colLocked = new Color(DOOR_LIGHT_LOCKED_COLOR)
+  private readonly colUnlocked = new Color(DOOR_LIGHT_UNLOCKED_COLOR)
+  private readonly colPassed = new Color(DOOR_LIGHT_PASSED_COLOR)
+  private readonly colWarm = new Color(DOOR_LIGHT_BASE_WARM_COLOR)
+  private readonly scratchDoorRgb = new Color()
 
   constructor(opts: DoorUnlockSystemOptions) {
     this.worldCollision = opts.worldCollision
     this.onDoorPassageCleared = opts.onDoorPassageCleared
+    this.onDoorSlamShut = opts.onDoorSlamShut
 
-    this.root.name = 'roomGates'
+    this.root.name = 'roomDoubleDoors'
     opts.scene.add(this.root)
 
     for (let i = 0; i < DOOR_COUNT; i++) {
-      if (i === 0 && DOOR_HUB_STARTS_FULLY_OPEN) continue
-      this.buildGateSet(i)
+      this.buildDoorSet(i)
     }
 
     this.syncColliders()
+    this.syncDoorPointLights(0, 0)
   }
 
-  isDoorUnlocked(doorIndex: number): boolean {
+  unlockDoor(doorIndex: number): void {
+    if (doorIndex < 0 || doorIndex >= DOOR_COUNT) return
+    if (this.passed[doorIndex] || this.bossTrapped.has(doorIndex)) return
+    this.keyUnlocked[doorIndex] = true
+    this.unlockLightTransitionRemain[doorIndex] = DOOR_LIGHT_UNLOCK_TRANSITION_SEC
+    // `unlockDoor` runs from room-clear (after `update` in the same frame). Refresh immediately
+    // so door colliders switch off the sealed slab without waiting a full frame.
+    this.syncColliders()
+  }
+
+  openDoorFully(doorIndex: number): void {
+    this.unlockDoor(doorIndex)
+  }
+
+  isKeyUnlocked(doorIndex: number): boolean {
     return (
       doorIndex >= 0 &&
       doorIndex < DOOR_COUNT &&
-      this.passageOpen[doorIndex] === true
+      this.keyUnlocked[doorIndex] === true &&
+      !this.passed[doorIndex] &&
+      !this.bossTrapped.has(doorIndex)
     )
   }
 
+  isDoorUnlocked(doorIndex: number): boolean {
+    return this.isDoorPassageClear(doorIndex)
+  }
+
+  /** Physical gap: swing past threshold while door is still interactable. */
+  isDoorPassageClear(doorIndex: number): boolean {
+    if (doorIndex < 0 || doorIndex >= DOOR_COUNT) return false
+    if (this.passed[doorIndex] || this.bossTrapped.has(doorIndex)) return false
+    return this.swing[doorIndex] >= DOOR_PASSAGE_CLEAR_SWING
+  }
+
   /**
-   * Block walking back through `doorIndex` without changing unlock state (room stays accessible for HUD/spawns).
-   * Shows the gate mesh closed at floor level.
+   * Room chain / clutter: door is “resolved” if the player has crossed (passed), boss-sealed,
+   * or the passage is physically open enough.
    */
+  isDoorSouthernAccessGranted(doorIndex: number): boolean {
+    if (doorIndex < 0 || doorIndex >= DOOR_COUNT) return false
+    if (this.passed[doorIndex]) return true
+    if (this.bossTrapped.has(doorIndex)) return true
+    return this.isDoorPassageClear(doorIndex)
+  }
+
   setBossDoorTrap(doorIndex: number, active: boolean): void {
     if (doorIndex < 0 || doorIndex >= DOOR_COUNT) return
     if (active) {
-      this.bossTrapDoorIndices.add(doorIndex)
-      const root = this.gateRoots[doorIndex]
-      if (root) {
-        root.visible = true
-        const content = this.gateContents[doorIndex]
-        if (content) content.position.set(0, 0, 0)
-      }
+      this.bossTrapped.add(doorIndex)
+      this.keyUnlocked[doorIndex] = false
+      this.swing[doorIndex] = 0
+      this.swingVel[doorIndex] = 0
+      this.slamRemain[doorIndex] = null
+      this.pendingCloseRemain[doorIndex] = null
+      this.commitsForward[doorIndex] = false
+      this.applySwingPose(doorIndex, 0)
+      const r = this.doorRoots[doorIndex]
+      if (r) r.visible = true
     } else {
-      this.bossTrapDoorIndices.delete(doorIndex)
-      if (this.passageOpen[doorIndex]) {
-        const root = this.gateRoots[doorIndex]
-        if (root) root.visible = false
-      }
+      this.bossTrapped.delete(doorIndex)
     }
     this.syncColliders()
   }
@@ -123,7 +295,7 @@ export class DoorUnlockSystem {
     if (idx === null) return true
     if (idx <= 0) return true
     for (let d = 0; d < idx; d++) {
-      if (!this.isDoorUnlocked(d)) return false
+      if (!this.isDoorSouthernAccessGranted(d)) return false
     }
     return true
   }
@@ -132,84 +304,127 @@ export class DoorUnlockSystem {
     return false
   }
 
-  openDoorFully(doorIndex: number): void {
-    if (doorIndex < 0 || doorIndex >= DOOR_COUNT) return
-    if (this.passageOpen[doorIndex] === true) return
-    if (this.openingElapsed[doorIndex] !== null) return
-    this.openingElapsed[doorIndex] = 0
-    this.applyGatePose(doorIndex, 0)
-  }
-
   getDoorOpenProgress(doorIndex: number): number {
     if (doorIndex < 0 || doorIndex >= DOOR_COUNT) return 0
-    if (this.passageOpen[doorIndex] === true) return 1
-    const el = this.openingElapsed[doorIndex]
-    if (el === null) return 0
-    return Math.min(1, el / OPEN_TOTAL_SEC)
+    return this.swing[doorIndex]
   }
 
-  /**
-   * Elapsed seconds since `openDoorFully` for this door, or null when idle (read-only; for UI/covers).
-   */
+  getDoorSwingOpen01(doorIndex: number): number {
+    if (doorIndex < 0 || doorIndex >= DOOR_COUNT) return 0
+    if (this.passed[doorIndex]) return 1
+    return this.swing[doorIndex]
+  }
+
   getDoorOpeningElapsed(doorIndex: number): number | null {
     if (doorIndex < 0 || doorIndex >= DOOR_COUNT) return null
-    return this.openingElapsed[doorIndex]
+    const s = this.swing[doorIndex]
+    return s > 1e-4 ? s * 2.5 : null
   }
 
-  update(dt: number, _timeSec: number): void {
-    for (let i = 0; i < DOOR_COUNT; i++) {
-      const el = this.openingElapsed[i]
-      if (el === null) continue
-      const next = el + dt
-      this.openingElapsed[i] = next
-      this.applyGatePose(i, next)
+  update(dt: number, timeSec: number, player: DoorPlayerSample): void {
+    const px = player.x
+    const pz = player.z
+    const pr = player.radius
+    const lastZ = this.lastPlayerZ
 
-      if (next >= OPEN_TOTAL_SEC) {
-        this.passageOpen[i] = true
-        this.openingElapsed[i] = null
-        if (!this.passageNotified[i]) {
-          this.passageNotified[i] = true
-          this.onDoorPassageCleared?.(i)
+    for (let i = 0; i < DOOR_COUNT; i++) {
+      const zDoor = getDoorBlockerZ(i)
+      const inTrig = circleIntersectsDoorTrigger(px, pz, pr, zDoor)
+      const wasIn = this.triggerInsidePrev[i]
+
+      if (!this.passed[i] && !this.bossTrapped.has(i)) {
+        if (lastZ !== null) {
+          const crossedForward =
+            lastZ > zDoor + DOOR_CROSS_Z_EPS && pz < zDoor - DOOR_CROSS_Z_EPS
+          const crossedBack =
+            lastZ < zDoor - DOOR_CROSS_Z_EPS && pz > zDoor + DOOR_CROSS_Z_EPS
+
+          if (crossedBack) {
+            this.commitsForward[i] = false
+            this.pendingCloseRemain[i] = null
+          }
+
+          if (crossedForward && this.keyUnlocked[i]) {
+            const sw = this.swing[i]!
+            if (
+              sw >= DOOR_MIN_SWING_TO_REGISTER_CROSS ||
+              sw >= DOOR_PASSAGE_CLEAR_SWING
+            ) {
+              this.commitsForward[i] = true
+            }
+          }
         }
-        this.setGateHidden(i)
+
+        const pending = this.pendingCloseRemain[i]
+        if (pending !== null && pending > 0) {
+          if (pz > zDoor + DOOR_RETREAT_CANCEL_MARGIN) {
+            this.pendingCloseRemain[i] = null
+            this.commitsForward[i] = false
+          } else {
+            const nextP = pending - dt
+            if (nextP <= 0) {
+              this.pendingCloseRemain[i] = null
+              this.beginDoorSlamShut(i)
+            } else {
+              this.pendingCloseRemain[i] = nextP
+            }
+          }
+        }
+
+        if (
+          this.commitsForward[i] &&
+          wasIn &&
+          !inTrig &&
+          pz < zDoor - DOOR_EXIT_SOUTH_MARGIN &&
+          this.pendingCloseRemain[i] === null &&
+          !this.passed[i]
+        ) {
+          this.pendingCloseRemain[i] = DOOR_PASS_CLOSE_DELAY_SEC
+        }
+      }
+
+      this.triggerInsidePrev[i] = inTrig
+    }
+
+    for (let i = 0; i < DOOR_COUNT; i++) {
+      const sr = this.slamRemain[i]
+      if (sr !== null && sr > 0) {
+        const nextSlam = sr - dt
+        const t = 1 - Math.max(0, nextSlam) / DOOR_SLAM_SHUT_SEC
+        const u = easeInQuad(t)
+        this.swing[i] = this.slamStartSwing[i]! * (1 - u)
+        this.applySwingPose(i, this.swing[i]!)
+        if (nextSlam <= 0) {
+          this.slamRemain[i] = null
+          this.swing[i] = 0
+          this.applySwingPose(i, 0)
+        } else {
+          this.slamRemain[i] = nextSlam
+        }
+        continue
+      }
+
+      if (this.bossTrapped.has(i)) continue
+      if (this.passed[i]) continue
+      if (!this.isKeyUnlocked(i)) continue
+
+      this.applyPushForDoor(i, dt, player)
+      const v = this.swingVel[i]!
+      const s = this.swing[i]!
+      const nextS = Math.max(0, Math.min(1, s + v * dt))
+      this.swing[i] = nextS
+      this.swingVel[i] = v * Math.exp(-DOOR_SWING_DAMPING * dt)
+      this.applySwingPose(i, nextS)
+
+      if (nextS >= DOOR_PASSAGE_CLEAR_SWING && !this.passageNotified[i]) {
+        this.passageNotified[i] = true
+        this.onDoorPassageCleared?.(i)
       }
     }
+
+    this.lastPlayerZ = pz
     this.syncColliders()
-  }
-
-  private setGateHidden(doorIndex: number): void {
-    const root = this.gateRoots[doorIndex]
-    if (root) root.visible = false
-  }
-
-  private applyGatePose(doorIndex: number, elapsed: number): void {
-    const content = this.gateContents[doorIndex]
-    if (!content) return
-
-    const t0 = GATE_OPEN_DELAY_SEC
-    const t1 = t0 + GATE_ANTICIPATION_SEC
-
-    let y = 0
-    let shakeX = 0
-
-    if (elapsed < t0) {
-      y = 0
-      shakeX = 0
-    } else if (elapsed < t1) {
-      const sub = elapsed - t0
-      y = 0
-      shakeX =
-        Math.sin(sub * GATE_SHAKE_FREQ) *
-        GATE_SHAKE_AMPLITUDE *
-        (1 - sub / GATE_ANTICIPATION_SEC)
-    } else {
-      const sub = elapsed - t1
-      const u = Math.min(1, sub / GATE_SINK_DURATION_SEC)
-      y = -easeInOutCubic(u) * GATE_SINK_DEPTH
-      shakeX = 0
-    }
-
-    content.position.set(shakeX, y, 0)
+    this.syncDoorPointLights(dt, timeSec)
   }
 
   dispose(): void {
@@ -224,33 +439,199 @@ export class DoorUnlockSystem {
     })
   }
 
-  private buildGateSet(doorIndex: number): void {
+  private beginDoorSlamShut(doorIndex: number): void {
+    if (this.passed[doorIndex]) return
+    this.passed[doorIndex] = true
+    this.keyUnlocked[doorIndex] = false
+    this.swingVel[doorIndex] = 0
+    this.commitsForward[doorIndex] = false
+    this.pendingCloseRemain[doorIndex] = null
+
+    const s = this.swing[doorIndex]!
+    this.slamStartSwing[doorIndex] = s
+    this.slamRemain[doorIndex] = DOOR_SLAM_SHUT_SEC
+
+    this.onDoorSlamShut?.(doorIndex)
+
+    if (s < 1e-3) {
+      this.swing[doorIndex] = 0
+      this.slamRemain[doorIndex] = null
+      this.applySwingPose(doorIndex, 0)
+    } else {
+      this.applySwingPose(doorIndex, s)
+    }
+  }
+
+  private applyPushForDoor(i: number, dt: number, p: DoorPlayerSample): void {
+    const zDoor = getDoorBlockerZ(i)
+    if (
+      Math.abs(p.x) > DOOR_PUSH_ZONE_HALF_X + p.radius ||
+      Math.abs(p.z - zDoor) > DOOR_PUSH_ZONE_HALF_Z + p.radius
+    ) {
+      return
+    }
+
+    const nz = p.z - zDoor
+    let toward = 0
+    if (nz > 0.04) toward = -p.vz
+    else if (nz < -0.04) toward = p.vz
+    else toward = Math.abs(p.vz)
+
+    toward = Math.max(0, toward)
+    if (toward < 1e-4) return
+
+    let mul = 1
+    const s = this.swing[i]!
+    if (s < DOOR_STATIC_FRICTION_THRESHOLD) {
+      if (toward < DOOR_STATIC_BREAK_SPEED) return
+      mul *= DOOR_OPENING_RESISTANCE
+    } else {
+      mul *= 1 - (1 - DOOR_OPENING_RESISTANCE) * (1 - s)
+    }
+
+    this.swingVel[i]! += toward * DOOR_PUSH_STRENGTH * mul * dt
+  }
+
+  private applySwingPose(doorIndex: number, swing01: number): void {
+    const lp = this.leftPivots[doorIndex]
+    const rp = this.rightPivots[doorIndex]
+    if (!lp || !rp) return
+    const u = easeHeavy(swing01)
+    const ang = u * DOOR_MAX_SWING_RAD
+    lp.rotation.y = ang
+    rp.rotation.y = -ang
+  }
+
+  private buildDoorSet(doorIndex: number): void {
     const g = new ThreeGroup()
-    g.name = `gateSet:${doorIndex}`
+    g.name = `doorSet:${doorIndex}`
     const zDoor = getDoorBlockerZ(doorIndex)
     g.position.set(0, 0, zDoor)
 
-    const content = new ThreeGroup()
-    content.name = 'gateContent'
-    g.add(content)
-
-    const barrierW = DOOR_HALF * 2 + 0.06
-    const mesh = tryCloneGateMesh()
-    if (mesh) {
-      mesh.name = 'gateMesh'
-      content.add(mesh)
+    const vis = tryCloneDoubleDoorVisual()
+    if (vis) {
+      vis.root.scale.set(
+        DOUBLE_DOOR_VISUAL_SCALE_XZ,
+        DOUBLE_DOOR_VISUAL_SCALE_Y,
+        DOUBLE_DOOR_VISUAL_SCALE_XZ,
+      )
+      vis.root.position.z = DOUBLE_DOOR_VISUAL_Z_NUDGE
+      g.add(vis.root)
+      this.leftPivots[doorIndex] = vis.leftPivot
+      this.rightPivots[doorIndex] = vis.rightPivot
     } else {
-      content.add(this.createFallbackGate(barrierW))
+      const content = new ThreeGroup()
+      content.name = 'doorFallbackContent'
+      const barrierW = DOOR_HALF * 2 + 0.06
+      const half = barrierW * 0.25
+      const lp = new ThreeGroup()
+      lp.position.set(-half * 2, 0, 0)
+      const lm = this.createFallbackPanel(half * 2.1)
+      lp.add(lm)
+      const rp = new ThreeGroup()
+      rp.position.set(half * 2, 0, 0)
+      const rm = this.createFallbackPanel(half * 2.1)
+      rp.add(rm)
+      content.add(lp)
+      content.add(rp)
+      g.add(content)
+      this.leftPivots[doorIndex] = lp
+      this.rightPivots[doorIndex] = rp
     }
 
-    this.gateRoots[doorIndex] = g
-    this.gateContents[doorIndex] = content
+    this.doorRoots[doorIndex] = g
     this.root.add(g)
+    this.attachDoorStylizedLight(g, doorIndex)
+    this.applySwingPose(doorIndex, 0)
   }
 
-  private createFallbackGate(barrierW: number): Mesh {
+  /** Single state-driven point light above the doorway; no shadows. */
+  private attachDoorStylizedLight(g: ThreeGroup, doorIndex: number): void {
+    const L = new PointLight(0xffffff, 2, DOOR_LIGHT_DISTANCE, 2)
+    L.name = `doorStylizedPoint:${doorIndex}`
+    L.position.set(0, DOOR_LIGHT_POS_Y, DOOR_LIGHT_POS_Z)
+    L.castShadow = false
+    g.add(L)
+    this.doorPointLights[doorIndex] = L
+  }
+
+  private syncDoorPointLights(dt: number, timeSec: number): void {
+    for (let i = 0; i < DOOR_COUNT; i++) {
+      const L = this.doorPointLights[i]
+      if (!L) continue
+
+      const passed = this.passed[i]
+      const bossSeal = this.bossTrapped.has(i)
+      const locked = !this.keyUnlocked[i] || bossSeal
+      const canInteract =
+        this.keyUnlocked[i] && !passed && !bossSeal
+
+      let intensity = DOOR_LIGHT_LOCKED_INTENSITY
+      let r: number
+      let gCol: number
+      let b: number
+
+      if (passed) {
+        intensity = DOOR_LIGHT_PASSED_INTENSITY
+        r = this.colPassed.r
+        gCol = this.colPassed.g
+        b = this.colPassed.b
+      } else if (locked) {
+        const flick =
+          1 +
+          DOOR_LIGHT_LOCKED_FLICKER_AMP *
+            Math.sin(timeSec * (Math.PI * 2 * DOOR_LIGHT_LOCKED_FLICKER_HZ))
+        intensity = DOOR_LIGHT_LOCKED_INTENSITY * flick
+        r = this.colLocked.r
+        gCol = this.colLocked.g
+        b = this.colLocked.b
+      } else {
+        let u = 1
+        let tr = this.unlockLightTransitionRemain[i]
+        if (tr > 0) {
+          tr = Math.max(0, tr - dt)
+          this.unlockLightTransitionRemain[i] = tr
+          u =
+            1 -
+            tr / Math.max(1e-5, DOOR_LIGHT_UNLOCK_TRANSITION_SEC)
+        }
+        u = u * u * (3 - 2 * u)
+        this.scratchDoorRgb.copy(this.colLocked).lerp(this.colUnlocked, u)
+        if (DOOR_LIGHT_BASE_WARM_MIX > 0) {
+          this.scratchDoorRgb.lerp(this.colWarm, DOOR_LIGHT_BASE_WARM_MIX)
+        }
+        intensity =
+          DOOR_LIGHT_LOCKED_INTENSITY +
+          (DOOR_LIGHT_UNLOCKED_INTENSITY - DOOR_LIGHT_LOCKED_INTENSITY) * u
+        r = this.scratchDoorRgb.r
+        gCol = this.scratchDoorRgb.g
+        b = this.scratchDoorRgb.b
+      }
+
+      if (canInteract) {
+        const v = this.swingVel[i]!
+        const prev = this.prevSwingVel[i]!
+        if (v > DOOR_LIGHT_PUSH_VEL_THRESHOLD && v > prev) {
+          this.pushPulseRemain[i] = DOOR_LIGHT_PUSH_PULSE_SEC
+        }
+      }
+      this.prevSwingVel[i] = this.swingVel[i]!
+
+      let pr = this.pushPulseRemain[i]
+      if (pr > 0) {
+        pr = Math.max(0, pr - dt)
+        this.pushPulseRemain[i] = pr
+        intensity *= DOOR_LIGHT_PUSH_PULSE_MUL
+      }
+
+      L.color.setRGB(r, gCol, b)
+      L.intensity = intensity
+    }
+  }
+
+  private createFallbackPanel(width: number): Mesh {
     const mesh = new Mesh(
-      new BoxGeometry(barrierW, GATE_PANEL_HEIGHT, 0.2),
+      new BoxGeometry(width, GATE_PANEL_HEIGHT, 0.14),
       new MeshStandardMaterial({
         color: 0x3d3250,
         emissive: 0x221830,
@@ -259,7 +640,7 @@ export class DoorUnlockSystem {
         metalness: 0.06,
       }),
     )
-    mesh.name = 'gateFallback'
+    mesh.name = 'doorFallbackLeaf'
     mesh.userData.gateFallback = true
     mesh.position.y = GATE_PANEL_HEIGHT * 0.5
     return mesh
@@ -267,20 +648,50 @@ export class DoorUnlockSystem {
 
   private syncColliders(): void {
     const extra: AabbXZ[] = []
-    const t = 0.16
-    const hw = DOOR_HALF + 0.04
+    const halfW = DOOR_HALF + 0.04
+    const t = DOOR_COLLIDER_THICKNESS
+    const halfD = t * 0.5
+    const span = DOOR_HALF * 0.98
+    const yawL = (s: number) => easeHeavy(s) * DOOR_MAX_SWING_RAD
+    const hingeLX = -DOOR_HALF * 0.98
+    const hingeRX = DOOR_HALF * 0.98
 
     for (let i = 0; i < DOOR_COUNT; i++) {
-      if (this.passageOpen[i] === true && !this.bossTrapDoorIndices.has(i))
-        continue
       const zc = getDoorBlockerZ(i)
-      extra.push({
-        minX: -hw,
-        maxX: hw,
-        minZ: zc - t * 0.5,
-        maxZ: zc + t * 0.5,
-      })
+      if (this.passed[i] || this.bossTrapped.has(i) || !this.keyUnlocked[i]) {
+        extra.push({
+          minX: -halfW,
+          maxX: halfW,
+          minZ: zc - halfD,
+          maxZ: zc + halfD,
+        })
+        continue
+      }
+      const s = this.swing[i]!
+      if (s >= DOOR_PASSAGE_CLEAR_SWING) continue
+
+      const yL = yawL(s)
+      const yR = -yL
+      const n = Math.max(2, DOOR_LEAF_COLLIDER_SLICES)
+      for (let sl = 0; sl < n; sl++) {
+        const t0 = sl / n
+        const t1 = (sl + 1) / n
+        const a = t0 * span
+        const b = t1 * span
+        extra.push(rotLeafSliceAabb(hingeLX, zc, yL, a, b, halfD))
+        const ra = -t0 * span
+        const rb = -t1 * span
+        extra.push(rotLeafSliceAabb(hingeRX, zc, yR, rb, ra, halfD))
+      }
     }
+
     this.worldCollision.setExtraColliders(extra)
   }
+}
+
+export type DoorPlayerSample = {
+  x: number
+  z: number
+  radius: number
+  vz: number
 }

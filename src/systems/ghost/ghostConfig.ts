@@ -50,7 +50,13 @@ export const GHOST_HUNT_DURATION_MAX = 3.7
 export const GHOST_VISION_COOLDOWN_SEC = 1.85
 
 /** End hunt early if player is farther than this (escape valve). */
-export const GHOST_HUNT_ABORT_RANGE = 17.5
+export const GHOST_HUNT_ABORT_RANGE = 10.5
+
+/**
+ * During a vision hunt burst, if the player leaves the aggro cone for this long (seconds),
+ * the hunt ends — matches “only the cone can spot you” feel.
+ */
+export const GHOST_HUNT_CONE_LOST_BREAK_SEC = 0.32
 
 /** Wireframe cone under ghost feet (dev only). */
 export const GHOST_VISION_DEBUG = false
@@ -66,7 +72,7 @@ export const GHOST_VISION_CONE_COLOR = 0x55eecc
 export const GHOST_VISION_CONE_SEGMENTS = 40
 
 /** Steering: chase / fright — snappier pursuit */
-export const GHOST_STEERING_ACCEL_CHASE = 26
+export const GHOST_STEERING_ACCEL_CHASE = 18
 
 /** Steering: wander — softer, less twitchy */
 export const GHOST_STEERING_ACCEL_WANDER = 9.2

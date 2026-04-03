@@ -17,11 +17,11 @@ export const PLAYER_START_BOOST_DURATION_SEC = 0.12
 /** Ghost patrol speed (NORMAL wander) — slower, calmer roam */
 export const GHOST_WANDER_SPEED = 3.55 * 1.08
 
-/** Ghost chase when pursuing relic carrier — well above player max (hard to outrun in the open). */
-export const GHOST_CHASE_SPEED = 23.5
+/** Ghost chase when pursuing relic carrier — above player max; tuned for reaction time. */
+export const GHOST_CHASE_SPEED = 14.5
 
-/** Vision-cone hunt burst — very fast commitment after spotting the player. */
-export const GHOST_HUNT_SPEED = 28.5
+/** Vision-cone hunt burst — fast but readable; LOS must be kept or hunt breaks. */
+export const GHOST_HUNT_SPEED = 17.5
 
 /** Ghost flee speed in FRIGHTENED (power mode) — slightly slower than chase, still readable */
 export const GHOST_FRIGHT_SPEED = 5.15 * 1.08

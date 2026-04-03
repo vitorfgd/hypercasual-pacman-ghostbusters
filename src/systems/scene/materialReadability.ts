@@ -21,7 +21,8 @@ export function meshIsFromLoadedGltf(mesh: Mesh): boolean {
       u.wispGltf === true ||
       u.relicGltf === true ||
       u.carryBagGltf === true ||
-      u.gateGltf === true
+      u.gateGltf === true ||
+      u.doubleDoorGltf === true
     ) {
       return true
     }
