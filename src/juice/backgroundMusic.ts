@@ -1,5 +1,7 @@
+import { publicAsset } from '../core/publicAsset.ts'
+
 /** Track: Adrián Berenguer — Premiere (Creative Cut — Minimal). File in `public/`. */
-const MUSIC_URL = '/premiere-minimal.mp3'
+const MUSIC_URL = publicAsset('premiere-minimal.mp3')
 
 let audio: HTMLAudioElement | null = null
 let pendingResume: (() => void) | null = null
