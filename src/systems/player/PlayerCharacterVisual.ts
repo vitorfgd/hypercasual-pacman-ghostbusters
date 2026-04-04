@@ -212,6 +212,7 @@ export class PlayerCharacterVisual {
       let start: AnimationAction | null = idle ?? running ?? collecting
       if (start) {
         start.reset().setEffectiveWeight(1).fadeIn(0.12).play()
+        mixer.update(0)
       }
 
       this.gltfAnim = {

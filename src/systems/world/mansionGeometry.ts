@@ -6,9 +6,6 @@
  */
 export const ROOM_HALF = 8
 
-/** Alias — safe uses the same footprint as gameplay rooms. */
-export const SAFE_ROOM_HALF = ROOM_HALF
-
 /** Walkable depth of each door threshold (between rooms). */
 export const CORRIDOR_DEPTH = 2
 

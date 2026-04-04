@@ -171,12 +171,16 @@ function createGltfGhostVisual(
   if (idleAction && chaseAction && !sameClip) {
     idleAction.reset().setEffectiveWeight(1).play()
     chaseAction.reset().setEffectiveWeight(0).play()
+    mixer.update(0)
   } else if (idleAction) {
     idleAction.reset().fadeIn(0.12).play()
+    mixer.update(0)
   } else if (chaseAction) {
     chaseAction.reset().fadeIn(0.12).play()
+    mixer.update(0)
   } else if (clips[0]) {
     mixer.clipAction(clips[0]).reset().play()
+    mixer.update(0)
   }
 
   const setChaseAnim = (chasing: boolean): void => {

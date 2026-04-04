@@ -1,24 +1,25 @@
-import { CylinderGeometry, Group, Mesh, MeshBasicMaterial, type Scene } from 'three'
-import {
-  cloneGridTrapMesh,
-  disposeGridTrapClone,
-} from '../grid/gridTrapGltfAsset.ts'
+import { Group, Mesh, type Scene } from 'three'
+import { cloneGridTrapMesh } from '../grid/gridTrapGltfAsset.ts'
 
-export type TrapPlacement = { x: number; z: number }
+export type TrapPlacement = {
+  x: number
+  z: number
+  width: number
+  depth: number
+}
 
-/** Logical XZ radius for overlap vs player circle (matches scaled GLB footprint). */
-const TRAP_HIT_RADIUS = 0.58 * 1.15
-/** Raise trap mesh above floor snap so spikes read clearly. */
-const TRAP_Y_OFFSET = 0.16 * 1.15
+const TRAP_MODEL_Y = 0.01
+const TRAP_MODEL_FOOTPRINT_SCALE = 1.12
 
 export type TrapCallbacks = {
   onStepTrap: () => void
 }
 
 type TrapInst = {
-  x: number
-  z: number
-  radius: number
+  minX: number
+  maxX: number
+  minZ: number
+  maxZ: number
   wasInside: boolean
   root: Group
 }
@@ -38,12 +39,13 @@ export class TrapFieldSystem {
   setPlacements(placements: readonly TrapPlacement[]): void {
     this.clearTraps()
     for (const p of placements) {
-      const root = this.buildVisual(p.x, p.z)
+      const root = this.buildVisual(p)
       this.scene.add(root)
       this.traps.push({
-        x: p.x,
-        z: p.z,
-        radius: TRAP_HIT_RADIUS,
+        minX: p.x - p.width * 0.5,
+        maxX: p.x + p.width * 0.5,
+        minZ: p.z - p.depth * 0.5,
+        maxZ: p.z + p.depth * 0.5,
         wasInside: false,
         root,
       })
@@ -52,42 +54,49 @@ export class TrapFieldSystem {
 
   private clearTraps(): void {
     for (const t of this.traps) {
-      if (t.root.userData.gridTrapGltf === true) {
-        disposeGridTrapClone(t.root)
-      } else {
-        t.root.removeFromParent()
-        t.root.traverse((o) => {
-          if (o instanceof Mesh) {
-            o.geometry.dispose()
-            const m = o.material
-            if (Array.isArray(m)) m.forEach((x) => x.dispose())
-            else m.dispose()
-          }
-        })
-      }
+      t.root.removeFromParent()
+      t.root.traverse((o) => {
+        if (o instanceof Mesh) {
+          o.geometry.dispose()
+          const m = o.material
+          if (Array.isArray(m)) m.forEach((x) => x.dispose())
+          else m.dispose()
+        }
+      })
     }
     this.traps.length = 0
   }
 
-  private buildVisual(x: number, z: number): Group {
-    const glb = cloneGridTrapMesh()
-    if (glb) {
-      glb.position.set(x, TRAP_Y_OFFSET, z)
-      return glb
-    }
+  private buildVisual(p: TrapPlacement): Group {
     const g = new Group()
-    g.position.set(x, TRAP_Y_OFFSET, z)
-    const m = new Mesh(
-      new CylinderGeometry(0.62 * 1.15, 0.7 * 1.15, 0.34 * 1.15, 10),
-      new MeshBasicMaterial({ color: 0x884466 }),
-    )
-    m.position.y = 0.17 * 1.15
-    m.raycast = () => {}
-    g.add(m)
+    g.position.set(p.x, 0, p.z)
+
+    const trapModel = cloneGridTrapMesh()
+    if (trapModel) {
+      trapModel.scale.multiplyScalar(
+        Math.min(p.width, p.depth) * TRAP_MODEL_FOOTPRINT_SCALE,
+      )
+      trapModel.position.y = TRAP_MODEL_Y
+      g.add(trapModel)
+    }
+
     g.traverse((o) => {
       if (o instanceof Mesh) o.raycast = () => {}
     })
     return g
+  }
+
+  private circleIntersectsTrap(
+    trap: TrapInst,
+    playerX: number,
+    playerZ: number,
+    playerRadius: number,
+  ): boolean {
+    const nearestX = Math.max(trap.minX, Math.min(trap.maxX, playerX))
+    const nearestZ = Math.max(trap.minZ, Math.min(trap.maxZ, playerZ))
+    const dx = playerX - nearestX
+    const dz = playerZ - nearestZ
+    return dx * dx + dz * dz < playerRadius * playerRadius - 1e-4
   }
 
   update(
@@ -98,10 +107,12 @@ export class TrapFieldSystem {
     cb: TrapCallbacks,
   ): number {
     for (const t of this.traps) {
-      const dx = playerX - t.x
-      const dz = playerZ - t.z
-      const dist = Math.hypot(dx, dz)
-      const inside = dist < t.radius + playerRadius - 1e-4
+      const inside = this.circleIntersectsTrap(
+        t,
+        playerX,
+        playerZ,
+        playerRadius,
+      )
       if (inside && !t.wasInside) {
         cb.onStepTrap()
       }

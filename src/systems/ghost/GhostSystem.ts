@@ -1,15 +1,15 @@
-import type { Group } from 'three'
 import {
   BufferAttribute,
   BufferGeometry,
   Color,
   DoubleSide,
-  Float32BufferAttribute,
+  Group,
   Line,
   LineBasicMaterial,
   Mesh,
   MeshBasicMaterial,
   MeshPhysicalMaterial,
+  PlaneGeometry,
   MeshStandardMaterial,
   Vector3,
 } from 'three'
@@ -40,16 +40,12 @@ import {
   GHOST_DIRECTION_SMOOTH_CHASE,
   GHOST_DIRECTION_SMOOTH_WANDER,
   GHOST_FACING_TURN_DEFAULT,
-  GHOST_FACING_TURN_FRIGHT,
   GHOST_GRID_CHASE_SPEED,
   GHOST_GRID_FRIGHT_SPEED,
   GHOST_GRID_HUNT_SPEED,
   GHOST_GRID_WANDER_SPEED,
   GHOST_FRIGHT_SPEED,
   GHOST_HUNT_ABORT_RANGE,
-  GHOST_HUNT_CONE_LOST_BREAK_SEC,
-  GHOST_HUNT_DURATION_MAX,
-  GHOST_HUNT_DURATION_MIN,
   GHOST_HUNT_SPEED,
   GHOST_MELEE_REARM_PADDING,
   GHOST_POST_HIT_CHASE_LOCKOUT_SEC,
@@ -66,9 +62,8 @@ import {
   GHOST_VISION_CONE_COLOR,
   GHOST_VISION_CONE_OPACITY,
   GHOST_VISION_CONE_OPACITY_CHASE,
-  GHOST_VISION_CONE_SEGMENTS,
   GHOST_VISION_CONE_VISIBLE,
-  GHOST_VISION_COS_HALF,
+  GHOST_VISION_CHASE_COMMIT_SEC,
   GHOST_VISION_DEBUG,
   GHOST_VISION_HALF_ANGLE_RAD,
   GHOST_VISION_RANGE,
@@ -83,56 +78,64 @@ import {
 import type { DoorUnlockSystem } from '../doors/DoorUnlockSystem.ts'
 import { DOOR_COUNT } from '../doors/doorLayout.ts'
 import { ROOMS } from '../world/mansionRoomData.ts'
+import { ROOM_GRID_COLS, ROOM_GRID_ROWS } from '../grid/gridConfig.ts'
+import {
+  boundsKey,
+  cellCenterWorld,
+  cellSizeWorld,
+  worldToCellIndex,
+} from '../grid/roomGridGeometry.ts'
+import type { RoomBounds } from '../world/mansionRoomData.ts'
 
-/** One shared mesh (ghost spawns were each allocating a full geometry — costly on door open). */
-let sharedGhostVisionConeGeometry: BufferGeometry | null = null
+const MAX_GHOST_VISION_CELL_MARKERS = 24
+const GHOST_VISION_CELL_Y = 0.045
+const GHOST_VISION_CELL_INSET = 0.18
+
+/** One shared grid-cell quad for ghost FOV markers. */
+let sharedGhostVisionCellGeometry: PlaneGeometry | null = null
 
 /** Call from `Game.dispose` after ghosts are torn down — shared cone geometry is not per-ghost. */
 export function disposeSharedGhostVisionConeGeometry(): void {
-  sharedGhostVisionConeGeometry?.dispose()
-  sharedGhostVisionConeGeometry = null
+  sharedGhostVisionCellGeometry?.dispose()
+  sharedGhostVisionCellGeometry = null
 }
 
-function getSharedGhostVisionConeGeometry(): BufferGeometry {
-  if (sharedGhostVisionConeGeometry) return sharedGhostVisionConeGeometry
-  const R = GHOST_VISION_RANGE
-  const half = GHOST_VISION_HALF_ANGLE_RAD
-  const segs = GHOST_VISION_CONE_SEGMENTS
-  const y = 0.04
-  const positions: number[] = []
-  positions.push(0, y, 0)
-  for (let i = 0; i <= segs; i++) {
-    const t = i / segs
-    const a = -half + t * (2 * half)
-    positions.push(Math.sin(a) * R, y, Math.cos(a) * R)
-  }
-  const indices: number[] = []
-  for (let i = 0; i < segs; i++) {
-    indices.push(0, 1 + i, 2 + i)
-  }
-  const geom = new BufferGeometry()
-  geom.setAttribute('position', new Float32BufferAttribute(positions, 3))
-  geom.setIndex(indices)
-  geom.computeVertexNormals()
-  sharedGhostVisionConeGeometry = geom
+function getSharedGhostVisionCellGeometry(): PlaneGeometry {
+  if (sharedGhostVisionCellGeometry) return sharedGhostVisionCellGeometry
+  const geom = new PlaneGeometry(1, 1)
+  sharedGhostVisionCellGeometry = geom
   return geom
 }
 
-/** Floor sector matching `playerInVisionCone` (range + half-angle, opening along local +Z). */
-function createGhostVisionConeMesh(): Mesh {
-  const mat = new MeshBasicMaterial({
+function createGhostVisionCellGroup(): {
+  root: Group
+  cells: Mesh[]
+  material: MeshBasicMaterial
+} {
+  const root = new Group()
+  root.name = 'ghostVisionCells'
+  root.renderOrder = 3
+  const material = new MeshBasicMaterial({
     color: GHOST_VISION_CONE_COLOR,
     transparent: true,
     opacity: GHOST_VISION_CONE_OPACITY,
     depthWrite: false,
     side: DoubleSide,
   })
-  const mesh = new Mesh(getSharedGhostVisionConeGeometry(), mat)
-  mesh.name = 'ghostVisionCone'
-  mesh.renderOrder = 3
-  mesh.frustumCulled = false
-  mesh.userData.sharedGhostGeometry = true
-  return mesh
+  const cells: Mesh[] = []
+  for (let i = 0; i < MAX_GHOST_VISION_CELL_MARKERS; i++) {
+    const mesh = new Mesh(getSharedGhostVisionCellGeometry(), material)
+    mesh.name = `ghostVisionCell:${i}`
+    mesh.rotation.x = -Math.PI / 2
+    mesh.position.y = GHOST_VISION_CELL_Y
+    mesh.visible = false
+    mesh.frustumCulled = false
+    mesh.userData.sharedGhostGeometry = true
+    mesh.userData.sharedGhostVisionMaterial = true
+    root.add(mesh)
+    cells.push(mesh)
+  }
+  return { root, cells, material }
 }
 
 export type GhostBehaviorState = 'wander' | 'chase'
@@ -194,18 +197,20 @@ export class GhostSystem {
    * Instantiate map ghosts for `ROOM_{roomIndex}` once (when that room unlocks).
    * Room 1 is spawned synchronously at construction; deeper rooms are queued to spread cost.
    */
-  spawnGhostsForRoom(roomIndex: number): void {
-    if (roomIndex < 1 || this.spawnedRoomIndices.has(roomIndex)) return
+  spawnGhostsForRoom(roomIndex: number): number {
+    if (roomIndex < 1 || this.spawnedRoomIndices.has(roomIndex)) return 0
     const idx = roomIndex - 1
     const specs = this.spawnsByRoom[idx]
     if (!specs?.length) {
       this.spawnedRoomIndices.add(roomIndex)
-      return
+      return 0
     }
     this.spawnedRoomIndices.add(roomIndex)
+    let spawnedCount = 0
     const dormant = this.dormantGhostsByRoom.get(roomIndex) ?? []
     for (const ghost of dormant) {
       ghost.activate()
+      spawnedCount += 1
     }
     this.dormantGhostsByRoom.delete(roomIndex)
     for (let i = this.pendingDormantSpawnSpecs.length - 1; i >= 0; i--) {
@@ -218,12 +223,14 @@ export class GhostSystem {
         this.ghosts.push(
           new Ghost(this.ghostGroup, this.worldCollision, s, this.ghostGltf),
         )
+        spawnedCount += 1
       }
-      return
+      return spawnedCount
     }
     for (let i = dormant.length; i < specs.length; i++) {
       this.pendingMapSpawnSpecs.push(specs[i]!)
     }
+    return spawnedCount
   }
 
   prewarmFutureGhosts(
@@ -248,8 +255,28 @@ export class GhostSystem {
     }
   }
 
+  prewarmAllFutureGhosts(): void {
+    if (this.pendingDormantSpawnSpecs.length <= 0) return
+    this.prewarmFutureGhosts(this.pendingDormantSpawnSpecs.length)
+  }
+
   hasPendingFutureGhostPrewarm(): boolean {
     return this.pendingDormantSpawnSpecs.length > 0
+  }
+
+  withAllGhostsVisible<T>(work: () => T): T {
+    const prevVisible = new Map<Ghost, boolean>()
+    for (const ghost of this.ghosts) {
+      prevVisible.set(ghost, ghost.root.visible)
+      ghost.root.visible = true
+    }
+    try {
+      return work()
+    } finally {
+      for (const [ghost, visible] of prevVisible) {
+        ghost.root.visible = visible
+      }
+    }
   }
 
   private flushPendingMapSpawns(): void {
@@ -282,10 +309,11 @@ export class GhostSystem {
   }
 
   /** Runtime spawn (e.g. haunted clutter). Uses the same `Ghost` behavior as map spawns. */
-  spawnGhost(spec: GhostSpawnSpec): void {
+  spawnGhost(spec: GhostSpawnSpec): number {
     this.ghosts.push(
       new Ghost(this.ghostGroup, this.worldCollision, spec, this.ghostGltf),
     )
+    return 1
   }
 
   /** Boss ghost position for knockback pulses; null if absent or fading. */
@@ -566,15 +594,15 @@ class Ghost {
   private smoothedTx = 0
   private smoothedTz = 1
 
-  /** Vision-cone hunt burst (non-relic); speed uses `GHOST_HUNT_SPEED`. */
+  /** Guaranteed chase time after being spotted before LOS can break aggro. */
   private huntBurstRemain = 0
-  /** Accumulates while in hunt burst but player not in vision cone (non-relic). */
-  private huntConeLostAccum = 0
   /** After hunt ends, cone cannot re-trigger for this long. */
   private visionCooldownRemain = 0
   private visionAggroTriggered = false
   private visionDebugLine: Line | null = null
-  private visionConeMesh: Mesh | null = null
+  private visionCellGroup: Group | null = null
+  private visionCellMeshes: Mesh[] = []
+  private visionCellMaterial: MeshBasicMaterial | null = null
   private readonly role: GhostSpawnRole
 
   /** Pac-Man-style cell movement in room interiors, hub, and corridors (same bounds as player grid). */
@@ -655,8 +683,11 @@ class Ghost {
     }
 
     if (GHOST_VISION_CONE_VISIBLE && this.role !== 'boss') {
-      this.visionConeMesh = createGhostVisionConeMesh()
-      this.root.add(this.visionConeMesh)
+      const vision = createGhostVisionCellGroup()
+      this.visionCellGroup = vision.root
+      this.visionCellMeshes = vision.cells
+      this.visionCellMaterial = vision.material
+      this.root.add(vision.root)
     }
     if (!this.active) {
       this.root.visible = false
@@ -691,7 +722,6 @@ class Ghost {
     this.chaseWindupRemain = 0
     this.chaseThrottle = 0
     this.huntBurstRemain = 0
-    this.huntConeLostAccum = 0
     this.visionCooldownRemain = 0
     this.smoothedTx = 0
     this.smoothedTz = 1
@@ -842,44 +872,162 @@ class Ghost {
     this.prevPowerMode = powerMode
   }
 
-  /** Player inside forward cone + range; optional wall LOS. */
-  private playerInVisionCone(
+  private getVisionFacing(): { x: number; z: number } {
+    const snapToCardinal = (x: number, z: number): { x: number; z: number } => {
+      if (Math.abs(x) >= Math.abs(z)) {
+        return { x: x >= 0 ? 1 : -1, z: 0 }
+      }
+      return { x: 0, z: z >= 0 ? 1 : -1 }
+    }
+    const y = this.root.rotation.y
+    return snapToCardinal(Math.sin(y), Math.cos(y))
+  }
+
+  private cellInVision(
+    roomBounds: RoomBounds,
     px: number,
     pz: number,
-    playerPos: Vector3,
+    facingX: number,
+    facingZ: number,
+    row: number,
+    col: number,
   ): boolean {
-    const dx = playerPos.x - px
-    const dz = playerPos.z - pz
+    const ghostCell = worldToCellIndex(roomBounds, px, pz)
+    const dr = row - ghostCell.row
+    const dc = col - ghostCell.col
+
+    let forwardDepth = 0
+    let lateral = 0
+    let axisCellSize = cellSizeWorld(roomBounds).depth
+    if (facingX > 0) {
+      forwardDepth = dc
+      lateral = Math.abs(dr)
+      axisCellSize = cellSizeWorld(roomBounds).width
+    } else if (facingX < 0) {
+      forwardDepth = -dc
+      lateral = Math.abs(dr)
+      axisCellSize = cellSizeWorld(roomBounds).width
+    } else if (facingZ > 0) {
+      forwardDepth = dr
+      lateral = Math.abs(dc)
+      axisCellSize = cellSizeWorld(roomBounds).depth
+    } else {
+      forwardDepth = -dr
+      lateral = Math.abs(dc)
+      axisCellSize = cellSizeWorld(roomBounds).depth
+    }
+
+    if (forwardDepth <= 0) return false
+    const maxDepth = Math.max(1, Math.floor(GHOST_VISION_RANGE / axisCellSize))
+    if (forwardDepth > maxDepth) return false
+
+    // Grid cone: one cell straight ahead, then widen gradually by row.
+    const maxLateral = Math.floor(forwardDepth * 0.5)
+    if (lateral > maxLateral) return false
+
+    const cell = cellCenterWorld(roomBounds, row, col)
+    const dx = cell.x - px
+    const dz = cell.z - pz
     const distSq = dx * dx + dz * dz
     const r2 = GHOST_VISION_RANGE * GHOST_VISION_RANGE
     if (distSq > r2 || distSq < 1e-8) return false
-    const dist = Math.sqrt(distSq)
-    const nx = dx / dist
-    const nz = dz / dist
-    const sl = Math.hypot(this.smoothedTx, this.smoothedTz)
-    let fx: number
-    let fz: number
-    if (sl > 0.12) {
-      fx = this.smoothedTx / sl
-      fz = this.smoothedTz / sl
-    } else {
-      const y = this.root.rotation.y
-      fx = Math.sin(y)
-      fz = Math.cos(y)
-    }
-    if (fx * nx + fz * nz < GHOST_VISION_COS_HALF) return false
     if (
       GHOST_VISION_USE_LINE_OF_SIGHT &&
       !this.worldCollision.lineOfSightClearXZ(
         px,
         pz,
-        playerPos.x,
-        playerPos.z,
+        cell.x,
+        cell.z,
       )
     ) {
       return false
     }
     return true
+  }
+
+  /** Player detection uses the same grid cells the visual highlights. */
+  private playerInVisionCone(
+    px: number,
+    pz: number,
+    playerPos: Vector3,
+    roomBounds: RoomBounds,
+  ): boolean {
+    const playerBounds = getGhostGridBoundsAt(playerPos.x, playerPos.z)
+    if (boundsKey(playerBounds) !== boundsKey(roomBounds)) {
+      return false
+    }
+    const { row, col } = worldToCellIndex(roomBounds, playerPos.x, playerPos.z)
+    const facing = this.getVisionFacing()
+    return this.cellInVision(
+      roomBounds,
+      px,
+      pz,
+      facing.x,
+      facing.z,
+      row,
+      col,
+    )
+  }
+
+  private updateVisionCells(
+    roomBounds: RoomBounds,
+    px: number,
+    pz: number,
+    visible: boolean,
+    chasing: boolean,
+  ): void {
+    const group = this.visionCellGroup
+    const cells = this.visionCellMeshes
+    const material = this.visionCellMaterial
+    if (!group || !material) return
+    group.visible = visible
+    // Keep the floor-cell overlay in world/grid space even though it is parented
+    // to the rotating ghost root. Detection can use ghost yaw; the visual should not.
+    group.rotation.y = -this.root.rotation.y
+    if (!visible) {
+      for (const mesh of cells) mesh.visible = false
+      return
+    }
+
+    material.opacity = chasing
+      ? GHOST_VISION_CONE_OPACITY_CHASE
+      : GHOST_VISION_CONE_OPACITY
+
+    const facing = this.getVisionFacing()
+    const cellSize = cellSizeWorld(roomBounds)
+    const scaleX = Math.max(0.05, cellSize.width * (1 - GHOST_VISION_CELL_INSET))
+    const scaleZ = Math.max(0.05, cellSize.depth * (1 - GHOST_VISION_CELL_INSET))
+
+    let used = 0
+    for (let row = 0; row < ROOM_GRID_ROWS; row++) {
+      for (let col = 0; col < ROOM_GRID_COLS; col++) {
+        if (used >= cells.length) break
+        if (
+          !this.cellInVision(
+            roomBounds,
+            px,
+            pz,
+            facing.x,
+            facing.z,
+            row,
+            col,
+          )
+        ) {
+          continue
+        }
+        const mesh = cells[used]!
+        const cell = cellCenterWorld(roomBounds, row, col)
+        mesh.visible = true
+        mesh.position.set(cell.x - px, GHOST_VISION_CELL_Y, cell.z - pz)
+        mesh.scale.set(scaleX, scaleZ, 1)
+        used += 1
+      }
+      if (used >= cells.length) break
+    }
+
+    for (let i = used; i < cells.length; i++) {
+      cells[i]!.visible = false
+    }
   }
 
   private updateBossSeek(
@@ -1074,6 +1222,7 @@ class Ghost {
     const dx = playerPos.x - px
     const dz = playerPos.z - pz
     const dist = Math.hypot(dx, dz)
+    const roomBounds = getGhostGridBoundsAt(px, pz)
 
     const frightened = powerModeActive && !this.isBossGhost()
 
@@ -1161,48 +1310,37 @@ class Ghost {
       tz = Math.sin(this.wanderAngle)
       targetSpeed = GHOST_WANDER_SPEED
     } else {
+      const sawPlayer = this.playerInVisionCone(px, pz, playerPos, roomBounds)
+
       if (this.huntBurstRemain > 0) {
-        this.huntBurstRemain -= dt
-        if (this.huntBurstRemain <= 0) {
-          this.huntBurstRemain = 0
-          this.state = 'wander'
-          this.chaseWindupRemain = 0
-          this.visionCooldownRemain = GHOST_VISION_COOLDOWN_SEC
-          this.pickWanderTimer()
-          this.wanderAngle = Math.random() * Math.PI * 2
-        }
+        this.huntBurstRemain = Math.max(0, this.huntBurstRemain - dt)
       }
       if (this.visionCooldownRemain > 0) {
         this.visionCooldownRemain -= dt
       }
 
-      const sawPlayer = this.playerInVisionCone(px, pz, playerPos)
-
-      if (this.huntBurstRemain > 0 && !relicCarried && !sawPlayer) {
-        this.huntConeLostAccum += realDt
-        if (this.huntConeLostAccum >= GHOST_HUNT_CONE_LOST_BREAK_SEC) {
-          this.huntBurstRemain = 0
-          this.state = 'wander'
-          this.chaseWindupRemain = 0
-          this.visionCooldownRemain = GHOST_VISION_COOLDOWN_SEC
-          this.pickWanderTimer()
-          this.wanderAngle = Math.random() * Math.PI * 2
-          this.huntConeLostAccum = 0
-        }
-      } else {
-        this.huntConeLostAccum = 0
-      }
-
       let hunting = this.huntBurstRemain > 0
-      if (hunting && dist > GHOST_HUNT_ABORT_RANGE) {
-        this.huntBurstRemain = 0
+      if (
+        this.state === 'chase' &&
+        !sawPlayer &&
+        this.huntBurstRemain <= 0
+      ) {
         this.state = 'wander'
         this.chaseWindupRemain = 0
         this.visionCooldownRemain = GHOST_VISION_COOLDOWN_SEC
         this.pickWanderTimer()
         this.wanderAngle = Math.random() * Math.PI * 2
-        hunting = false
       }
+
+      if (this.state === 'chase' && dist > GHOST_HUNT_ABORT_RANGE) {
+        this.state = 'wander'
+        this.huntBurstRemain = 0
+        this.chaseWindupRemain = 0
+        this.visionCooldownRemain = GHOST_VISION_COOLDOWN_SEC
+        this.pickWanderTimer()
+        this.wanderAngle = Math.random() * Math.PI * 2
+      }
+      hunting = this.huntBurstRemain > 0
 
       if (this.state === 'wander') {
         if (
@@ -1214,11 +1352,9 @@ class Ghost {
         ) {
           this.chaseWindupRemain = 0
           this.state = 'chase'
+          this.chaseThrottle = Math.max(this.chaseThrottle, 0.28)
           this.visionAggroTriggered = true
-          this.huntBurstRemain =
-            GHOST_HUNT_DURATION_MIN +
-            Math.random() *
-              (GHOST_HUNT_DURATION_MAX - GHOST_HUNT_DURATION_MIN)
+          this.huntBurstRemain = GHOST_VISION_CHASE_COMMIT_SEC
         }
       }
 
@@ -1259,7 +1395,6 @@ class Ghost {
     targetSpeed *= this.speedMul * globalSpeedMul
     void (tx + tz)
 
-    const roomBounds = getGhostGridBoundsAt(px, pz)
     let gridMode: GhostGridNavMode
     if (frightened) {
       gridMode = 'fright'
@@ -1315,13 +1450,7 @@ class Ghost {
      */
     const faceSl = Math.hypot(this.smoothedTx, this.smoothedTz)
     if (faceSl > 0.06) {
-      const targetYaw = Math.atan2(this.smoothedTx, this.smoothedTz)
-      const cur = this.root.rotation.y
-      let delta = targetYaw - cur
-      delta = Math.atan2(Math.sin(delta), Math.cos(delta))
-      const turn =
-        frightened ? GHOST_FACING_TURN_FRIGHT : GHOST_FACING_TURN_DEFAULT
-      this.root.rotation.y = cur + delta * (1 - Math.exp(-turn * dt))
+      this.root.rotation.y = Math.atan2(this.smoothedTx, this.smoothedTz)
     }
 
     /** Run clip during pulse flee and during chase; idle only for calm wander. */
@@ -1339,22 +1468,17 @@ class Ghost {
       | undefined
     anim?.(dt, timeSec, this.velocity.x, this.velocity.z, chaseAnim)
 
-    if (this.visionConeMesh) {
-      const show =
-        visionConeEntranceDoorOpen &&
+    this.updateVisionCells(
+      roomBounds,
+      px,
+      pz,
+      visionConeEntranceDoorOpen &&
         !this.eaten &&
         this.roomClearPurgeRemain <= 0 &&
-        this.gateClearFadeRemain <= 0
-      this.visionConeMesh.visible = show
-      if (show) {
-        const mat = this.visionConeMesh.material as MeshBasicMaterial
-        const chasing =
-          chaseAiActive && (relicCarried || this.huntBurstRemain > 0)
-        mat.opacity = chasing
-          ? GHOST_VISION_CONE_OPACITY_CHASE
-          : GHOST_VISION_CONE_OPACITY
-      }
-    }
+        this.gateClearFadeRemain <= 0 &&
+        this.state !== 'chase',
+      chaseAiActive && (relicCarried || this.huntBurstRemain > 0),
+    )
 
     if (this.visionDebugLine) {
       const R = GHOST_VISION_RANGE
@@ -1508,7 +1632,10 @@ class Ghost {
       ;(this.visionDebugLine.material as LineBasicMaterial).dispose()
       this.visionDebugLine = null
     }
-    this.visionConeMesh = null
+    this.visionCellGroup = null
+    this.visionCellMeshes.length = 0
+    this.visionCellMaterial?.dispose()
+    this.visionCellMaterial = null
     this.root.position.set(0, 0, 0)
     this.root.traverse((o) => {
       if (o instanceof Mesh) {
@@ -1516,8 +1643,13 @@ class Ghost {
           o.geometry.dispose()
         }
         const mat = o.material
-        if (Array.isArray(mat)) mat.forEach((m) => m.dispose())
-        else mat.dispose()
+        if (Array.isArray(mat)) {
+          mat.forEach((m) => {
+            if (o.userData.sharedGhostVisionMaterial !== true) m.dispose()
+          })
+        } else if (o.userData.sharedGhostVisionMaterial !== true) {
+          mat.dispose()
+        }
       }
     })
     this.root.removeFromParent()

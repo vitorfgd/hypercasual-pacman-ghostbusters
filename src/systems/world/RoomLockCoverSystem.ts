@@ -101,6 +101,24 @@ export class RoomLockCoverSystem {
     }
   }
 
+  /**
+   * Temporarily hides all room blackout covers so off-screen compile passes can see the real room contents.
+   */
+  withAllCoversHidden<T>(work: () => T): T {
+    const prevVisible = new Map<Mesh, boolean>()
+    for (const mesh of this.meshes.values()) {
+      prevVisible.set(mesh, mesh.visible)
+      mesh.visible = false
+    }
+    try {
+      return work()
+    } finally {
+      for (const [mesh, visible] of prevVisible) {
+        mesh.visible = visible
+      }
+    }
+  }
+
   dispose(): void {
     this.root.removeFromParent()
     for (const mesh of this.meshes.values()) {

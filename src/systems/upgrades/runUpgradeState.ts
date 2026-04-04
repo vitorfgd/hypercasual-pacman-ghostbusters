@@ -9,8 +9,6 @@ export class RunUpgradeState {
   ghostSpeedRuntimeMul = 1
   /** One-time risk/reward: slower ghosts globally + extra haunted bias. */
   spectralSwarmTaken = false
-  /** Sum of reductions; each steady-hands stack adds. Capped when applying hit loss. */
-  ghostHitLossReduction = 0
   /** Reduces effective stack weight for encumbrance (see `stackWeightSpeedMultiplierRelief`). */
   encumbranceReliefStacks = 0
   /** One-time room-clear utility. */
@@ -26,7 +24,6 @@ export class RunUpgradeState {
     this.hauntedChanceBonus = 0
     this.ghostSpeedRuntimeMul = 1
     this.spectralSwarmTaken = false
-    this.ghostHitLossReduction = 0
     this.encumbranceReliefStacks = 0
     this.respiteCharmTaken = false
     this.roomShieldTaken = false

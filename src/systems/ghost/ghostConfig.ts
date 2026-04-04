@@ -46,9 +46,8 @@ export const GHOST_VISION_COS_HALF = Math.cos(GHOST_VISION_HALF_ANGLE_RAD)
 /** Sample segment ghost→player against wall AABBs (disable for perf / simpler AI). */
 export const GHOST_VISION_USE_LINE_OF_SIGHT = true
 
-/** Hunt burst duration (seconds). */
-export const GHOST_HUNT_DURATION_MIN = 2.1
-export const GHOST_HUNT_DURATION_MAX = 3.7
+/** Guaranteed chase window after the player is spotted. */
+export const GHOST_VISION_CHASE_COMMIT_SEC = 1
 
 /** After a hunt ends, cannot spot player again for this long (reduces re-trigger spam). */
 export const GHOST_VISION_COOLDOWN_SEC = 1.85

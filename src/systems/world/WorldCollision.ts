@@ -41,26 +41,49 @@ export class WorldCollision {
   private readonly base: readonly AabbXZ[]
   private structure: readonly AabbXZ[] = []
   private extra: readonly AabbXZ[] = []
+  private allBoxesCache: readonly AabbXZ[]
+  private structureAndExtraCache: readonly AabbXZ[] = []
 
   constructor(boxes: readonly AabbXZ[] = MANSION_WALL_COLLIDERS) {
     this.base = boxes
+    this.allBoxesCache = boxes
   }
 
   /** Door blockers while locked — replaced each sync. */
   setExtraColliders(boxes: AabbXZ[]): void {
     this.extra = boxes
+    this.rebuildColliderCaches()
   }
 
   /** Runtime room structures (for example internal maze walls). */
   setStructureColliders(boxes: AabbXZ[]): void {
     this.structure = boxes
+    this.rebuildColliderCaches()
   }
 
   private allWallBoxes(): readonly AabbXZ[] {
-    const out: AabbXZ[] = [...this.base]
-    if (this.structure.length > 0) out.push(...this.structure)
-    if (this.extra.length > 0) out.push(...this.extra)
-    return out
+    return this.allBoxesCache
+  }
+
+  private nonBaseWallBoxes(): readonly AabbXZ[] {
+    return this.structureAndExtraCache
+  }
+
+  private rebuildColliderCaches(): void {
+    if (this.structure.length === 0 && this.extra.length === 0) {
+      this.structureAndExtraCache = []
+      this.allBoxesCache = this.base
+      return
+    }
+
+    const nonBase: AabbXZ[] = []
+    if (this.structure.length > 0) nonBase.push(...this.structure)
+    if (this.extra.length > 0) nonBase.push(...this.extra)
+    this.structureAndExtraCache = nonBase
+
+    const all: AabbXZ[] = [...this.base]
+    all.push(...nonBase)
+    this.allBoxesCache = all
   }
 
   /**
@@ -74,7 +97,7 @@ export class WorldCollision {
     ignoreBaseWallColliders = false,
   ): { x: number; z: number } {
     const boxes = ignoreBaseWallColliders
-      ? [...this.structure, ...this.extra]
+      ? this.nonBaseWallBoxes()
       : this.allWallBoxes()
     let o = resolveCircleVsAabbs(x, z, radius, boxes)
     const m = MANSION_WORLD_HALF - radius

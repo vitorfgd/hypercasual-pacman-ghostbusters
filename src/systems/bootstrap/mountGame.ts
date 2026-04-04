@@ -38,8 +38,8 @@ export async function mountGame(
     import('../stack/bagGltfAsset.ts'),
   ])
 
-  const gateLoadPromise = import('../doors/gateGltfAsset.ts').then((m) =>
-    m.loadGateGltf(),
+  const doorLoadPromise = import('../doors/doubleDoorGltfAsset.ts').then((m) =>
+    m.loadDoubleDoorGltf(),
   )
 
   /** Pickup + grid prototypes load before `Game` so spawns clone GLBs immediately. */
@@ -50,11 +50,11 @@ export async function mountGame(
     loadGridTrapGltf(GRID_TRAP_GLTF_URL),
   ])
 
-  const [ghostLoaded, playerLoaded, bagLoaded, _gateLoaded] = await Promise.all([
+  const [ghostLoaded, playerLoaded, bagLoaded, _doorLoaded] = await Promise.all([
     loadGhostEnemyGltf(GHOST_GLTF_URL),
     loadPlayerCharacterGltf(PLAYER_GLTF_URL),
     loadCarryBagGltf(CARRY_BAG_GLTF_URL),
-    gateLoadPromise,
+    doorLoadPromise,
     pickupLoadsPromise,
   ])
 

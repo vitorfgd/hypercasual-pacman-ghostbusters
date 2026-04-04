@@ -23,6 +23,7 @@ export type GhostGridNavMode = 'idle' | 'chase' | 'fright'
 
 export type GhostGridNavState = {
   boundsKey: string
+  mode: GhostGridNavMode
   atRow: number
   atCol: number
   targetX: number
@@ -40,6 +41,7 @@ export type GhostGridNavState = {
 export function createGhostGridNavState(): GhostGridNavState {
   return {
     boundsKey: '',
+    mode: 'idle',
     atRow: 0,
     atCol: 0,
     targetX: 0,
@@ -55,6 +57,7 @@ export function createGhostGridNavState(): GhostGridNavState {
 
 export function resetGhostGridNavState(s: GhostGridNavState): void {
   s.boundsKey = ''
+  s.mode = 'idle'
 }
 
 /**
@@ -253,6 +256,7 @@ function initFromPosition(
   const { row, col } = worldToCellIndex(bounds, px, pz, ROWS, COLS)
   const here = cellCenterWorld(bounds, row, col, ROWS, COLS)
   state.boundsKey = boundsKey(bounds)
+  state.mode = mode
   state.atRow = row
   state.atCol = col
   state.segDx = 0
@@ -340,6 +344,8 @@ export function stepGhostGridNav(
     )
     px = snap.x
     pz = snap.z
+  } else {
+    state.mode = mode
   }
 
   let dx = state.targetX - px

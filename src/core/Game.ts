@@ -1,7 +1,7 @@
 import type { PerspectiveCamera } from 'three'
 import type { Scene } from 'three'
 import type { WebGLRenderer } from 'three'
-import { Group, Vector3 } from 'three'
+import { Group, Vector3, WebGLRenderTarget } from 'three'
 import { CameraRig } from '../systems/camera/CameraRig.ts'
 import { CollectionSystem } from '../systems/collection/CollectionSystem.ts'
 import {
@@ -112,7 +112,6 @@ import {
   spawnRoomClearedBanner,
   spawnRoomEntryBanner,
 } from '../juice/floatingHud.ts'
-import { playJuiceSound } from '../juice/juiceSound.ts'
 import {
   disposeAllGhostHitBursts,
   spawnGhostHitEctoplasmBurst,
@@ -232,8 +231,7 @@ export class Game {
   private readonly hudRoomCleanFill: HTMLElement | null
   private readonly hudRoomCleanPct: HTMLElement | null
   private readonly hudRoomCleanTitle: HTMLElement | null
-  private readonly hudSafePbRoomEl: HTMLElement | null
-  private readonly hudSafePbTimeEl: HTMLElement | null
+  private readonly hudSafePbSummaryEl: HTMLElement | null
   private readonly hudSafePbActionsEl: HTMLElement | null
   private readonly hudCarryEl: HTMLElement | null
   private readonly hudCameraHintEl: HTMLElement | null
@@ -392,56 +390,40 @@ export class Game {
     this.hudRoomCleanPct = host.querySelector('#hud-room-clean-pct')
     this.hudRoomCleanTitle = host.querySelector('#hud-room-clean-title')
     let hudSafePbWrap: HTMLElement | null = null
-    let hudSafePbRoomEl: HTMLElement | null = null
-    let hudSafePbTimeEl: HTMLElement | null = null
+    let hudSafePbSummaryEl: HTMLElement | null = null
     let hudSafePbActionsEl: HTMLElement | null = null
     if (this.hudRoomCleanWrap) {
+      for (const stale of this.hudRoomCleanWrap.querySelectorAll('.hud-room-clean__pb')) {
+        stale.remove()
+      }
       hudSafePbWrap = document.createElement('div')
       hudSafePbWrap.className = 'hud-room-clean__pb'
 
-      const roomRow = document.createElement('div')
-      roomRow.className = 'hud-room-clean__pb-row'
-      const roomLabel = document.createElement('span')
-      roomLabel.className = 'hud-room-clean__pb-label'
-      roomLabel.textContent = 'Best room'
-      hudSafePbRoomEl = document.createElement('span')
-      hudSafePbRoomEl.className = 'hud-room-clean__pb-value'
-      roomRow.append(roomLabel, hudSafePbRoomEl)
-
-      const timeRow = document.createElement('div')
-      timeRow.className = 'hud-room-clean__pb-row'
-      const timeLabel = document.createElement('span')
-      timeLabel.className = 'hud-room-clean__pb-label'
-      timeLabel.textContent = 'Best time'
-      hudSafePbTimeEl = document.createElement('span')
-      hudSafePbTimeEl.className = 'hud-room-clean__pb-value'
-      timeRow.append(timeLabel, hudSafePbTimeEl)
+      const summaryRow = document.createElement('div')
+      summaryRow.className = 'hud-room-clean__pb-row'
+      const summaryLabel = document.createElement('span')
+      summaryLabel.className = 'hud-room-clean__pb-label'
+      summaryLabel.textContent = 'Personal best'
+      hudSafePbSummaryEl = document.createElement('span')
+      hudSafePbSummaryEl.className = 'hud-room-clean__pb-value'
+      summaryRow.append(summaryLabel, hudSafePbSummaryEl)
 
       hudSafePbActionsEl = document.createElement('div')
       hudSafePbActionsEl.className = 'hud-room-clean__pb-actions'
 
-      const bossBoardBtn = document.createElement('button')
-      bossBoardBtn.type = 'button'
-      bossBoardBtn.className = 'hud-room-clean__pb-btn'
-      bossBoardBtn.textContent = 'Boss rush'
-      bossBoardBtn.addEventListener('click', () => {
-        this.openLeaderboard('boss')
+      const leaderboardBtn = document.createElement('button')
+      leaderboardBtn.type = 'button'
+      leaderboardBtn.className = 'hud-room-clean__pb-btn hud-room-clean__pb-btn--primary'
+      leaderboardBtn.textContent = 'Leaderboards'
+      leaderboardBtn.addEventListener('click', () => {
+        this.openLeaderboard()
       })
 
-      const depthBoardBtn = document.createElement('button')
-      depthBoardBtn.type = 'button'
-      depthBoardBtn.className = 'hud-room-clean__pb-btn'
-      depthBoardBtn.textContent = 'Deep run'
-      depthBoardBtn.addEventListener('click', () => {
-        this.openLeaderboard('depth')
-      })
-
-      hudSafePbActionsEl.append(bossBoardBtn, depthBoardBtn)
-      hudSafePbWrap.append(roomRow, timeRow, hudSafePbActionsEl)
+      hudSafePbActionsEl.append(leaderboardBtn)
+      hudSafePbWrap.append(summaryRow, hudSafePbActionsEl)
       this.hudRoomCleanWrap.appendChild(hudSafePbWrap)
     }
-    this.hudSafePbRoomEl = hudSafePbRoomEl
-    this.hudSafePbTimeEl = hudSafePbTimeEl
+    this.hudSafePbSummaryEl = hudSafePbSummaryEl
     this.hudSafePbActionsEl = hudSafePbActionsEl
     this.hudCameraHintEl = host.querySelector<HTMLElement>('#hud-camera-hint')
     this.hudLivesWrap = host.querySelector<HTMLElement>('#hud-lives')
@@ -570,16 +552,15 @@ export class Game {
           const nextRoom = doorIndex + 1
           if (nextRoom >= 1 && nextRoom <= NORMAL_ROOM_COUNT) {
             this.triggerRoomEntryJuice(nextRoom)
-            this.ghostSystem.spawnGhostsForRoom(nextRoom)
+            const spawned = this.ghostSystem.spawnGhostsForRoom(nextRoom)
+            if (spawned > 0) {
+              this.triggerEnemySpawnJuice(spawned)
+            }
             if (doorIndex === 0) {
               this.beginFirstDoorTutorial()
             }
           }
         })
-      },
-      onDoorSlamShut: (_doorIndex: number) => {
-        this.triggerDepositScreenShake(false)
-        playJuiceSound('overload_impact', { pitch: 0.52 })
       },
     })
 
@@ -640,9 +621,7 @@ export class Game {
       worldCollision: this.worldCollision,
       createRelic: () => createRelicItem(),
       random: this.runRandom,
-      onSpawn: () => {
-        playJuiceSound('relic_spawn')
-      },
+      onSpawn: () => {},
       canSpawnInRoom: (id) =>
         this.doorUnlock.canAccessRoomForSpawning(id) &&
         id !== FINAL_NORMAL_ROOM_ID,
@@ -695,9 +674,13 @@ export class Game {
     this.hitFlashEl = host.querySelector('#hud-hit-flash')
     this.collection = new CollectionSystem()
 
-    /** Precompile materials (scene). */
-    this.scene.updateMatrixWorld(true)
-    this.renderer.compile(this.scene, this.camera)
+    this.player.settleToGridCenter((x, z) =>
+      this.roomSystem.getNavGridBounds(x, z, this.player.getGridNavContext()),
+    )
+
+    this.syncPlayerCharacterVisual(0)
+    this.ghostSystem.prewarmAllFutureGhosts()
+    this.prewarmRoomTransitionCompile()
 
     this.player.getPosition(this.playerPos)
 
@@ -727,6 +710,7 @@ export class Game {
       if (this.gameStartCountdownRemain > 0) {
         this.updateGameStartCountdown(dt)
         this.ghostSystem.prewarmFutureGhosts(4)
+        this.syncPlayerCharacterVisual(dt)
         this.renderer.render(this.scene, this.camera)
         this.perf.endFrame(this.renderer.info.render.calls, 0)
         return
@@ -952,6 +936,7 @@ export class Game {
                     this.runRandom,
                   ),
                 })
+                this.triggerEnemySpawnJuice(1)
               }
             }
           }
@@ -964,7 +949,6 @@ export class Game {
           item.type === 'relic' ||
           item.type === 'gem'
         ) {
-          playJuiceSound('pickup')
         }
       }
       pickupsThisFrame = collected.length
@@ -1025,7 +1009,6 @@ export class Game {
               this.burstSpawnScratch,
             ),
           )
-          playJuiceSound('ghost_eat', { pitch: 1.08 })
           spawnFloatingHudText(
             this.gameViewport,
             'Gotcha!',
@@ -1071,7 +1054,6 @@ export class Game {
             { intense: true },
           ),
         )
-        playJuiceSound('ghost_hit')
         this.ghostSystem.onGhostHitLandedAt(
           hit.ghostX,
           hit.ghostZ,
@@ -1115,16 +1097,7 @@ export class Game {
       }
       updateGhostHitBursts(this.burstParticles, dt)
 
-      this.player.getVelocity(this.velScratch)
-      this.playerCharacter.update(dt, {
-        timeSec: this.elapsedSec,
-        speed: this.player.getHorizontalSpeed(),
-        velX: this.velScratch.x,
-        itemsCarried: this.stack.count,
-        powerMode: this.powerModeRemain > 0,
-        ghostInvuln: this.ghostHitInvuln > 0,
-        recentPickupSec: 0,
-      })
+      this.syncPlayerCharacterVisual(dt)
       if (this.roomClearIntroCinematicRunning) {
         this.updateRoomClearIntroCinematic(dt)
       } else if (this.roomClearDoorCinematicRunning) {
@@ -1163,7 +1136,6 @@ export class Game {
       this.runRandom() *
         (POWER_MODE_DURATION_MAX_SEC - POWER_MODE_DURATION_MIN_SEC)
     this.gameViewport.classList.add('game-viewport--power-mode')
-    playJuiceSound('power_pickup')
     spawnFloatingHudText(
       this.gameViewport,
       'POWER MODE!',
@@ -1224,11 +1196,14 @@ export class Game {
     if (step <= 0) {
       el.classList.remove('game-start-countdown--show')
       el.classList.add('game-start-countdown--out')
+      el.dataset.label = ''
       el.textContent = ''
       return
     }
     if (step !== this.gameStartCountdownStep) {
       this.gameStartCountdownStep = step
+      el.dataset.label = step > 1 ? 'Starting in' : 'Get ready'
+      el.setAttribute('aria-label', `${el.dataset.label} ${step}`)
       el.textContent = String(step)
       el.classList.remove('game-start-countdown--tick', 'game-start-countdown--out')
       el.classList.add('game-start-countdown--show')
@@ -1278,7 +1253,6 @@ export class Game {
     if (!this.roomShieldAvailable) return false
     this.roomShieldAvailable = false
     this.triggerEctoGlow(180)
-    playJuiceSound('power_pickup', { pitch: 0.84 })
     spawnFloatingHudText(this.gameViewport, label, 'float-hud--level-up', {
       topPct: 26,
       leftPct: 50,
@@ -1288,14 +1262,18 @@ export class Game {
   }
 
   private syncSafeRoomPersonalBestHud(): void {
-    if (!this.hudSafePbRoomEl || !this.hudSafePbTimeEl) return
-    this.hudSafePbRoomEl.textContent = formatPersonalBestRoom(
-      this.personalBest.bestRoomReached,
-    )
-    this.hudSafePbTimeEl.textContent =
+    if (!this.hudSafePbSummaryEl) return
+    const roomText = formatPersonalBestRoom(this.personalBest.bestRoomReached)
+    const timeText =
       this.personalBest.bestTimeSec > 0
         ? formatPersonalBestTime(this.personalBest.bestTimeSec)
-        : '0:00'
+        : null
+    this.hudSafePbSummaryEl.textContent =
+      roomText === 'None yet'
+        ? roomText
+        : timeText
+          ? `${roomText} • ${timeText}`
+          : roomText
     this.hudSafePbActionsEl?.setAttribute(
       'data-boss-ready',
       this.personalBest.bestBossReachTimeSec === null ? 'false' : 'true',
@@ -1338,7 +1316,7 @@ export class Game {
     this.syncSafeRoomPersonalBestHud()
   }
 
-  private openLeaderboard(kind: 'boss' | 'depth'): void {
+  private openLeaderboard(): void {
     this.closeLeaderboard()
     const overlay = document.createElement('div')
     overlay.className = 'leaderboard-overlay leaderboard-overlay--show'
@@ -1352,14 +1330,54 @@ export class Game {
 
     const title = document.createElement('h2')
     title.className = 'leaderboard-overlay__title'
-    title.textContent = kind === 'boss' ? 'Boss Rush Board' : 'Deep Run Board'
+    title.textContent = 'Leaderboards'
 
     const sub = document.createElement('p')
     sub.className = 'leaderboard-overlay__sub'
-    sub.textContent =
-      kind === 'boss'
-        ? 'Fastest runs to reach the boss room.'
-        : 'Best runs by deepest room reached.'
+    sub.textContent = 'Track your best boss rush and deepest run in one place.'
+
+    const sections = document.createElement('div')
+    sections.className = 'leaderboard-overlay__sections'
+    sections.append(
+      this.createLeaderboardSection(
+        'Boss Rush Board',
+        'Fastest runs to reach the boss room.',
+        'boss',
+      ),
+      this.createLeaderboardSection(
+        'Deep Run Board',
+        'Best runs by deepest room reached.',
+        'depth',
+      ),
+    )
+
+    const close = document.createElement('button')
+    close.type = 'button'
+    close.className = 'leaderboard-overlay__close'
+    close.textContent = 'Close'
+    close.addEventListener('click', () => this.closeLeaderboard())
+
+    panel.append(title, sub, sections, close)
+    overlay.append(backdrop, panel)
+    this.gameViewport.appendChild(overlay)
+    this.leaderboardOverlayEl = overlay
+  }
+
+  private createLeaderboardSection(
+    titleText: string,
+    subText: string,
+    kind: 'boss' | 'depth',
+  ): HTMLElement {
+    const section = document.createElement('section')
+    section.className = 'leaderboard-overlay__section'
+
+    const title = document.createElement('h3')
+    title.className = 'leaderboard-overlay__section-title'
+    title.textContent = titleText
+
+    const sub = document.createElement('p')
+    sub.className = 'leaderboard-overlay__section-sub'
+    sub.textContent = subText
 
     const list = document.createElement('div')
     list.className = 'leaderboard-overlay__list'
@@ -1384,16 +1402,8 @@ export class Game {
       list.appendChild(item)
     }
 
-    const close = document.createElement('button')
-    close.type = 'button'
-    close.className = 'leaderboard-overlay__close'
-    close.textContent = 'Close'
-    close.addEventListener('click', () => this.closeLeaderboard())
-
-    panel.append(title, sub, list, close)
-    overlay.append(backdrop, panel)
-    this.gameViewport.appendChild(overlay)
-    this.leaderboardOverlayEl = overlay
+    section.append(title, sub, list)
+    return section
   }
 
   private closeLeaderboard(): void {
@@ -1465,22 +1475,35 @@ export class Game {
       roomIndex > NORMAL_ROOM_COUNT
         ? 'The mansion shifts again'
         : roomIndex === 2
-          ? 'Stay out of their cone'
-          : 'Sweep fast, stay moving',
+        ? 'Stay out of their cone'
+        : 'Sweep fast, stay moving',
     )
     this.triggerEctoGlow(300)
-    playJuiceSound('ghost_pulse', { pitch: 0.94 + roomIndex * 0.015 })
   }
 
   private triggerGhostAggroJuice(coneAggroTriggers: number): void {
     this.triggerEctoGlow(240)
-    playJuiceSound('ghost_pulse', { pitch: 1.06 })
     const label = coneAggroTriggers > 1 ? 'SPOTTED' : 'SEEN'
     spawnFloatingHudText(this.gameViewport, label, 'float-hud--alert', {
       topPct: 22,
       leftPct: 50,
       durationSec: 0.8,
     })
+  }
+
+  private triggerEnemySpawnJuice(count: number): void {
+    const n = Math.max(1, Math.floor(count))
+    this.triggerEctoGlow(220)
+    spawnFloatingHudText(
+      this.gameViewport,
+      n > 1 ? `${n} ENEMIES` : 'ENEMY SPAWNED',
+      'float-hud--alert',
+      {
+        topPct: 18,
+        leftPct: 50,
+        durationSec: 0.9,
+      },
+    )
   }
 
   private triggerEctoGlow(durationMs: number): void {
@@ -1498,6 +1521,92 @@ export class Game {
   private syncRoomPickupAccessibilityFromDoors(): void {
     this.itemWorld.updateClutterGateReveal(this.doorUnlock)
     this.itemWorld.updateGridWispRoomVisibility(this.roomSystem)
+  }
+
+  private syncPlayerCharacterVisual(dt: number): void {
+    this.player.getVelocity(this.velScratch)
+    this.playerCharacter.update(dt, {
+      timeSec: this.elapsedSec,
+      speed: this.player.getHorizontalSpeed(),
+      velX: this.velScratch.x,
+      itemsCarried: this.stack.count,
+      powerMode: this.powerModeRemain > 0,
+      ghostInvuln: this.ghostHitInvuln > 0,
+      recentPickupSec: 0,
+    })
+  }
+
+  private prewarmRoomTransitionCompile(): void {
+    const compileCamera = this.camera.clone()
+    const compilePos = new Vector3()
+    const compileLookAt = new Vector3()
+    const prewarmTarget = new WebGLRenderTarget(32, 32)
+    const previousTarget = this.renderer.getRenderTarget()
+    const previousShadowAutoUpdate = this.renderer.shadowMap.autoUpdate
+    const compileView = (
+      x: number,
+      y: number,
+      z: number,
+      lookX: number,
+      lookY: number,
+      lookZ: number,
+    ): void => {
+      compilePos.set(x, y, z)
+      compileLookAt.set(lookX, lookY, lookZ)
+      compileCamera.position.copy(compilePos)
+      compileCamera.lookAt(compileLookAt)
+      compileCamera.updateProjectionMatrix()
+      compileCamera.updateMatrixWorld(true)
+      this.renderer.setRenderTarget(prewarmTarget)
+      this.renderer.render(this.scene, compileCamera)
+    }
+
+    const roomIds: RoomId[] = [
+      'SAFE_CENTER',
+      ...Array.from(
+        { length: NORMAL_ROOM_COUNT },
+        (_, index) => `ROOM_${index + 1}` as NormalRoomId,
+      ),
+    ]
+
+    try {
+      this.renderer.shadowMap.autoUpdate = true
+      this.roomLockCovers.withAllCoversHidden(() => {
+        this.itemWorld.withAllRoomContentVisible(() => {
+          this.ghostSystem.withAllGhostsVisible(() => {
+            this.scene.updateMatrixWorld(true)
+            this.camera.updateMatrixWorld(true)
+            this.renderer.setRenderTarget(prewarmTarget)
+            this.renderer.render(this.scene, this.camera)
+
+            for (const roomId of roomIds) {
+              const bounds = this.roomSystem.getBounds(roomId)
+              const centerX = (bounds.minX + bounds.maxX) * 0.5
+              const centerZ = (bounds.minZ + bounds.maxZ) * 0.5
+              const roomDepth = Math.max(1, bounds.maxZ - bounds.minZ)
+              compileView(
+                centerX,
+                11.5,
+                centerZ + roomDepth * 0.08,
+                centerX,
+                0.9,
+                centerZ,
+              )
+            }
+
+            for (let doorIndex = 0; doorIndex < NORMAL_ROOM_COUNT; doorIndex++) {
+              const zDoor = getDoorBlockerZ(doorIndex)
+              compileView(0, 8.1, zDoor + 6.1, 0, 1, zDoor - 2.1)
+              compileView(0, 8.1, zDoor - 6.1, 0, 1, zDoor + 2.1)
+            }
+          })
+        })
+      })
+    } finally {
+      this.renderer.setRenderTarget(previousTarget)
+      this.renderer.shadowMap.autoUpdate = previousShadowAutoUpdate
+      prewarmTarget.dispose()
+    }
   }
 
   private clearEndlessRoomContent(): void {
@@ -1566,7 +1675,12 @@ export class Game {
 
     this.trapField.setPlacements([
       ...this.baseTrapPlacements,
-      ...plan.traps.map((trap) => ({ x: trap.x, z: trap.z })),
+      ...plan.traps.map((trap) => ({
+        x: trap.x,
+        z: trap.z,
+        width: trap.width,
+        depth: trap.depth,
+      })),
     ])
     this.mazeWalls.setPlacements([
       ...this.baseMazeWallPlacements,
@@ -1636,6 +1750,9 @@ export class Game {
         color: pickGhostColorForRoomIndex(roomIndex, this.runRandom),
       })
       spawned += 1
+    }
+    if (spawned > 0) {
+      this.triggerEnemySpawnJuice(spawned)
     }
   }
 
@@ -2069,7 +2186,6 @@ export class Game {
       this.camera.lookAt(this.roomClearCineLookAtDoor)
       if (!this.roomClearDoorUnlockFeedbackDone) {
         this.roomClearDoorUnlockFeedbackDone = true
-        playJuiceSound('relic_collect', { pitch: 1.12 })
         spawnFloatingHudText(
           this.gameViewport,
           'Unlocked',
@@ -2321,7 +2437,6 @@ export class Game {
       this.playerPos.z,
       0.45,
     )
-    playJuiceSound('ghost_hit')
     this.triggerGhostHitFlash(160, false)
   }
 

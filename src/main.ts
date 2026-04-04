@@ -1,5 +1,4 @@
 import './style.css'
-import { startBackgroundMusic } from './juice/backgroundMusic.ts'
 import { mountGame } from './systems/bootstrap/mountGame.ts'
 
 const host = document.querySelector<HTMLElement>('#game-viewport')
@@ -11,7 +10,6 @@ const loading = document.querySelector<HTMLElement>('#game-loading')
 loading?.classList.add('game-loading--on')
 loading?.setAttribute('aria-hidden', 'false')
 
-startBackgroundMusic()
 let game: Awaited<ReturnType<typeof mountGame>> | undefined
 
 async function mountGameWithRetry(): Promise<void> {

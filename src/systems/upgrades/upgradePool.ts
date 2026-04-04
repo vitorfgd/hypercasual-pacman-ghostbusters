@@ -40,13 +40,12 @@ type UpgradeDef = {
 
 const STARTER_UPGRADE_IDS = [
   'swift-stride',
-  'steady-hands',
   'light-footing',
+  'spirit-shield',
 ] as const
 
 const SAFETY_UPGRADE_IDS = [
   'spirit-shield',
-  'steady-hands',
   'light-footing',
   'second-wind',
   'respite-charm',
@@ -89,25 +88,6 @@ const DEFINITIONS: readonly UpgradeDef[] = [
       return {
         bannerSubtitle: 'SPIRIT SHIELD',
         floatText: 'One hit blocked in every room',
-        floatClass: 'float-hud--level-up',
-      }
-    },
-  },
-  {
-    id: 'steady-hands',
-    title: 'Steady hands',
-    description: 'Lose fewer items when a ghost hits you.',
-    stackable: true,
-    maxStacks: 4,
-    isEligible: (s) => s.ghostHitLossReduction < 0.36,
-    apply: ({ state }) => {
-      state.ghostHitLossReduction = Math.min(
-        0.4,
-        state.ghostHitLossReduction + 0.09,
-      )
-      return {
-        bannerSubtitle: 'STEADY HANDS',
-        floatText: 'Tighter grip on your haul',
         floatClass: 'float-hud--level-up',
       }
     },
@@ -178,9 +158,11 @@ const DEFINITIONS: readonly UpgradeDef[] = [
     id: 'respite-charm',
     title: 'Respite charm',
     description:
-      'Once per run: restore a heart if possible; otherwise steady your grip on the haul.',
+      'Once per run: restore a heart, or gain a spirit shield if already full.',
     stackable: false,
-    isEligible: (s) => !s.respiteCharmTaken,
+    isEligible: (s, lives) =>
+      !s.respiteCharmTaken &&
+      (lives < PLAYER_MAX_LIVES || !s.roomShieldTaken),
     apply: (ctx) => {
       const { state } = ctx
       state.respiteCharmTaken = true
@@ -192,13 +174,10 @@ const DEFINITIONS: readonly UpgradeDef[] = [
           floatClass: 'float-hud--level-up',
         }
       }
-      state.ghostHitLossReduction = Math.min(
-        0.4,
-        state.ghostHitLossReduction + 0.12,
-      )
+      state.roomShieldTaken = true
       return {
         bannerSubtitle: 'RESPITE',
-        floatText: 'Steadier grip (full health)',
+        floatText: 'Shield primed',
         floatClass: 'float-hud--level-up',
       }
     },
@@ -212,8 +191,6 @@ function stackCountFor(
   switch (def.id) {
     case 'swift-stride':
       return state.speedLevel
-    case 'steady-hands':
-      return Math.round(state.ghostHitLossReduction / 0.09)
     case 'light-footing':
       return state.encumbranceReliefStacks
     case 'echo-bait':

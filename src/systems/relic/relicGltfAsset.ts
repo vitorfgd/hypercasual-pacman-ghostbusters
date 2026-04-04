@@ -16,12 +16,12 @@ import {
 import { clone as cloneSkeletonSafe } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { publicAsset } from '../../core/publicAsset.ts'
 
-/** `0` = calice, `1` = round relic mesh — matches `RelicItem.relicVariant` */
+/** `0` / `1` are the two relic visual variants used by `RelicItem.relicVariant`. */
 export type RelicVariantIndex = 0 | 1
 
 export const RELIC_GLTF_URLS: readonly [string, string] = [
   publicAsset('assets/relics/calice.glb'),
-  publicAsset('assets/relics/coin.glb'),
+  publicAsset('assets/relics/calice.glb'),
 ]
 
 /** Reference scale from earlier tuning (world units, max bbox axis after fit). */

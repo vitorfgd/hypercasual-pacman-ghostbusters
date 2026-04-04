@@ -34,6 +34,8 @@ export type GridTrapSpawn = {
   z: number
   row: number
   col: number
+  width: number
+  depth: number
 }
 
 export type GridWallSpawn = {
@@ -54,6 +56,15 @@ export type RoomGridPlan = {
 }
 
 type Cell = 'empty' | 'wisp' | 'trap' | 'wall'
+
+function isDoorEntrySafeCell(
+  row: number,
+  col: number,
+  rows: number,
+  startCol: number,
+): boolean {
+  return row >= rows - 2 && Math.abs(col - startCol) <= 1
+}
 
 /** BFS from `start` — traps block; wisps and empty are walkable. */
 function allWispsReachable(
@@ -152,7 +163,7 @@ function planOneRoom(
       for (let c = 0; c < cols; c++) {
         if (grid[r]![c] !== 'empty') continue
         if (r === startRow && c === startCol) continue
-        if (r >= rows - 2 && Math.abs(c - startCol) <= 1) continue
+        if (isDoorEntrySafeCell(r, c, rows, startCol)) continue
         wallCandidates.push([r, c])
       }
     }
@@ -181,6 +192,7 @@ function planOneRoom(
       for (let c = 0; c < cols; c++) {
         if (grid[r]![c] !== 'empty') continue
         if (r === startRow && c === startCol) continue
+        if (isDoorEntrySafeCell(r, c, rows, startCol)) continue
         trapCandidates.push([r, c])
       }
     }
@@ -228,7 +240,14 @@ function planOneRoom(
         const cell = grid[r]![c]
         if (cell === 'trap') {
           const { x, z } = cellCenterWorld(bounds, r, c, rows, cols)
-          traps.push({ x, z, row: r, col: c })
+          traps.push({
+            x,
+            z,
+            row: r,
+            col: c,
+            width: cellSize.width * 0.94,
+            depth: cellSize.depth * 0.94,
+          })
           continue
         }
         if (cell !== 'wall') continue
@@ -311,7 +330,12 @@ export function flattenTrapPlacements(
   const out: TrapPlacement[] = []
   for (const plan of plans.values()) {
     for (const t of plan.traps) {
-      out.push({ x: t.x, z: t.z })
+      out.push({
+        x: t.x,
+        z: t.z,
+        width: t.width,
+        depth: t.depth,
+      })
     }
   }
   return out

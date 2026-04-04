@@ -49,15 +49,6 @@ export function disposeGridWispPrototype(): void {
 
 export function disposeGridWispClone(root: Object3D): void {
   root.removeFromParent()
-  root.traverse((o) => {
-    if (o instanceof SkinnedMesh && o.skeleton) o.skeleton.dispose()
-    if (o instanceof Mesh) {
-      o.geometry?.dispose()
-      const m = o.material
-      const mats = Array.isArray(m) ? m : [m]
-      for (const mat of mats) mat.dispose()
-    }
-  })
 }
 
 /** Clone for world pickup; scaled to read on floor cells. */
@@ -76,6 +67,7 @@ export function cloneGridWispPickup(): Group | null {
   const maxD = Math.max(size.x, size.y, size.z, 1e-4)
   const s = FLOOR_TARGET_MAX_DIM / maxD
   root.scale.setScalar(s)
+  root.userData.wispBaseScale = s
   root.updateMatrixWorld(true)
   const box2 = new Box3().setFromObject(root)
   root.position.y -= box2.min.y

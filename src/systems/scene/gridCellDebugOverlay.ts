@@ -15,8 +15,8 @@ import {
 } from '../world/mansionRoomData.ts'
 import { GRID_ROOM_INSET, ROOM_GRID_COLS, ROOM_GRID_ROWS } from '../grid/gridConfig.ts'
 
-/** Subtle floor grid only: no labels, no indices, just faint squares. */
-export const GRID_CELL_DEBUG_OVERLAY = true
+/** Subtle floor grid only: no labels, no indices, just faint squares. Keep off in normal play. */
+export const GRID_CELL_DEBUG_OVERLAY = false
 
 const ROWS = ROOM_GRID_ROWS
 const COLS = ROOM_GRID_COLS

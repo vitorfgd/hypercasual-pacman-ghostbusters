@@ -184,6 +184,44 @@ export class PlayerController {
   }
 
   /**
+   * Snap the avatar onto the containing grid cell before gameplay starts so the
+   * first visible frame does not reposition the player.
+   */
+  settleToGridCenter(
+    getNavGridBounds: (x: number, z: number) => RoomBounds,
+  ): void {
+    const b = getNavGridBounds(
+      this.playerRoot.position.x,
+      this.playerRoot.position.z,
+    )
+    resetPlayerGridNavAtPosition(
+      this.gridState,
+      this.playerRoot.position.x,
+      this.playerRoot.position.z,
+      b,
+    )
+    const resolved = this.worldCollision.resolveCircleXZ(
+      this.gridState.segX1,
+      this.gridState.segZ1,
+      PLAYER_WORLD_COLLISION_RADIUS,
+      false,
+    )
+    this.playerRoot.position.x = resolved.x
+    this.playerRoot.position.z = resolved.z
+    const settledBounds = getNavGridBounds(resolved.x, resolved.z)
+    resetPlayerGridNavAtPosition(
+      this.gridState,
+      resolved.x,
+      resolved.z,
+      settledBounds,
+    )
+    this.lastGridVx = 0
+    this.lastGridVz = 0
+    this.knockX = 0
+    this.knockZ = 0
+  }
+
+  /**
    * Grid-based movement: cardinal input only, cell centers, queued next direction + same-frame turns.
    * `getNavGridBounds` classifies the avatar (sticky near doors); `getRawGridBoundsAt` is plain
    * geometry for neighbor probes - see `playerGridNav.ts`.

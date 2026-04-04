@@ -10,8 +10,10 @@ import {
 } from 'three'
 import type { WorldCollision } from '../world/WorldCollision.ts'
 import type { AabbXZ } from '../world/collisionXZ.ts'
-import { DOOR_HALF } from '../world/mansionGeometry.ts'
+import { DOOR_HALF, ROOM_HALF } from '../world/mansionGeometry.ts'
 import type { RoomId } from '../world/mansionRoomData.ts'
+import { roomNorthZ, roomSouthZ } from '../world/mansionRoomData.ts'
+import { GRID_ROOM_INSET } from '../grid/gridConfig.ts'
 import { DOOR_COUNT, getDoorBlockerZ, roomIndexFromId } from './doorLayout.ts'
 import {
   DOOR_AUTO_OPEN_ANTICIPATE_SEC,
@@ -134,6 +136,19 @@ function circleIntersectsDoorTrigger(
 function easeOutCubic(t: number): number {
   const u = Math.max(0, Math.min(1, t))
   return 1 - (1 - u) ** 3
+}
+
+function playerInsideNextRoomGrid(
+  doorIndex: number,
+  px: number,
+  pz: number,
+): boolean {
+  const nextRoomIndex = doorIndex + 1
+  const minX = -ROOM_HALF + GRID_ROOM_INSET
+  const maxX = ROOM_HALF - GRID_ROOM_INSET
+  const minZ = roomSouthZ(nextRoomIndex) + GRID_ROOM_INSET
+  const maxZ = roomNorthZ(nextRoomIndex) - GRID_ROOM_INSET
+  return px >= minX && px <= maxX && pz >= minZ && pz <= maxZ
 }
 
 /**
@@ -360,7 +375,6 @@ export class DoorUnlockSystem {
     for (let i = 0; i < DOOR_COUNT; i++) {
       const zDoor = getDoorBlockerZ(i)
       const inTrig = circleIntersectsDoorTrigger(px, pz, pr, zDoor)
-      const wasIn = this.triggerInsidePrev[i]
 
       if (!this.passed[i] && !this.bossTrapped.has(i)) {
         if (lastZ !== null) {
@@ -385,6 +399,16 @@ export class DoorUnlockSystem {
           }
         }
 
+        if (
+          !this.commitsForward[i] &&
+          this.keyUnlocked[i] &&
+          this.swing[i]! >= DOOR_MIN_SWING_TO_REGISTER_CROSS &&
+          Math.abs(px) <= DOOR_TRIGGER_HALF_X + pr &&
+          pz < zDoor - DOOR_EXIT_SOUTH_MARGIN
+        ) {
+          this.commitsForward[i] = true
+        }
+
         const pending = this.pendingCloseRemain[i]
         if (pending !== null && pending > 0) {
           if (pz > zDoor + DOOR_RETREAT_CANCEL_MARGIN) {
@@ -403,9 +427,7 @@ export class DoorUnlockSystem {
 
         if (
           this.commitsForward[i] &&
-          wasIn &&
-          !inTrig &&
-          pz < zDoor - DOOR_EXIT_SOUTH_MARGIN &&
+          playerInsideNextRoomGrid(i, px, pz) &&
           !this.passed[i]
         ) {
           this.pendingCloseRemain[i] = null

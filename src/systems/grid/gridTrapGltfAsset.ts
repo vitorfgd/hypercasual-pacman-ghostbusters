@@ -1,15 +1,41 @@
-import { Box3, Group, Mesh, type Object3D, Vector3 } from 'three'
+import {
+  Box3,
+  Group,
+  Mesh,
+  MeshPhysicalMaterial,
+  MeshStandardMaterial,
+  Vector3,
+  type Material,
+} from 'three'
 import { clone as cloneSkeletonSafe } from 'three/examples/jsm/utils/SkeletonUtils.js'
 import { publicAsset } from '../../core/publicAsset.ts'
 
 export const GRID_TRAP_GLTF_URL = publicAsset('assets/grid/spike_trap.glb')
 
-const TRAP_TARGET_MAX_DIM = 1.12 * 1.15
+const TRAP_TARGET_MAX_DIM = 1
 
 let prototype: Group | null = null
 
-export function getGridTrapPrototype(): Group | null {
-  return prototype
+function cloneTrapMaterial(material: Mesh['material']): Mesh['material'] {
+  if (Array.isArray(material)) {
+    return material.map((entry) => cloneTrapMaterial(entry)) as Mesh['material']
+  }
+  if (
+    material instanceof MeshPhysicalMaterial ||
+    material instanceof MeshStandardMaterial
+  ) {
+    return material.clone()
+  }
+  if (material && typeof (material as Material).clone === 'function') {
+    return (material as Material).clone() as Mesh['material']
+  }
+  return new MeshStandardMaterial({
+    color: 0xa1262c,
+    emissive: 0x4f0d15,
+    emissiveIntensity: 0.28,
+    roughness: 0.72,
+    metalness: 0.08,
+  })
 }
 
 export async function loadGridTrapGltf(
@@ -25,7 +51,7 @@ export async function loadGridTrapGltf(
     return true
   } catch (e) {
     console.warn(
-      '[grid trap] GLB load failed — spike traps disabled. Reason:',
+      '[grid trap] GLB load failed, using procedural trap tile instead. Reason:',
       e instanceof Error ? e.message : String(e),
     )
     prototype = null
@@ -38,21 +64,12 @@ export function disposeGridTrapPrototype(): void {
   prototype.traverse((o) => {
     if (o instanceof Mesh) {
       o.geometry?.dispose()
-      const m = o.material
-      const mats = Array.isArray(m) ? m : [m]
-      for (const mat of mats) mat.dispose()
+      const material = o.material
+      const materials = Array.isArray(material) ? material : [material]
+      for (const entry of materials) entry.dispose()
     }
   })
   prototype = null
-}
-
-/** Traps are visual-only — no Three.js raycast / implicit picking collider. */
-function disableTrapMeshRaycast(root: Object3D): void {
-  root.traverse((o) => {
-    if (o instanceof Mesh) {
-      o.raycast = () => {}
-    }
-  })
 }
 
 export function cloneGridTrapMesh(): Group | null {
@@ -60,28 +77,26 @@ export function cloneGridTrapMesh(): Group | null {
   const root = cloneSkeletonSafe(prototype) as Group
   root.name = 'gridTrap'
   root.userData.gridTrapGltf = true
-  root.updateMatrixWorld(true)
-  const box = new Box3().setFromObject(root)
-  const size = new Vector3()
-  box.getSize(size)
-  const maxD = Math.max(size.x, size.y, size.z, 1e-4)
-  const s = TRAP_TARGET_MAX_DIM / maxD
-  root.scale.setScalar(s)
-  root.updateMatrixWorld(true)
-  const box2 = new Box3().setFromObject(root)
-  root.position.y -= box2.min.y
-  disableTrapMeshRaycast(root)
-  return root
-}
-
-export function disposeGridTrapClone(root: Object3D): void {
-  root.removeFromParent()
   root.traverse((o) => {
-    if (o instanceof Mesh) {
-      o.geometry?.dispose()
-      const m = o.material
-      const mats = Array.isArray(m) ? m : [m]
-      for (const mat of mats) mat.dispose()
-    }
+    if (!(o instanceof Mesh)) return
+    o.geometry = o.geometry.clone()
+    o.material = cloneTrapMaterial(o.material)
+    o.castShadow = true
+    o.receiveShadow = true
+    o.raycast = () => {}
   })
+  root.updateMatrixWorld(true)
+
+  const bounds = new Box3().setFromObject(root)
+  const size = new Vector3()
+  bounds.getSize(size)
+  const maxDim = Math.max(size.x, size.y, size.z, 1e-4)
+  const scale = TRAP_TARGET_MAX_DIM / maxDim
+  root.scale.setScalar(scale)
+  root.updateMatrixWorld(true)
+
+  const groundedBounds = new Box3().setFromObject(root)
+  root.position.y -= groundedBounds.min.y
+  root.updateMatrixWorld(true)
+  return root
 }

@@ -144,6 +144,7 @@ export class ItemWorld {
     { length: 7 },
     () => [],
   )
+  private readonly gridPickupMeshesByRoom = new Map<RoomId, Set<Object3D>>()
   private readonly clutterMeshesByRoom = new Map<RoomId, Set<Object3D>>()
   private readonly clutterRevealAlphaByRoom = new Map<RoomId, number>()
 
@@ -188,6 +189,7 @@ export class ItemWorld {
       item.spawnRoomId
     ) {
       mesh.userData.gridWispSpawnRoomId = item.spawnRoomId
+      this.registerGridPickupMesh(item.spawnRoomId, mesh)
     }
     if (item.type === 'clutter') {
       mesh.userData.clutterSpawnRoomId = item.spawnRoomId
@@ -266,6 +268,7 @@ export class ItemWorld {
   detachPickupForCollect(id: string): void {
     const e = this.byId.get(id)
     if (!e) return
+    this.unregisterRoomTrackedMesh(e.item, e.mesh)
     this.byId.delete(id)
     this.pickupGroup.remove(e.mesh)
     delete e.mesh.userData.pickupIdle
@@ -339,14 +342,78 @@ export class ItemWorld {
 
   /** Locked rooms: hide grid wisps until southern doors grant access (no fade — instant show). */
   updateGridWispRoomVisibility(roomSystem: RoomSystem): void {
-    for (const [, { mesh, item }] of this.byId) {
-      if (
-        (item.type !== 'wisp' && item.type !== 'power_pellet') ||
-        !item.spawnRoomId
-      ) {
-        continue
+    for (const [roomId, meshes] of this.gridPickupMeshesByRoom) {
+      const visible = roomSystem.isRoomAccessibleForGameplay(roomId)
+      for (const mesh of meshes) {
+        mesh.visible = visible
       }
-      mesh.visible = roomSystem.isRoomAccessibleForGameplay(item.spawnRoomId)
+    }
+  }
+
+  /**
+   * Temporarily reveals every room-bound grid pickup so the renderer can compile those materials
+   * before the player hits the next doorway.
+   */
+  withAllGridPickupsVisible<T>(work: () => T): T {
+    const prev = new Map<Object3D, boolean>()
+    for (const meshes of this.gridPickupMeshesByRoom.values()) {
+      for (const mesh of meshes) {
+        prev.set(mesh, mesh.visible)
+        mesh.visible = true
+      }
+    }
+    try {
+      return work()
+    } finally {
+      for (const [mesh, visible] of prev) {
+        mesh.visible = visible
+      }
+    }
+  }
+
+  /**
+   * Temporary full-room reveal for shader compilation so room entry does not pay a first-visibility hitch.
+   */
+  withAllRoomContentVisible<T>(work: () => T): T {
+    const prevVisible = new Map<Object3D, boolean>()
+    const prevClutterAlpha = new Map<Object3D, number>()
+    const prevClutterInteractable = new Map<Object3D, boolean>()
+
+    for (const meshes of this.gridPickupMeshesByRoom.values()) {
+      for (const mesh of meshes) {
+        prevVisible.set(mesh, mesh.visible)
+        mesh.visible = true
+      }
+    }
+
+    for (const meshes of this.clutterMeshesByRoom.values()) {
+      for (const mesh of meshes) {
+        prevVisible.set(mesh, mesh.visible)
+        prevClutterAlpha.set(
+          mesh,
+          (mesh.userData.clutterRevealAlpha as number | undefined) ?? 1,
+        )
+        prevClutterInteractable.set(
+          mesh,
+          mesh.userData.clutterWorldInteractable === true,
+        )
+        applyClutterRevealOpacity(mesh, 1)
+        mesh.userData.clutterWorldInteractable = true
+      }
+    }
+
+    try {
+      return work()
+    } finally {
+      for (const [mesh, alpha] of prevClutterAlpha) {
+        applyClutterRevealOpacity(mesh, alpha)
+      }
+      for (const [mesh, interactable] of prevClutterInteractable) {
+        mesh.userData.clutterWorldInteractable = interactable
+      }
+      for (const [mesh, visible] of prevVisible) {
+        mesh.visible = visible
+      }
     }
   }
 
@@ -592,10 +659,11 @@ export class ItemWorld {
   }
 
   private tryPoolMesh(root: Object3D): boolean {
-    if (root.userData.gridWispGltf === true) {
-      return false
-    }
-    if (root.userData.wispGltf === true || root.userData.wispBody) {
+    if (
+      root.userData.gridWispGltf === true ||
+      root.userData.wispGltf === true ||
+      root.userData.wispBody
+    ) {
       root.removeFromParent()
       root.visible = false
       const mix = root.userData.wispMixer as AnimationMixer | undefined
@@ -634,6 +702,15 @@ export class ItemWorld {
     }
   }
 
+  private registerGridPickupMesh(roomId: RoomId, mesh: Object3D): void {
+    let meshes = this.gridPickupMeshesByRoom.get(roomId)
+    if (!meshes) {
+      meshes = new Set<Object3D>()
+      this.gridPickupMeshesByRoom.set(roomId, meshes)
+    }
+    meshes.add(mesh)
+  }
+
   private registerClutterMesh(roomId: RoomId, mesh: Object3D): void {
     let meshes = this.clutterMeshesByRoom.get(roomId)
     if (!meshes) {
@@ -644,12 +721,25 @@ export class ItemWorld {
   }
 
   private unregisterRoomTrackedMesh(item: GameItem, mesh: Object3D): void {
-    if (item.type !== 'clutter' || !item.spawnRoomId) return
-    const meshes = this.clutterMeshesByRoom.get(item.spawnRoomId)
-    if (!meshes) return
-    meshes.delete(mesh)
-    if (meshes.size > 0) return
-    this.clutterMeshesByRoom.delete(item.spawnRoomId)
-    this.clutterRevealAlphaByRoom.delete(item.spawnRoomId)
+    const roomId = 'spawnRoomId' in item ? item.spawnRoomId : undefined
+    if (!roomId) return
+
+    if (item.type === 'wisp' || item.type === 'power_pellet') {
+      const gridMeshes = this.gridPickupMeshesByRoom.get(roomId)
+      if (gridMeshes) {
+        gridMeshes.delete(mesh)
+        if (gridMeshes.size === 0) {
+          this.gridPickupMeshesByRoom.delete(roomId)
+        }
+      }
+    }
+
+    if (item.type !== 'clutter') return
+    const clutterMeshes = this.clutterMeshesByRoom.get(roomId)
+    if (!clutterMeshes) return
+    clutterMeshes.delete(mesh)
+    if (clutterMeshes.size > 0) return
+    this.clutterMeshesByRoom.delete(roomId)
+    this.clutterRevealAlphaByRoom.delete(roomId)
   }
 }

@@ -8,8 +8,10 @@ import {
 import type { AabbXZ } from './collisionXZ.ts'
 import type { MazeWallPlacement } from '../grid/planRoomGrids.ts'
 
-const WALL_HEIGHT = 1.18
+const WALL_HEIGHT = 2.35
 const WALL_Y = WALL_HEIGHT * 0.5
+const WALL_COLOR = 0x565068
+const WALL_EMISSIVE = 0x242a3c
 
 type MazeWallInst = {
   root: Group
@@ -34,27 +36,16 @@ export class GridMazeWallSystem {
       const body = new Mesh(
         new BoxGeometry(p.width, WALL_HEIGHT, p.depth),
         new MeshStandardMaterial({
-          color: 0x181822,
-          roughness: 0.94,
-          metalness: 0.04,
+          color: WALL_COLOR,
+          emissive: WALL_EMISSIVE,
+          emissiveIntensity: 0.13,
+          roughness: 0.8,
+          metalness: 0.05,
         }),
       )
       body.castShadow = false
       body.receiveShadow = true
       root.add(body)
-
-      const cap = new Mesh(
-        new BoxGeometry(p.width * 1.02, 0.08, p.depth * 1.02),
-        new MeshStandardMaterial({
-          color: 0x262838,
-          roughness: 0.8,
-          metalness: 0.02,
-        }),
-      )
-      cap.position.y = WALL_HEIGHT * 0.5 + 0.02
-      cap.castShadow = false
-      cap.receiveShadow = true
-      root.add(cap)
 
       this.scene.add(root)
       this.walls.push({
