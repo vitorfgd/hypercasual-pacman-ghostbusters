@@ -38,6 +38,13 @@ function resolveNeighborDestination(
   dr: number,
   dc: number,
   getRawGridBoundsAt: (x: number, z: number) => RoomBounds,
+  canTraverseSegment?: (
+    x0: number,
+    z0: number,
+    x1: number,
+    z1: number,
+    targetBounds: RoomBounds,
+  ) => boolean,
 ): { c0: { x: number; z: number }; c1: { x: number; z: number } } | null {
   const c0 = cellCenterWorld(activeBounds, atRow, atCol, ROWS, COLS)
   const startKey = boundsKey(activeBounds)
@@ -48,7 +55,11 @@ function resolveNeighborDestination(
   // Standard same-region move.
   if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
     const c1 = cellCenterWorld(activeBounds, nr, nc, ROWS, COLS)
-    if (Math.hypot(c1.x - c0.x, c1.z - c0.z) >= 1e-4) {
+    if (
+      Math.hypot(c1.x - c0.x, c1.z - c0.z) >= 1e-4 &&
+      (!canTraverseSegment ||
+        canTraverseSegment(c0.x, c0.z, c1.x, c1.z, activeBounds))
+    ) {
       return { c0, c1 }
     }
   }
@@ -78,13 +89,20 @@ function resolveNeighborDestination(
     }
 
     if (Math.hypot(c1.x - c0.x, c1.z - c0.z) < 1e-4) continue
+    if (canTraverseSegment && !canTraverseSegment(c0.x, c0.z, c1.x, c1.z, b1)) {
+      continue
+    }
     return { c0, c1 }
   }
 
   // Safety fallback: never return null for a valid in-bounds same-region move.
   if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
     const c1 = cellCenterWorld(activeBounds, nr, nc, ROWS, COLS)
-    if (Math.hypot(c1.x - c0.x, c1.z - c0.z) >= 1e-4) {
+    if (
+      Math.hypot(c1.x - c0.x, c1.z - c0.z) >= 1e-4 &&
+      (!canTraverseSegment ||
+        canTraverseSegment(c0.x, c0.z, c1.x, c1.z, activeBounds))
+    ) {
       return { c0, c1 }
     }
   }
@@ -104,6 +122,13 @@ function openCardinalsLine(
   atRow: number,
   atCol: number,
   getRawGridBoundsAt: (x: number, z: number) => RoomBounds,
+  canTraverseSegment?: (
+    x0: number,
+    z0: number,
+    x1: number,
+    z1: number,
+    targetBounds: RoomBounds,
+  ) => boolean,
 ): string {
   let s = ''
   for (const { dr, dc, l } of CARD_DEBUG) {
@@ -114,6 +139,7 @@ function openCardinalsLine(
       dr,
       dc,
       getRawGridBoundsAt,
+      canTraverseSegment,
     )
     s += ok ? l : l.toLowerCase()
   }
@@ -129,6 +155,13 @@ function fillStepDebug(
     inputDc: number | null
     speed: number
     getRawGridBoundsAt: (x: number, z: number) => RoomBounds
+    canTraverseSegment?: (
+      x0: number,
+      z0: number,
+      x1: number,
+      z1: number,
+      targetBounds: RoomBounds,
+    ) => boolean
     idleBlocked: boolean
     hadResetThisStep: boolean
     vx: number
@@ -142,6 +175,7 @@ function fillStepDebug(
     inputDc,
     speed,
     getRawGridBoundsAt,
+    canTraverseSegment,
     idleBlocked,
     hadResetThisStep,
     vx,
@@ -166,6 +200,7 @@ function fillStepDebug(
     state.atRow,
     state.atCol,
     getRawGridBoundsAt,
+    canTraverseSegment,
   )
   d.gridAtRow = state.atRow
   d.gridAtCol = state.atCol
@@ -272,6 +307,13 @@ export function stepPlayerGridNav(
   fingerDown: boolean,
   /** Raw room/corridor query — probes + segment completion only. */
   getRawGridBoundsAt: (x: number, z: number) => RoomBounds,
+  canTraverseSegment?: (
+    x0: number,
+    z0: number,
+    x1: number,
+    z1: number,
+    targetBounds: RoomBounds,
+  ) => boolean,
   /** When set, filled with step diagnostics for the on-screen HUD. */
   debug: PlayerNavDebugSnapshot | null = null,
 ): PlayerGridStepResult {
@@ -318,6 +360,7 @@ export function stepPlayerGridNav(
       dr,
       dc,
       getRawGridBoundsAt,
+      canTraverseSegment,
     )
     if (!resolved) return false
     const { c0, c1 } = resolved
@@ -406,6 +449,7 @@ export function stepPlayerGridNav(
             inputDc,
             speed,
             getRawGridBoundsAt,
+            canTraverseSegment,
             idleBlocked:
               fingerDown && inputDr !== null && inputDc !== null,
             hadResetThisStep,
@@ -445,6 +489,7 @@ export function stepPlayerGridNav(
           inputDc,
           speed,
           getRawGridBoundsAt,
+          canTraverseSegment,
           idleBlocked: false,
           hadResetThisStep,
           vx,
@@ -502,6 +547,7 @@ export function stepPlayerGridNav(
           inputDc,
           speed,
           getRawGridBoundsAt,
+          canTraverseSegment,
           idleBlocked: false,
           hadResetThisStep,
           vx,
@@ -523,6 +569,7 @@ export function stepPlayerGridNav(
       inputDc,
       speed,
       getRawGridBoundsAt,
+      canTraverseSegment,
       idleBlocked: false,
       hadResetThisStep,
       vx,

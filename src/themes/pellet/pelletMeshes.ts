@@ -5,6 +5,7 @@ import {
   CylinderGeometry,
   Group,
   Mesh,
+  MeshPhysicalMaterial,
   MeshStandardMaterial,
   OctahedronGeometry,
   SphereGeometry,
@@ -63,6 +64,24 @@ function soulColors(hue: number): {
     emissive: new Color().setHSL(t + 0.03, 0.52, 0.64),
     outer: new Color().setHSL(t - 0.025, 0.38, 0.54),
   }
+}
+
+function applyWispGlow(root: Object3D): void {
+  root.traverse((o) => {
+    if (!(o instanceof Mesh)) return
+    const mats = Array.isArray(o.material) ? o.material : [o.material]
+    for (const mat of mats) {
+      if (
+        !(mat instanceof MeshStandardMaterial) &&
+        !(mat instanceof MeshPhysicalMaterial)
+      ) {
+        continue
+      }
+      const glow = mat.color.clone().multiplyScalar(1.08)
+      mat.emissive.copy(glow)
+      mat.emissiveIntensity = Math.max(mat.emissiveIntensity, 0.75)
+    }
+  })
 }
 
 /**
@@ -180,10 +199,13 @@ export function createPowerPelletPickupMesh(): Group {
 export function createWispPickupMesh(hue: number): Group {
   const grid = cloneGridWispPickup()
   if (grid) {
+    applyWispGlow(grid)
     return grid
   }
   if (getWispPickupPrototype()) {
-    return cloneWispPickupFromGltf(hue)
+    const root = cloneWispPickupFromGltf(hue)
+    applyWispGlow(root)
+    return root
   }
   const root = new Group()
   root.name = 'wispSoulPickup'

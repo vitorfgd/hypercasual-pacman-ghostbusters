@@ -55,7 +55,7 @@ import {
   GHOST_HIT_INVULN_SEC,
   GHOST_HIT_PICKUP_LOCK_SEC,
   ghostRoomVisualMul,
-  MAX_ACTIVE_GHOSTS,
+  maxActiveGhostsForRoomProgress,
   partitionGhostSpawnsByRoom,
   pickGhostColorForRoomIndex,
   wispCollectGhostSpawnProbability,
@@ -106,7 +106,10 @@ import {
 } from '../juice/juiceConfig.ts'
 import { spawnLifeLostImpact } from '../juice/lifeHudJuice.ts'
 import { showRunFailedOverlay } from '../juice/runFailedOverlay.ts'
-import { PlayerMotionTrail } from '../juice/playerMotionTrail.ts'
+import {
+  PlayerMotionTrail,
+  type PlayerMotionTrailMode,
+} from '../juice/playerMotionTrail.ts'
 import {
   spawnFloatingHudText,
   spawnRoomClearedBanner,
@@ -114,6 +117,8 @@ import {
 } from '../juice/floatingHud.ts'
 import {
   disposeAllGhostHitBursts,
+  spawnDirectionalFloorPulse,
+  spawnFloorRingBurst,
   spawnGhostHitEctoplasmBurst,
   spawnGhostHitPelletBurst,
   updateGhostHitBursts,
@@ -271,22 +276,31 @@ export class Game {
   private endlessCurrentPowerPelletId: string | null = null
   private readonly playerTrail: PlayerMotionTrail
   private ghostHitSlowMoRemain = 0
+  private roomEntrySlowMoRemain = 0
+  private trapHitSlowMoRemain = 0
+  private powerPickupSlowMoRemain = 0
   private hudStackHum: HTMLElement | null = null
   private depositShakeTimer: ReturnType<typeof setTimeout> | null = null
   private ectoGlowTimer: ReturnType<typeof setTimeout> | null = null
+  private roomHudUrgencyTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly viewportClassTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >()
+  private pickupComboCount = 0
+  private pickupComboRemain = 0
+  private readonly roomUrgencyShown = new Set<string>()
+  private roomEntryTrailRemain = 0
+  private powerBurstTrailRemain = 0
+  private recoverTrailRemain = 0
+  private movementLaunchRemain = 0
+  private lastPlayerSpeed = 0
   /** Hide north welcome banner after first exit from the safe hub room. */
   private hubWelcomeHidden = false
   private wasInSafeRoom = true
   private gameStartCountdownRemain = 3
   private gameStartCountdownStep = -1
   private readonly gameStartCountdownEl: HTMLElement
-  private firstDoorTutorialShown = false
-  private firstDoorTutorialPaused = false
-  private firstDoorTutorialPrewarmDone = false
-  private firstDoorTutorialClutterWarmDone = false
-  private readonly firstDoorTutorialOverlayEl: HTMLElement
-  private readonly firstDoorTutorialStatusEl: HTMLElement
-  private readonly firstDoorTutorialContinueEl: HTMLButtonElement
   private readonly navDebugHudEl: HTMLElement | null
   private lastNavIdleWarnSec = -999
 
@@ -307,16 +321,6 @@ export class Game {
   /** Reused by boss intro camera return (follow rig target + look). */
   private readonly gateCinePlayerLook = new Vector3()
   private readonly gateCineRigDesired = new Vector3()
-
-  private readonly onFirstDoorTutorialContinue = (): void => {
-    if (!this.firstDoorTutorialPaused) return
-    if (!this.firstDoorTutorialPrewarmDone) return
-    this.firstDoorTutorialPaused = false
-    this.firstDoorTutorialOverlayEl.classList.remove(
-      'door-tutorial-overlay--show',
-    )
-    this.firstDoorTutorialContinueEl.blur()
-  }
 
   /** Final room: short camera beat before `BossRoomController.startFight`. */
   private bossIntroCinematicRunning = false
@@ -433,57 +437,6 @@ export class Game {
     this.gameStartCountdownEl.setAttribute('aria-live', 'polite')
     this.gameStartCountdownEl.setAttribute('aria-atomic', 'true')
     this.gameViewport.appendChild(this.gameStartCountdownEl)
-    this.firstDoorTutorialOverlayEl = document.createElement('div')
-    this.firstDoorTutorialOverlayEl.className = 'door-tutorial-overlay'
-    this.firstDoorTutorialOverlayEl.setAttribute('role', 'dialog')
-    this.firstDoorTutorialOverlayEl.setAttribute('aria-modal', 'true')
-    this.firstDoorTutorialOverlayEl.setAttribute('aria-labelledby', 'door-tutorial-title')
-    this.firstDoorTutorialOverlayEl.setAttribute('aria-describedby', 'door-tutorial-copy')
-
-    const tutorialBackdrop = document.createElement('div')
-    tutorialBackdrop.className = 'door-tutorial-overlay__backdrop'
-
-    const tutorialPanel = document.createElement('div')
-    tutorialPanel.className = 'door-tutorial-overlay__panel'
-
-    const tutorialEyebrow = document.createElement('p')
-    tutorialEyebrow.className = 'door-tutorial-overlay__eyebrow'
-    tutorialEyebrow.textContent = 'First breach'
-
-    const tutorialTitle = document.createElement('h2')
-    tutorialTitle.id = 'door-tutorial-title'
-    tutorialTitle.className = 'door-tutorial-overlay__title'
-    tutorialTitle.textContent = 'Room 1 changes the rules'
-
-    const tutorialCopy = document.createElement('div')
-    tutorialCopy.id = 'door-tutorial-copy'
-    tutorialCopy.className = 'door-tutorial-overlay__copy'
-    tutorialCopy.innerHTML =
-      '<p>Ghosts patrol on the same grid you do. They stay predictable until you step into their vision cone.</p>' +
-      '<p>Break line of sight with walls, grab the room power-up, and sweep wisps before the room gets crowded.</p>'
-
-    const tutorialStatus = document.createElement('p')
-    tutorialStatus.className = 'door-tutorial-overlay__status'
-    tutorialStatus.textContent = 'Preparing the next rooms...'
-    this.firstDoorTutorialStatusEl = tutorialStatus
-
-    const tutorialContinue = document.createElement('button')
-    tutorialContinue.type = 'button'
-    tutorialContinue.className = 'door-tutorial-overlay__continue'
-    tutorialContinue.textContent = 'Preparing...'
-    tutorialContinue.disabled = true
-    tutorialContinue.addEventListener('click', this.onFirstDoorTutorialContinue)
-    this.firstDoorTutorialContinueEl = tutorialContinue
-
-    tutorialPanel.append(
-      tutorialEyebrow,
-      tutorialTitle,
-      tutorialCopy,
-      tutorialStatus,
-      tutorialContinue,
-    )
-    this.firstDoorTutorialOverlayEl.append(tutorialBackdrop, tutorialPanel)
-    this.gameViewport.appendChild(this.firstDoorTutorialOverlayEl)
     this.navDebugHudEl = host.querySelector('#nav-debug-hud')
     if (!SHOW_PLAYER_NAV_DEBUG_HUD && this.navDebugHudEl) {
       this.navDebugHudEl.style.display = 'none'
@@ -551,16 +504,16 @@ export class Game {
           this.syncRoomPickupAccessibilityFromDoors()
           const nextRoom = doorIndex + 1
           if (nextRoom >= 1 && nextRoom <= NORMAL_ROOM_COUNT) {
-            this.triggerRoomEntryJuice(nextRoom)
+            this.triggerRoomEntryJuice(nextRoom, doorIndex)
             const spawned = this.ghostSystem.spawnGhostsForRoom(nextRoom)
             if (spawned > 0) {
               this.triggerEnemySpawnJuice(spawned)
             }
-            if (doorIndex === 0) {
-              this.beginFirstDoorTutorial()
-            }
           }
         })
+      },
+      onDoorSlamShut: (doorIndex) => {
+        this.triggerDoorImpactJuice(doorIndex)
       },
     })
 
@@ -696,14 +649,6 @@ export class Game {
         this.perf.endFrame(this.renderer.info.render.calls, 0)
         return
       }
-      if (this.firstDoorTutorialPaused) {
-        this.lastTime = now
-        this.perf.beginFrame(now)
-        this.updateFirstDoorTutorialPause()
-        this.renderer.render(this.scene, this.camera)
-        this.perf.endFrame(this.renderer.info.render.calls, 0)
-        return
-      }
       const dt = Math.min(0.05, (now - this.lastTime) / 1000)
       this.lastTime = now
       this.perf.beginFrame(now)
@@ -770,8 +715,8 @@ export class Game {
         this.playerPos.z,
         this.player.radius,
         {
-          onStepTrap: () => {
-            this.applyTrapLifeLoss()
+          onStepTrap: (x, z) => {
+            this.applyTrapLifeLoss(x, z)
           },
         },
       )
@@ -785,9 +730,33 @@ export class Game {
       )
       this.syncStackJuiceHud(weight)
 
-      let simDt =
-        this.ghostHitSlowMoRemain > 0 ? dt * GHOST_HIT_SLOW_MO_SCALE : dt
+      this.pickupComboRemain = Math.max(0, this.pickupComboRemain - dt)
+      if (this.pickupComboRemain <= 0) {
+        this.pickupComboCount = 0
+      }
+      this.roomEntryTrailRemain = Math.max(0, this.roomEntryTrailRemain - dt)
+      this.powerBurstTrailRemain = Math.max(0, this.powerBurstTrailRemain - dt)
+      this.recoverTrailRemain = Math.max(0, this.recoverTrailRemain - dt)
+      this.movementLaunchRemain = Math.max(0, this.movementLaunchRemain - dt)
+
+      let simScale = 1
+      if (this.ghostHitSlowMoRemain > 0) {
+        simScale = Math.min(simScale, GHOST_HIT_SLOW_MO_SCALE)
+      }
       this.ghostHitSlowMoRemain = Math.max(0, this.ghostHitSlowMoRemain - dt)
+      if (this.roomEntrySlowMoRemain > 0) {
+        simScale = Math.min(simScale, 0.78)
+      }
+      this.roomEntrySlowMoRemain = Math.max(0, this.roomEntrySlowMoRemain - dt)
+      if (this.trapHitSlowMoRemain > 0) {
+        simScale = Math.min(simScale, 0.68)
+      }
+      this.trapHitSlowMoRemain = Math.max(0, this.trapHitSlowMoRemain - dt)
+      if (this.powerPickupSlowMoRemain > 0) {
+        simScale = Math.min(simScale, 0.5)
+      }
+      this.powerPickupSlowMoRemain = Math.max(0, this.powerPickupSlowMoRemain - dt)
+      let simDt = dt * simScale
       if (this.bossIntroSlowMoActive()) {
         simDt *= BOSS_CINE_SLOW_SIM_SCALE
       }
@@ -817,6 +786,11 @@ export class Game {
       }
       this.player.getPosition(this.playerPos)
       this.player.getVelocity(this.velScratch)
+      const speedNow = this.player.getHorizontalSpeed()
+      if (speedNow > 0.55 && this.lastPlayerSpeed <= 0.18) {
+        this.movementLaunchRemain = Math.max(this.movementLaunchRemain, 0.2)
+        this.pulseViewportClass('game-viewport--pulse-launch', 180)
+      }
       const yaw = this.player.getFacingYaw()
       const doorPlayer: DoorPlayerSample = {
         x: this.playerPos.x,
@@ -832,15 +806,35 @@ export class Game {
 
       this.itemWorld.updateVisuals(this.elapsedSec, dt)
 
-      const trailIntensity =
-        weight >= 0.72 ? (weight - 0.72) / (1 - 0.72) : 0
+      let trailMode: PlayerMotionTrailMode = 'heavy'
+      let trailIntensity = weight >= 0.72 ? (weight - 0.72) / (1 - 0.72) : 0
+      if (this.movementLaunchRemain > 0 || this.roomEntryTrailRemain > 0) {
+        trailMode = 'sprint'
+        trailIntensity = Math.max(
+          trailIntensity,
+          0.3 + this.movementLaunchRemain * 1.1 + this.roomEntryTrailRemain * 0.45,
+        )
+      }
+      if (this.recoverTrailRemain > 0) {
+        trailMode = 'recover'
+        trailIntensity = Math.max(trailIntensity, 0.42 + this.recoverTrailRemain * 0.35)
+      }
+      if (this.powerModeRemain > 0 || this.powerBurstTrailRemain > 0) {
+        trailMode = 'power'
+        trailIntensity = Math.max(
+          trailIntensity,
+          0.4 + Math.min(0.36, this.powerBurstTrailRemain * 0.5),
+        )
+      }
       this.playerTrail.update(
         this.playerPos.x,
         this.playerPos.z,
         0.02,
         trailIntensity,
         dt,
+        { mode: trailMode, speed: speedNow },
       )
+      this.lastPlayerSpeed = speedNow
 
       const hadPowerHud = this.powerModeRemain > 0
       this.powerModeRemain = Math.max(0, this.powerModeRemain - simDt)
@@ -860,8 +854,9 @@ export class Game {
         },
       )
       for (const { item, pickupX, pickupZ } of collected) {
+        let remainingWispsInRoom: number | null = null
         if (item.type === 'power_pellet') {
-          this.activatePowerMode()
+          this.activatePowerMode(pickupX, pickupZ)
         }
         if (item.type === 'wisp' && item.spawnRoomId) {
           this.runStatWispsCollected += 1
@@ -878,18 +873,22 @@ export class Game {
             this.wispsCollectedPerRoom.set(item.spawnRoomId, collectedAfter)
             const totalWispsInRoom =
               this.gridWispTotalsPerRoom.get(item.spawnRoomId) ?? 0
+            remainingWispsInRoom = Math.max(0, totalWispsInRoom - collectedAfter)
+            const roomIndex = this.roomChainIndexFromId(item.spawnRoomId)
+            const activeGhostCap = maxActiveGhostsForRoomProgress(roomIndex)
             if (!this.bossRoom.isFightActive()) {
               const ghostFromThisRoom =
                 roomPre !== null && item.spawnRoomId === roomPre
               if (
                 ghostFromThisRoom &&
                 totalWispsInRoom > 0 &&
-                this.ghostSystem.getActiveGhostCount() < MAX_ACTIVE_GHOSTS &&
+                this.ghostSystem.getActiveGhostCount() < activeGhostCap &&
                 this.runRandom() <
                   wispCollectGhostSpawnProbability(
                     collectedAfter,
                     totalWispsInRoom,
                     this.runUpgrades.hauntedChanceBonus,
+                    roomIndex,
                   )
               ) {
                 const plan = this.roomGridPlans.get(
@@ -906,7 +905,6 @@ export class Game {
                     this.runRandom,
                   )
                   if (xz) {
-                    const roomIndex = this.roomChainIndexFromId(item.spawnRoomId)
                     const visualMul = ghostRoomVisualMul(roomIndex)
                     const placed = this.worldCollision.resolveCircleXZ(
                       xz.x,
@@ -942,7 +940,12 @@ export class Game {
           }
         }
         if (item.type === 'wisp') {
-          spawnFloatingHudText(this.gameViewport, '+1', 'float-hud--pickup')
+          this.triggerWispPickupJuice(
+            pickupX,
+            pickupZ,
+            item.spawnRoomId ?? null,
+            remainingWispsInRoom,
+          )
         }
         if (
           item.type === 'wisp' ||
@@ -968,7 +971,16 @@ export class Game {
       )
       const coneAggroTriggers = this.ghostSystem.consumeVisionAggroEvents()
       if (coneAggroTriggers > 0) {
-        this.triggerGhostAggroJuice(coneAggroTriggers)
+        this.triggerGhostAggroJuice(
+          coneAggroTriggers,
+          this.ghostSystem.consumeVisionAggroPositions(),
+        )
+      } else {
+        this.ghostSystem.consumeVisionAggroPositions()
+      }
+      const lostChases = this.ghostSystem.consumeChaseLostPositions()
+      if (lostChases.length > 0) {
+        this.triggerGhostLostJuice(lostChases)
       }
 
       this.ghostHitInvuln = Math.max(0, this.ghostHitInvuln - dt)
@@ -1008,12 +1020,20 @@ export class Game {
               this.burstGroup,
               this.burstSpawnScratch,
             ),
+            ...spawnFloorRingBurst(this.burstGroup, this.burstSpawnScratch, {
+              color: 0x76ffd9,
+              opacity: 0.26,
+              startScale: 0.45,
+              endScale: 1.85,
+              y: 0.04,
+              lifeSec: 0.38,
+            }),
           )
           spawnFloatingHudText(
             this.gameViewport,
-            'Gotcha!',
-            'float-hud--pickup',
-            { topPct: 28, leftPct: 50, durationSec: 0.85 },
+            '+200',
+            'float-hud--combo',
+            { topPct: 28, leftPct: 50, durationSec: 0.92, risePx: 26 },
           )
         }
       }
@@ -1034,8 +1054,22 @@ export class Game {
           this.playerPos.x,
           this.playerPos.z,
         )
+        this.recoverTrailRemain = 0.68
+        this.burstSpawnScratch.copy(this.playerPos)
+        this.burstSpawnScratch.y += 0.04
+        this.burstParticles.push(
+          ...spawnFloorRingBurst(this.burstGroup, this.burstSpawnScratch, {
+            color: 0xff90a7,
+            opacity: 0.28,
+            startScale: 0.36,
+            endScale: 1.45,
+            y: 0.03,
+            lifeSec: 0.22,
+          }),
+        )
         this.triggerGhostHitFlash(210, true)
         this.triggerDepositScreenShake(false)
+        this.pulseViewportClass('game-viewport--pulse-danger', 220)
         this.ghostHitPickupLockRemain = GHOST_HIT_PICKUP_LOCK_SEC
 
         /** Ghost hits cost a life only â€” stack is preserved (no dropped pickups). */
@@ -1130,17 +1164,81 @@ export class Game {
     this.raf = requestAnimationFrame(tick)
   }
 
-  private activatePowerMode(): void {
+  private triggerWispPickupJuice(
+    pickupX: number,
+    pickupZ: number,
+    roomId: RoomId | null,
+    remainingWispsInRoom: number | null,
+  ): void {
+    this.pickupComboCount =
+      this.pickupComboRemain > 0 ? this.pickupComboCount + 1 : 1
+    this.pickupComboRemain = 0.82
+
+    const urgent = remainingWispsInRoom !== null && remainingWispsInRoom <= 3
+    this.spawnFloorPulseAt(pickupX, pickupZ, {
+      color: urgent ? 0xffc27a : 0x87ffd9,
+      opacity: urgent ? 0.24 : 0.18,
+      startScale: 0.28,
+      endScale: urgent ? 1.2 : 0.92,
+      lifeSec: urgent ? 0.28 : 0.22,
+    })
+
+    if (this.pickupComboCount <= 1) {
+      spawnFloatingHudText(this.gameViewport, '+1', 'float-hud--pickup', {
+        durationSec: 0.55,
+        risePx: 18,
+      })
+    } else {
+      spawnFloatingHudText(
+        this.gameViewport,
+        `x${this.pickupComboCount} SWEEP`,
+        'float-hud--combo',
+        { topPct: 34, leftPct: 50, durationSec: 0.7, risePx: 26 },
+      )
+    }
+
+    if (roomId && remainingWispsInRoom !== null && remainingWispsInRoom > 0 && remainingWispsInRoom <= 3) {
+      const urgencyKey =
+        roomId === FINAL_NORMAL_ROOM_ID && this.endlessModeActive
+          ? `${roomId}:${this.endlessCurrentRoomNumber}:${remainingWispsInRoom}`
+          : `${roomId}:${remainingWispsInRoom}`
+      if (!this.roomUrgencyShown.has(urgencyKey)) {
+        this.roomUrgencyShown.add(urgencyKey)
+        this.pulseRoomCleanHudUrgency()
+        spawnFloatingHudText(
+          this.gameViewport,
+          remainingWispsInRoom === 1 ? 'LAST WISP' : 'FINAL WISPS',
+          'float-hud--urgency',
+          { topPct: 18, leftPct: 50, durationSec: 0.85, risePx: 22 },
+        )
+      }
+    }
+  }
+
+  private activatePowerMode(pickupX?: number, pickupZ?: number): void {
     this.powerModeRemain =
       POWER_MODE_DURATION_MIN_SEC +
       this.runRandom() *
         (POWER_MODE_DURATION_MAX_SEC - POWER_MODE_DURATION_MIN_SEC)
+    this.powerPickupSlowMoRemain = 0.12
+    this.powerBurstTrailRemain = 0.95
+    this.movementLaunchRemain = Math.max(this.movementLaunchRemain, 0.18)
     this.gameViewport.classList.add('game-viewport--power-mode')
+    this.pulseViewportClass('game-viewport--power-burst', 420)
+    if (pickupX !== undefined && pickupZ !== undefined) {
+      this.spawnFloorPulseAt(pickupX, pickupZ, {
+        color: 0x7ceeff,
+        opacity: 0.26,
+        startScale: 0.36,
+        endScale: 1.85,
+        lifeSec: 0.42,
+      })
+    }
     spawnFloatingHudText(
       this.gameViewport,
       'POWER MODE!',
       'float-hud--level-up',
-      { topPct: 22, leftPct: 50, durationSec: 1.15 },
+      { topPct: 22, leftPct: 50, durationSec: 1.15, risePx: 24 },
     )
   }
 
@@ -1150,41 +1248,6 @@ export class Game {
       this.gameStartCountdownRemain - dt,
     )
     this.syncGameStartCountdown()
-  }
-
-  private beginFirstDoorTutorial(): void {
-    if (this.firstDoorTutorialShown) return
-    this.firstDoorTutorialShown = true
-    this.firstDoorTutorialPaused = true
-    this.firstDoorTutorialPrewarmDone = false
-    this.firstDoorTutorialClutterWarmDone = false
-    this.firstDoorTutorialStatusEl.textContent = 'Preparing the next rooms...'
-    this.firstDoorTutorialContinueEl.disabled = true
-    this.firstDoorTutorialContinueEl.textContent = 'Preparing...'
-    this.firstDoorTutorialOverlayEl.classList.add('door-tutorial-overlay--show')
-    requestAnimationFrame(() => {
-      this.firstDoorTutorialContinueEl.focus()
-    })
-  }
-
-  private updateFirstDoorTutorialPause(): void {
-    if (!this.firstDoorTutorialClutterWarmDone) {
-      this.itemWorld.prewarmClutterPool(3)
-      this.syncRoomPickupAccessibilityFromDoors()
-      this.renderer.compile(this.scene, this.camera)
-      this.firstDoorTutorialClutterWarmDone = true
-    }
-    if (!this.firstDoorTutorialPrewarmDone) {
-      this.ghostSystem.prewarmFutureGhosts(48)
-      if (!this.ghostSystem.hasPendingFutureGhostPrewarm()) {
-        this.renderer.compile(this.scene, this.camera)
-        this.firstDoorTutorialPrewarmDone = true
-        this.firstDoorTutorialStatusEl.textContent =
-          'All set. Continue when you are ready.'
-        this.firstDoorTutorialContinueEl.disabled = false
-        this.firstDoorTutorialContinueEl.textContent = 'Continue'
-      }
-    }
   }
 
   private syncGameStartCountdown(): void {
@@ -1468,26 +1531,140 @@ export class Game {
     }))
   }
 
-  private triggerRoomEntryJuice(roomIndex: number): void {
+  private pulseViewportClass(className: string, durationMs: number): void {
+    const prev = this.viewportClassTimers.get(className)
+    if (prev) {
+      clearTimeout(prev)
+      this.viewportClassTimers.delete(className)
+    }
+    this.gameViewport.classList.remove(className)
+    requestAnimationFrame(() => {
+      this.gameViewport.classList.add(className)
+    })
+    const timer = setTimeout(() => {
+      this.gameViewport.classList.remove(className)
+      this.viewportClassTimers.delete(className)
+    }, durationMs)
+    this.viewportClassTimers.set(className, timer)
+  }
+
+  private pulseRoomCleanHudUrgency(): void {
+    if (!this.hudRoomCleanWrap) return
+    if (this.roomHudUrgencyTimer) {
+      clearTimeout(this.roomHudUrgencyTimer)
+      this.roomHudUrgencyTimer = null
+    }
+    this.hudRoomCleanWrap.classList.remove('hud-room-clean--urgent')
+    requestAnimationFrame(() => {
+      this.hudRoomCleanWrap?.classList.add('hud-room-clean--urgent')
+    })
+    this.roomHudUrgencyTimer = setTimeout(() => {
+      this.hudRoomCleanWrap?.classList.remove('hud-room-clean--urgent')
+      this.roomHudUrgencyTimer = null
+    }, 760)
+  }
+
+  private spawnFloorPulseAt(
+    x: number,
+    z: number,
+    opts?: {
+      color?: number
+      opacity?: number
+      startScale?: number
+      endScale?: number
+      lifeSec?: number
+    },
+  ): void {
+    this.burstSpawnScratch.set(x, 0.04, z)
+    this.burstParticles.push(
+      ...spawnFloorRingBurst(this.burstGroup, this.burstSpawnScratch, {
+        color: opts?.color,
+        opacity: opts?.opacity,
+        startScale: opts?.startScale,
+        endScale: opts?.endScale,
+        y: 0.04,
+        lifeSec: opts?.lifeSec,
+      }),
+    )
+  }
+
+  private triggerRoomEntryJuice(roomIndex: number, doorIndex?: number): void {
+    const endless = roomIndex > NORMAL_ROOM_COUNT
+    this.roomEntrySlowMoRemain = endless ? 0.09 : 0.12
+    this.roomEntryTrailRemain = endless ? 0.5 : 0.72
     spawnRoomEntryBanner(
       this.gameViewport,
       `Room ${roomIndex}`,
-      roomIndex > NORMAL_ROOM_COUNT
+      endless
         ? 'The mansion shifts again'
-        : roomIndex === 2
-        ? 'Stay out of their cone'
-        : 'Sweep fast, stay moving',
+        : roomIndex === NORMAL_ROOM_COUNT
+          ? 'One more room. Stay alive.'
+          : roomIndex === 2
+            ? 'Stay out of their cone'
+            : 'Sweep fast, stay moving',
+      {
+        fast: true,
+        emphasis: endless ? 'endless' : roomIndex === NORMAL_ROOM_COUNT ? 'boss' : 'normal',
+      },
     )
-    this.triggerEctoGlow(300)
+    this.triggerEctoGlow(240)
+    this.pulseViewportClass('game-viewport--pulse-room-entry', 280)
+    if (doorIndex !== undefined) {
+      const zDoor = getDoorBlockerZ(doorIndex)
+      this.burstSpawnScratch.set(0, 0.04, zDoor - 0.35)
+      this.burstParticles.push(
+        ...spawnDirectionalFloorPulse(this.burstGroup, this.burstSpawnScratch, 0, -1, {
+          color: endless ? 0x77d8ff : 0x74ffd5,
+          opacity: 0.22,
+          spacing: 1.05,
+          count: 3,
+          lifeSec: 0.28,
+        }),
+      )
+    }
   }
 
-  private triggerGhostAggroJuice(coneAggroTriggers: number): void {
-    this.triggerEctoGlow(240)
+  private triggerGhostAggroJuice(
+    coneAggroTriggers: number,
+    positions: readonly { x: number; z: number }[],
+  ): void {
+    this.triggerEctoGlow(220)
+    this.pulseViewportClass('game-viewport--pulse-danger', 220)
     const label = coneAggroTriggers > 1 ? 'SPOTTED' : 'SEEN'
     spawnFloatingHudText(this.gameViewport, label, 'float-hud--alert', {
       topPct: 22,
       leftPct: 50,
-      durationSec: 0.8,
+      durationSec: 0.72,
+      risePx: 24,
+    })
+    for (const pos of positions.slice(0, 3)) {
+      this.spawnFloorPulseAt(pos.x, pos.z, {
+        color: 0x86ffe1,
+        opacity: 0.24,
+        startScale: 0.34,
+        endScale: 1.18,
+        lifeSec: 0.26,
+      })
+    }
+  }
+
+  private triggerGhostLostJuice(
+    positions: readonly { x: number; z: number }[],
+  ): void {
+    for (const pos of positions.slice(0, 2)) {
+      this.spawnFloorPulseAt(pos.x, pos.z, {
+        color: 0xc7f5ff,
+        opacity: 0.16,
+        startScale: 0.28,
+        endScale: 0.92,
+        lifeSec: 0.24,
+      })
+    }
+    spawnFloatingHudText(this.gameViewport, '?', 'float-hud--question', {
+      topPct: 26,
+      leftPct: 50,
+      durationSec: 0.5,
+      risePx: 16,
     })
   }
 
@@ -1497,13 +1674,38 @@ export class Game {
     spawnFloatingHudText(
       this.gameViewport,
       n > 1 ? `${n} ENEMIES` : 'ENEMY SPAWNED',
-      'float-hud--alert',
+      'float-hud--spawn',
       {
         topPct: 18,
         leftPct: 50,
         durationSec: 0.9,
+        risePx: 22,
       },
     )
+  }
+
+  private triggerDoorImpactJuice(doorIndex: number): void {
+    const zDoor = getDoorBlockerZ(doorIndex)
+    this.burstSpawnScratch.set(0, 0.04, zDoor - 0.18)
+    this.burstParticles.push(
+      ...spawnFloorRingBurst(this.burstGroup, this.burstSpawnScratch, {
+        color: 0xffe59a,
+        opacity: 0.22,
+        startScale: 0.42,
+        endScale: 1.65,
+        y: 0.04,
+        lifeSec: 0.26,
+      }),
+      ...spawnDirectionalFloorPulse(this.burstGroup, this.burstSpawnScratch, 0, -1, {
+        color: 0x78ffd9,
+        opacity: 0.16,
+        spacing: 0.92,
+        count: 2,
+        lifeSec: 0.2,
+      }),
+    )
+    this.triggerEctoGlow(140)
+    this.pulseViewportClass('game-viewport--pulse-door', 220)
   }
 
   private triggerEctoGlow(durationMs: number): void {
@@ -1641,6 +1843,11 @@ export class Game {
       roomId: FINAL_NORMAL_ROOM_ID,
       ...runtimePlan,
     }
+    for (const key of Array.from(this.roomUrgencyShown)) {
+      if (key.startsWith(`${FINAL_NORMAL_ROOM_ID}:`)) {
+        this.roomUrgencyShown.delete(key)
+      }
+    }
     this.endlessCurrentRoomNumber = roomNumber
     this.endlessRoomWispTotal = plan.wisps.length
     this.endlessRoomWispsCollected = 0
@@ -1693,6 +1900,17 @@ export class Game {
     ])
     this.worldCollision.setStructureColliders(this.mazeWalls.getColliders())
     this.spawnEndlessGhostWave(plan, roomNumber)
+    this.spawnFloorPulseAt(
+      (bounds.minX + bounds.maxX) * 0.5,
+      (bounds.minZ + bounds.maxZ) * 0.5,
+      {
+        color: 0x7cdcff,
+        opacity: 0.22,
+        startScale: 0.8,
+        endScale: 2.8,
+        lifeSec: 0.46,
+      },
+    )
     this.triggerRoomEntryJuice(roomNumber)
   }
 
@@ -1728,11 +1946,12 @@ export class Game {
     )
     const count = Math.max(2, maxCount + (this.runRandom() < 0.34 ? 1 : 0))
     const roomIndex = Math.min(roomNumber, NORMAL_ROOM_COUNT)
+    const activeGhostCap = maxActiveGhostsForRoomProgress(roomNumber)
     let spawned = 0
     for (const candidate of candidates) {
       if (
         spawned >= count ||
-        this.ghostSystem.getActiveGhostCount() >= MAX_ACTIVE_GHOSTS
+        this.ghostSystem.getActiveGhostCount() >= activeGhostCap
       ) {
         break
       }
@@ -1855,6 +2074,7 @@ export class Game {
       this.runStatRoomsCleared,
     )
     const applyChosen = (offer: (typeof offers)[number]): void => {
+      this.pulseViewportClass('game-viewport--pulse-room-clear', 260)
       const res = applyRunUpgrade(offer.id, {
         state: this.runUpgrades,
         stack: this.stack,
@@ -1888,7 +2108,7 @@ export class Game {
       this.gameViewport,
       'Room cleared!',
       'float-hud--pickup',
-      { topPct: 30, leftPct: 50, durationSec: 1.1 },
+      { topPct: 30, leftPct: 50, durationSec: 1.1, risePx: 22 },
     )
     this.roomUpgradePendingReveal = revealUpgrades
     this.beginRoomClearIntroCinematic(roomIndex)
@@ -1903,6 +2123,7 @@ export class Game {
     const endlessFinalRoom =
       this.endlessModeActive && roomId === FINAL_NORMAL_ROOM_ID
     this.runStatRoomsCleared += 1
+    this.pulseViewportClass('game-viewport--pulse-room-clear', 320)
     spawnRoomClearedBanner(this.gameViewport, res.bannerSubtitle)
     if (!endlessFinalRoom) {
       this.roomClearFloorDisposers.push(
@@ -1994,7 +2215,6 @@ export class Game {
   /** Boss intro or post-boss outro â€” block movement and pickups. */
   private isInteractionCinematicBlocking(): boolean {
     return (
-      this.firstDoorTutorialPaused ||
       this.roomClearIntroCinematicRunning ||
       this.roomClearDoorCinematicRunning ||
       this.bossIntroCinematicRunning ||
@@ -2017,6 +2237,20 @@ export class Game {
     this.player.getPosition(this.playerPos)
     const { x, z } = getBossSpawnXZ()
     this.bossCineBossLook.set(x, 1.28, z)
+    this.pulseViewportClass('game-viewport--boss-intro', 620)
+    this.spawnFloorPulseAt(x, z, {
+      color: 0xffd68f,
+      opacity: 0.24,
+      startScale: 0.52,
+      endScale: 2.2,
+      lifeSec: 0.48,
+    })
+    spawnFloatingHudText(this.gameViewport, 'BOSS ROOM', 'float-hud--alert', {
+      topPct: 18,
+      leftPct: 50,
+      durationSec: 0.8,
+      risePx: 20,
+    })
 
     let hdx = this.camera.position.x - this.playerPos.x
     let hdz = this.camera.position.z - this.playerPos.z
@@ -2082,6 +2316,14 @@ export class Game {
     this.roomClearIntroCinematicElapsed = 0
     this.roomClearCineStartPos.copy(this.camera.position)
     this.player.getPosition(this.playerPos)
+    this.pulseViewportClass('game-viewport--pulse-room-clear', 360)
+    this.spawnFloorPulseAt(this.playerPos.x, this.playerPos.z, {
+      color: 0xffde96,
+      opacity: 0.22,
+      startScale: 0.45,
+      endScale: 2.4,
+      lifeSec: 0.44,
+    })
     let hdx = this.camera.position.x - this.playerPos.x
     let hdz = this.camera.position.z - this.playerPos.z
     const hlen = Math.hypot(hdx, hdz) || 1
@@ -2186,11 +2428,22 @@ export class Game {
       this.camera.lookAt(this.roomClearCineLookAtDoor)
       if (!this.roomClearDoorUnlockFeedbackDone) {
         this.roomClearDoorUnlockFeedbackDone = true
+        this.pulseViewportClass('game-viewport--pulse-door', 220)
+        this.burstSpawnScratch.set(0, 0.04, zDoor - 0.2)
+        this.burstParticles.push(
+          ...spawnDirectionalFloorPulse(this.burstGroup, this.burstSpawnScratch, 0, -1, {
+            color: 0xffdc92,
+            opacity: 0.16,
+            spacing: 0.95,
+            count: 3,
+            lifeSec: 0.22,
+          }),
+        )
         spawnFloatingHudText(
           this.gameViewport,
           'Unlocked',
           'float-hud--level-up',
-          { topPct: 38, leftPct: 50, durationSec: 1.85 },
+          { topPct: 38, leftPct: 50, durationSec: 1.12, risePx: 20 },
         )
       }
     } else if (e < tEnd) {
@@ -2371,29 +2624,23 @@ export class Game {
   }
 
   private triggerDepositScreenShake(overload: boolean): void {
-    if (this.depositShakeTimer) {
-      clearTimeout(this.depositShakeTimer)
-      this.depositShakeTimer = null
-    }
-    this.gameViewport.classList.remove(
-      'game-viewport--shake',
-      'game-viewport--shake-hard',
-    )
-    void this.gameViewport.offsetWidth
-    this.gameViewport.classList.add(
+    this.pulseViewportClass(
       overload ? 'game-viewport--shake-hard' : 'game-viewport--shake',
+      280,
     )
-    this.depositShakeTimer = setTimeout(() => {
-      this.gameViewport.classList.remove(
-        'game-viewport--shake',
-        'game-viewport--shake-hard',
-      )
-      this.depositShakeTimer = null
-    }, 280)
   }
 
   /** Spike trap: always âˆ’1 life (no stack loss); mesh has no physics collider â€” overlap only. */
-  private applyTrapLifeLoss(): void {
+  private applyTrapLifeLoss(trapX: number, trapZ: number): void {
+    this.trapHitSlowMoRemain = 0.08
+    this.recoverTrailRemain = Math.max(this.recoverTrailRemain, 0.4)
+    this.spawnFloorPulseAt(trapX, trapZ, {
+      color: 0xff5b6f,
+      opacity: 0.3,
+      startScale: 0.3,
+      endScale: 1.22,
+      lifeSec: 0.24,
+    })
     if (!this.consumeRoomShield('Shield blocked')) {
       this.lives = Math.max(0, this.lives - 1)
       spawnLifeLostImpact(this.gameViewport)
@@ -2488,6 +2735,14 @@ export class Game {
       clearTimeout(this.ectoGlowTimer)
       this.ectoGlowTimer = null
     }
+    if (this.roomHudUrgencyTimer) {
+      clearTimeout(this.roomHudUrgencyTimer)
+      this.roomHudUrgencyTimer = null
+    }
+    for (const timer of this.viewportClassTimers.values()) {
+      clearTimeout(timer)
+    }
+    this.viewportClassTimers.clear()
     if (this.hitFlashTimer) {
       clearTimeout(this.hitFlashTimer)
       this.hitFlashTimer = null
@@ -2524,11 +2779,6 @@ export class Game {
     window.removeEventListener('keydown', this.onCameraModeKey)
     this.keyboardMove.dispose()
     this.joystick.dispose()
-    this.firstDoorTutorialContinueEl.removeEventListener(
-      'click',
-      this.onFirstDoorTutorialContinue,
-    )
-    this.firstDoorTutorialOverlayEl.remove()
     this.gameStartCountdownEl.remove()
     this.unsubscribeResize()
     this.renderer.dispose()

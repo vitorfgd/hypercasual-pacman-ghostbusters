@@ -37,6 +37,10 @@ export { PLAYER_BASE_MAX_SPEED as DEFAULT_PLAYER_MOVE_SPEED } from '../gameplayS
  */
 const PLAYER_WORLD_COLLISION_RADIUS = 0.46
 
+function isWideRoomBounds(bounds: RoomBounds): boolean {
+  return bounds.maxX - bounds.minX >= 7
+}
+
 export class PlayerController {
   private readonly navDebug: PlayerNavDebugSnapshot = createEmptyNavDebug()
   private readonly gridState: PlayerGridNavState
@@ -274,6 +278,15 @@ export class PlayerController {
       delta?.dc ?? null,
       input.fingerDown,
       getRawGridBoundsAt,
+      (x0, z0, x1, z1, targetBounds) =>
+        this.worldCollision.canTraverseCircleXZ(
+          x0,
+          z0,
+          x1,
+          z1,
+          PLAYER_WORLD_COLLISION_RADIUS,
+          isWideRoomBounds(targetBounds),
+        ),
       SHOW_PLAYER_NAV_DEBUG_HUD ? this.navDebug : null,
     )
 
@@ -284,7 +297,7 @@ export class PlayerController {
       res.x + this.knockX * dt,
       res.z + this.knockZ * dt,
       PLAYER_WORLD_COLLISION_RADIUS,
-      false,
+      isWideRoomBounds(rawAtPlayer),
     )
 
     this.playerRoot.position.x = resolved.x

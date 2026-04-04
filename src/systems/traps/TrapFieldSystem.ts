@@ -8,14 +8,16 @@ export type TrapPlacement = {
   depth: number
 }
 
-const TRAP_MODEL_Y = 0.01
+const TRAP_MODEL_Y = 0.14
 const TRAP_MODEL_FOOTPRINT_SCALE = 1.12
 
 export type TrapCallbacks = {
-  onStepTrap: () => void
+  onStepTrap: (x: number, z: number) => void
 }
 
 type TrapInst = {
+  x: number
+  z: number
   minX: number
   maxX: number
   minZ: number
@@ -42,6 +44,8 @@ export class TrapFieldSystem {
       const root = this.buildVisual(p)
       this.scene.add(root)
       this.traps.push({
+        x: p.x,
+        z: p.z,
         minX: p.x - p.width * 0.5,
         maxX: p.x + p.width * 0.5,
         minZ: p.z - p.depth * 0.5,
@@ -114,7 +118,7 @@ export class TrapFieldSystem {
         playerRadius,
       )
       if (inside && !t.wasInside) {
-        cb.onStepTrap()
+        cb.onStepTrap(t.x, t.z)
       }
       t.wasInside = inside
     }

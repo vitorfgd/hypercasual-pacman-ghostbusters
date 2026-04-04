@@ -40,12 +40,13 @@ export function mountRoomUpgradePicker(root: HTMLElement): RoomUpgradePickerHand
       lastHandler = handler
       cardsEl.addEventListener('click', handler)
 
-      for (const o of offers) {
+      offers.forEach((o, index) => {
         const card = document.createElement('button')
         card.type = 'button'
         card.className = 'room-upgrade-card'
         card.dataset.offerId = o.id
         card.setAttribute('aria-label', `${o.title}. ${o.description}`)
+        card.style.setProperty('--upgrade-stagger-delay', `${index * 70}ms`)
 
         const title = document.createElement('div')
         title.className = 'room-upgrade-card__title'
@@ -57,7 +58,7 @@ export function mountRoomUpgradePicker(root: HTMLElement): RoomUpgradePickerHand
 
         card.append(title, desc)
         cardsEl.appendChild(card)
-      }
+      })
 
       root.classList.remove('hidden')
       root.setAttribute('aria-hidden', 'false')

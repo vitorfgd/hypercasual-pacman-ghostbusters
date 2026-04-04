@@ -2,8 +2,8 @@ import type { DoorUnlockSystem } from '../doors/DoorUnlockSystem.ts'
 import type { GhostSystem } from '../ghost/GhostSystem.ts'
 import {
   GHOST_COLLISION_RADIUS,
-  MAX_ACTIVE_GHOSTS,
   ghostRoomVisualMul,
+  maxActiveGhostsForRoomProgress,
   type GhostSpawnSpec,
 } from '../ghost/ghostConfig.ts'
 import {
@@ -126,7 +126,12 @@ export class BossRoomController {
   }
 
   private trySpawnMinion(): void {
-    if (this.ghostSystem.getActiveGhostCount() >= MAX_ACTIVE_GHOSTS) return
+    if (
+      this.ghostSystem.getActiveGhostCount() >=
+      maxActiveGhostsForRoomProgress(NORMAL_ROOM_COUNT)
+    ) {
+      return
+    }
     if (
       this.ghostSystem.countMinionGhostsInRoom(NORMAL_ROOM_COUNT) >=
       BOSS_MINION_CAP

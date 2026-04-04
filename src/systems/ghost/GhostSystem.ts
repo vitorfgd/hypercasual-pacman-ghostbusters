@@ -162,6 +162,8 @@ export class GhostSystem {
   /** Run-wide modifier (e.g. Spectral bargain). Applied after per-room `speedMul`. */
   private runtimeSpeedMul = 1
   private visionAggroEvents = 0
+  private readonly visionAggroPositions: { x: number; z: number }[] = []
+  private readonly chaseLostPositions: { x: number; z: number }[] = []
 
   private readonly spawnsByRoom: readonly (readonly GhostSpawnSpec[])[]
   private readonly spawnedRoomIndices = new Set<number>()
@@ -308,6 +310,18 @@ export class GhostSystem {
     return n
   }
 
+  consumeVisionAggroPositions(): { x: number; z: number }[] {
+    const out = this.visionAggroPositions.slice()
+    this.visionAggroPositions.length = 0
+    return out
+  }
+
+  consumeChaseLostPositions(): { x: number; z: number }[] {
+    const out = this.chaseLostPositions.slice()
+    this.chaseLostPositions.length = 0
+    return out
+  }
+
   /** Runtime spawn (e.g. haunted clutter). Uses the same `Ghost` behavior as map spawns. */
   spawnGhost(spec: GhostSpawnSpec): number {
     this.ghosts.push(
@@ -409,6 +423,16 @@ export class GhostSystem {
       )
       if (g.consumeVisionAggroTriggered()) {
         this.visionAggroEvents += 1
+        this.visionAggroPositions.push({
+          x: g.root.position.x,
+          z: g.root.position.z,
+        })
+      }
+      if (g.consumeChaseLostTriggered()) {
+        this.chaseLostPositions.push({
+          x: g.root.position.x,
+          z: g.root.position.z,
+        })
       }
       if (
         !g.isRoomClearPurging() &&
@@ -599,6 +623,7 @@ class Ghost {
   /** After hunt ends, cone cannot re-trigger for this long. */
   private visionCooldownRemain = 0
   private visionAggroTriggered = false
+  private chaseLostTriggered = false
   private visionDebugLine: Line | null = null
   private visionCellGroup: Group | null = null
   private visionCellMeshes: Mesh[] = []
@@ -704,6 +729,12 @@ class Ghost {
     return triggered
   }
 
+  consumeChaseLostTriggered(): boolean {
+    const triggered = this.chaseLostTriggered
+    this.chaseLostTriggered = false
+    return triggered
+  }
+
   activate(): void {
     if (this.active) return
     this.active = true
@@ -723,6 +754,7 @@ class Ghost {
     this.chaseThrottle = 0
     this.huntBurstRemain = 0
     this.visionCooldownRemain = 0
+    this.chaseLostTriggered = false
     this.smoothedTx = 0
     this.smoothedTz = 1
     this.pickWanderTimer()
@@ -1326,6 +1358,7 @@ class Ghost {
         this.huntBurstRemain <= 0
       ) {
         this.state = 'wander'
+        this.chaseLostTriggered = true
         this.chaseWindupRemain = 0
         this.visionCooldownRemain = GHOST_VISION_COOLDOWN_SEC
         this.pickWanderTimer()
@@ -1334,6 +1367,7 @@ class Ghost {
 
       if (this.state === 'chase' && dist > GHOST_HUNT_ABORT_RANGE) {
         this.state = 'wander'
+        this.chaseLostTriggered = true
         this.huntBurstRemain = 0
         this.chaseWindupRemain = 0
         this.visionCooldownRemain = GHOST_VISION_COOLDOWN_SEC

@@ -119,4 +119,35 @@ export class WorldCollision {
     const boxes = this.allWallBoxes()
     return !segmentIntersectWallAabbs(x0, z0, x1, z1, boxes, samples)
   }
+
+  /**
+   * True when a circle can move along the segment without being pushed by world colliders.
+   * Used by grid-nav so blocked directions do not start a segment and jitter against walls.
+   */
+  canTraverseCircleXZ(
+    x0: number,
+    z0: number,
+    x1: number,
+    z1: number,
+    radius: number,
+    ignoreBaseWallColliders = false,
+    samples = 6,
+  ): boolean {
+    const n = Math.max(2, Math.floor(samples))
+    for (let i = 1; i <= n; i++) {
+      const t = i / n
+      const px = x0 + (x1 - x0) * t
+      const pz = z0 + (z1 - z0) * t
+      const resolved = this.resolveCircleXZ(
+        px,
+        pz,
+        radius,
+        ignoreBaseWallColliders,
+      )
+      if (Math.hypot(resolved.x - px, resolved.z - pz) > 1e-3) {
+        return false
+      }
+    }
+    return true
+  }
 }

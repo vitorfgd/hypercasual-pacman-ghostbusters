@@ -44,11 +44,42 @@ body {
   display: flex;
 }
 
+.game-loading__panel {
+  max-width: min(90vw, 34rem);
+  padding: 1.2rem 1.4rem;
+  border-radius: 18px;
+  background: linear-gradient(
+    180deg,
+    rgba(16, 22, 34, 0.9) 0%,
+    rgba(8, 12, 20, 0.96) 100%
+  );
+  border: 1px solid rgba(150, 228, 255, 0.14);
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.game-loading__eyebrow {
+  margin: 0 0 0.45rem;
+  font: 800 clamp(11px, 2.2vw, 13px) system-ui, sans-serif;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(147, 239, 255, 0.78);
+}
+
+.game-loading__title {
+  margin: 0 0 0.7rem;
+  font: 900 clamp(22px, 5.6vw, 30px) system-ui, sans-serif;
+  line-height: 1.05;
+  color: #eef5ff;
+  text-shadow: 0 2px 16px rgba(80, 120, 255, 0.24);
+}
+
 .game-loading__text {
-  margin: 0;
-  padding: 0 24px;
-  text-align: center;
+  margin: 0.45rem 0 0;
+  text-align: left;
   text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
+  line-height: 1.5;
 }
 
 /*
@@ -141,6 +172,30 @@ body {
   animation: gvxShakeHard 0.28s ease-out;
 }
 
+#game-viewport.game-viewport--pulse-launch {
+  animation: gvxLaunch 0.2s ease-out;
+}
+
+#game-viewport.game-viewport--pulse-turn {
+  animation: gvxTurnPulse 0.18s ease-out;
+}
+
+#game-viewport.game-viewport--pulse-door {
+  animation: gvxDoorPulse 0.2s ease-out;
+}
+
+#game-viewport.game-viewport--pulse-room-entry {
+  animation: gvxRoomEntryPulse 0.26s ease-out;
+}
+
+#game-viewport.game-viewport--pulse-room-clear {
+  animation: gvxRoomClearPulse 0.34s ease-out;
+}
+
+#game-viewport.game-viewport--pulse-danger {
+  animation: gvxDangerPulse 0.24s ease-out;
+}
+
 /** Pac-Man-style power mode — cool rim + slight lift (camera also nudges). */
 #game-viewport.game-viewport--power-mode::before {
   content: '';
@@ -153,6 +208,65 @@ body {
     inset 0 0 100px rgba(0, 220, 255, 0.18),
     inset 0 -20px 60px rgba(120, 0, 200, 0.12);
   mix-blend-mode: screen;
+}
+
+#game-viewport.game-viewport--power-burst::after,
+#game-viewport.game-viewport--pulse-room-entry::before,
+#game-viewport.game-viewport--pulse-door::before,
+#game-viewport.game-viewport--pulse-danger::before,
+#game-viewport.game-viewport--pulse-room-clear::before,
+#game-viewport.game-viewport--boss-intro::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+#game-viewport.game-viewport--power-burst::after {
+  background:
+    radial-gradient(circle at 50% 48%, rgba(135, 250, 255, 0.34), transparent 26%),
+    radial-gradient(circle at 50% 50%, rgba(56, 152, 255, 0.18), transparent 52%);
+  animation: gvxPowerBurst 0.42s ease-out;
+}
+
+#game-viewport.game-viewport--pulse-room-entry::before {
+  background:
+    radial-gradient(circle at 50% 52%, rgba(118, 255, 222, 0.14), transparent 28%),
+    linear-gradient(180deg, rgba(70, 255, 220, 0.14), transparent 48%);
+  animation: gvxOverlayFade 0.34s ease-out;
+}
+
+#game-viewport.game-viewport--pulse-door::before {
+  background:
+    linear-gradient(180deg, rgba(255, 232, 156, 0.2), transparent 34%),
+    radial-gradient(circle at 50% 68%, rgba(104, 255, 220, 0.14), transparent 24%);
+  animation: gvxOverlayFade 0.24s ease-out;
+}
+
+#game-viewport.game-viewport--pulse-danger::before {
+  background: radial-gradient(
+    ellipse 78% 72% at 50% 50%,
+    transparent 38%,
+    rgba(255, 118, 144, 0.12) 74%,
+    rgba(255, 82, 126, 0.22) 100%
+  );
+  animation: gvxOverlayFade 0.24s ease-out;
+}
+
+#game-viewport.game-viewport--pulse-room-clear::before {
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 220, 120, 0.2), transparent 28%),
+    radial-gradient(circle at 50% 50%, rgba(120, 255, 210, 0.16), transparent 56%);
+  animation: gvxOverlayFade 0.42s ease-out;
+}
+
+#game-viewport.game-viewport--boss-intro::before {
+  background:
+    radial-gradient(circle at 50% 46%, rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.48)),
+    radial-gradient(circle at 50% 52%, rgba(118, 255, 225, 0.12), transparent 28%);
+  animation: gvxBossIntro 0.62s ease-out;
 }
 
 @keyframes gvxShake {
@@ -184,6 +298,107 @@ body {
   }
   70% {
     transform: translate(0.8px, -0.5px);
+  }
+}
+
+@keyframes gvxLaunch {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  35% {
+    transform: translateY(-2px) scale(1.012);
+  }
+}
+
+@keyframes gvxTurnPulse {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  35% {
+    transform: translateX(1.2px);
+  }
+  70% {
+    transform: translateX(-0.8px);
+  }
+}
+
+@keyframes gvxDoorPulse {
+  0%,
+  100% {
+    transform: translateY(0) scale(1);
+  }
+  38% {
+    transform: translateY(1.4px) scale(0.996);
+  }
+}
+
+@keyframes gvxRoomEntryPulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  34% {
+    transform: scale(1.012);
+  }
+}
+
+@keyframes gvxRoomClearPulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.016);
+  }
+}
+
+@keyframes gvxDangerPulse {
+  0%,
+  100% {
+    transform: scale(1);
+  }
+  38% {
+    transform: scale(1.008);
+  }
+}
+
+@keyframes gvxOverlayFade {
+  0% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes gvxPowerBurst {
+  0% {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.04);
+  }
+}
+
+@keyframes gvxBossIntro {
+  0% {
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
   }
 }
 
@@ -348,6 +563,18 @@ body {
     transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+.room-entry-banner::before {
+  content: '';
+  position: absolute;
+  inset: -14px -22px;
+  z-index: -1;
+  border-radius: 999px;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(110, 255, 216, 0.16), transparent 62%),
+    linear-gradient(90deg, transparent, rgba(255, 235, 170, 0.1), transparent);
+  opacity: 0.9;
+}
+
 .room-entry-banner--show {
   opacity: 1;
   transform: translate(-50%, 0) scale(1);
@@ -356,6 +583,26 @@ body {
 .room-entry-banner--out {
   opacity: 0;
   transform: translate(-50%, -16px) scale(1.04);
+}
+
+.room-entry-banner--fast {
+  top: clamp(13%, 16vh, 19%);
+}
+
+.room-entry-banner--fast .room-entry-banner__title {
+  letter-spacing: 0.18em;
+}
+
+.room-entry-banner--endless::before {
+  background:
+    radial-gradient(circle at 50% 50%, rgba(90, 255, 240, 0.18), transparent 62%),
+    linear-gradient(90deg, transparent, rgba(88, 160, 255, 0.12), transparent);
+}
+
+.room-entry-banner--boss::before {
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 135, 170, 0.14), transparent 62%),
+    linear-gradient(90deg, transparent, rgba(255, 214, 120, 0.1), transparent);
 }
 
 .room-entry-banner__title {
@@ -411,6 +658,14 @@ body {
 .hud-room-clean--safe {
   background: rgba(10, 16, 22, 0.72);
   border-color: rgba(255, 220, 150, 0.18);
+}
+
+.hud-room-clean--urgent {
+  border-color: rgba(255, 186, 120, 0.42);
+  box-shadow:
+    0 0 0 1px rgba(255, 188, 126, 0.12),
+    0 0 18px rgba(255, 150, 88, 0.12);
+  animation: hudRoomCleanUrgent 0.72s ease-out;
 }
 
 .hud-room-clean__row {
@@ -1457,6 +1712,10 @@ body {
     border-color 0.14s ease,
     box-shadow 0.14s ease,
     filter 0.14s ease;
+  opacity: 0;
+  transform: translateY(12px) scale(0.97);
+  animation: roomUpgradeCardReveal 0.38s cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: var(--upgrade-stagger-delay, 0ms);
 }
 
 .room-upgrade-card:hover {
@@ -1490,6 +1749,17 @@ body {
   color: rgba(190, 200, 225, 0.82);
 }
 
+@keyframes roomUpgradeCardReveal {
+  0% {
+    opacity: 0;
+    transform: translateY(12px) scale(0.97);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
 /* Ghost hit i-frames — subtle frame cue (with shirt blink on character) */
 #game-viewport.game-viewport--ghost-invuln::after {
   content: '';
@@ -1519,6 +1789,7 @@ body {
   text-shadow: 0 1px 8px rgba(0, 0, 0, 0.55);
   pointer-events: none;
   opacity: 0;
+  --float-rise-px: 18px;
   transform: translate(-50%, 0) scale(0.85);
   transition: opacity 0.12s ease-out, transform 0.12s ease-out;
 }
@@ -1530,7 +1801,7 @@ body {
 
 .float-hud.float-hud--out {
   opacity: 0;
-  transform: translate(-50%, -18px) scale(0.92);
+  transform: translate(-50%, calc(var(--float-rise-px) * -1)) scale(0.92);
 }
 
 .float-hud--pickup {
@@ -1564,6 +1835,57 @@ body {
   text-shadow:
     0 0 16px rgba(120, 200, 255, 0.75),
     0 2px 10px rgba(0, 0, 0, 0.55);
+}
+
+.float-hud--combo {
+  color: #fff0a2;
+  font: 900 clamp(18px, 5vw, 26px) system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  text-shadow:
+    0 0 14px rgba(255, 214, 96, 0.84),
+    0 0 28px rgba(255, 140, 32, 0.34),
+    0 2px 10px rgba(0, 0, 0, 0.56);
+}
+
+.float-hud--urgency {
+  color: #ffd4a1;
+  font: 900 clamp(15px, 4.3vw, 21px) system-ui, sans-serif;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-shadow:
+    0 0 12px rgba(255, 176, 92, 0.78),
+    0 2px 10px rgba(0, 0, 0, 0.56);
+}
+
+.float-hud--spawn {
+  color: #93fff0;
+  font: 900 clamp(15px, 4vw, 20px) system-ui, sans-serif;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  text-shadow:
+    0 0 12px rgba(90, 255, 220, 0.72),
+    0 2px 10px rgba(0, 0, 0, 0.56);
+}
+
+.float-hud--question {
+  color: #d4f8ff;
+  font: 900 clamp(16px, 4.4vw, 22px) system-ui, sans-serif;
+  text-shadow:
+    0 0 12px rgba(160, 230, 255, 0.7),
+    0 2px 10px rgba(0, 0, 0, 0.56);
+}
+
+@keyframes hudRoomCleanUrgent {
+  0% {
+    transform: scale(1);
+  }
+  45% {
+    transform: scale(1.03);
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 
 /* Single block: title + subtitle stack (no overlap) */

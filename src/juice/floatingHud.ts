@@ -4,6 +4,7 @@ export type FloatingHudTextOpts = {
   durationSec?: number
   leftPct?: number
   topPct?: number
+  risePx?: number
 }
 
 /** Short-lived floating text in the viewport (e.g. +1, pickup toasts). */
@@ -27,6 +28,9 @@ export function spawnFloatingHudText(
   el.textContent = text
   el.style.left = `${left}%`
   el.style.top = `${top}%`
+  if (opts?.risePx !== undefined) {
+    el.style.setProperty('--float-rise-px', `${opts.risePx}px`)
+  }
   viewport.appendChild(el)
   requestAnimationFrame(() => {
     el.classList.add('float-hud--show')
@@ -71,14 +75,19 @@ export function spawnRoomClearedBanner(
 }
 
 const ROOM_ENTRY_SEC = 1.85
+const ROOM_ENTRY_FAST_SEC = 1.2
 
 export function spawnRoomEntryBanner(
   viewport: HTMLElement,
   titleText: string,
   subtitleText: string,
+  opts?: { fast?: boolean; emphasis?: 'normal' | 'endless' | 'boss' },
 ): void {
   const el = document.createElement('div')
   el.className = 'room-entry-banner'
+  if (opts?.fast) el.classList.add('room-entry-banner--fast')
+  if (opts?.emphasis === 'endless') el.classList.add('room-entry-banner--endless')
+  if (opts?.emphasis === 'boss') el.classList.add('room-entry-banner--boss')
   el.setAttribute('aria-live', 'polite')
 
   const title = document.createElement('div')
@@ -97,5 +106,5 @@ export function spawnRoomEntryBanner(
   setTimeout(() => {
     el.classList.add('room-entry-banner--out')
     setTimeout(() => el.remove(), 280)
-  }, ROOM_ENTRY_SEC * 1000)
+  }, (opts?.fast ? ROOM_ENTRY_FAST_SEC : ROOM_ENTRY_SEC) * 1000)
 }

@@ -119,9 +119,11 @@ export type GhostSpawnSpec = {
   role?: GhostSpawnRole
 }
 
-/** Per-room ghost counts (ROOM_1 … ROOM_N). Last room is boss (0). Max tier = 3. */
+/** Per-room ghost counts (ROOM_1 … ROOM_N). Last room is boss (0). */
 export const GHOSTS_PER_ROOM: readonly number[] = (() => {
-  const pattern = [1, 2, 2, 2, 3, 3, 3, 3, 3, 0]
+  const pattern = Array.from({ length: NORMAL_ROOM_COUNT }, (_, i) =>
+    ghostSpawnCountForRoomIndex(i + 1),
+  )
   if (pattern.length !== NORMAL_ROOM_COUNT) {
     throw new Error('GHOSTS_PER_ROOM length must match NORMAL_ROOM_COUNT')
   }
@@ -165,24 +167,43 @@ export const WISP_COLLECT_GHOST_CHANCE_MAX = 0.18
 /** Min world distance from player for random grid spawn (fallback picks farther cells if cramped). */
 export const WISP_GHOST_SPAWN_MIN_PLAYER_DIST = 1.85
 
+function roomProgress01(roomIndex: number): number {
+  const capped = Math.max(1, Math.min(NORMAL_ROOM_COUNT, Math.floor(roomIndex)))
+  return (capped - 1) / Math.max(1, NORMAL_ROOM_COUNT - 1)
+}
+
+export function ghostSpawnCountForRoomIndex(roomIndex: number): number {
+  if (roomIndex >= NORMAL_ROOM_COUNT) return 0
+  const t = roomProgress01(roomIndex)
+  return 1 + Math.floor(t * 4.2)
+}
+
+export function maxActiveGhostsForRoomProgress(roomIndex: number): number {
+  const capped = Math.max(1, Math.floor(roomIndex))
+  const base =
+    5 + Math.floor(roomProgress01(Math.min(capped, NORMAL_ROOM_COUNT)) * 5.1)
+  if (capped <= NORMAL_ROOM_COUNT) return base
+  return Math.min(14, base + Math.floor((capped - NORMAL_ROOM_COUNT) / 2))
+}
+
 export function wispCollectGhostSpawnProbability(
   wispsCollectedInRoomAfterThisPickup: number,
   totalWispsInRoom: number,
   hauntedChanceBonus: number,
+  roomIndex: number,
 ): number {
   if (totalWispsInRoom <= 0) return 0
   const t = Math.min(
     1,
     Math.max(0, wispsCollectedInRoomAfterThisPickup / totalWispsInRoom),
   )
+  const depthBoost = roomProgress01(roomIndex) * 0.08
   const p =
     WISP_COLLECT_GHOST_CHANCE_MIN +
-    t * (WISP_COLLECT_GHOST_CHANCE_MAX - WISP_COLLECT_GHOST_CHANCE_MIN)
+    t * (WISP_COLLECT_GHOST_CHANCE_MAX - WISP_COLLECT_GHOST_CHANCE_MIN) +
+    depthBoost
   return Math.min(0.94, p + hauntedChanceBonus)
 }
-
-/** Stop spawning new ghosts from haunted pickups once this many are active (chase/wander). */
-export const MAX_ACTIVE_GHOSTS = 9
 
 /** Mesh scale multiplier at first vs last chain room (applied on top of `GHOST_VISUAL_SCALE`). */
 const GHOST_ROOM_VISUAL_SCALE_MIN = 0.82
