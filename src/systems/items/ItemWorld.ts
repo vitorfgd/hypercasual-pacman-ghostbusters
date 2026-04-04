@@ -421,6 +421,49 @@ export class ItemWorld {
     }
   }
 
+  async withAllRoomContentVisibleAsync<T>(work: () => Promise<T>): Promise<T> {
+    const prevVisible = new Map<Object3D, boolean>()
+    const prevClutterAlpha = new Map<Object3D, number>()
+    const prevClutterInteractable = new Map<Object3D, boolean>()
+
+    for (const meshes of this.gridPickupMeshesByRoom.values()) {
+      for (const mesh of meshes) {
+        prevVisible.set(mesh, mesh.visible)
+        mesh.visible = true
+      }
+    }
+
+    for (const meshes of this.clutterMeshesByRoom.values()) {
+      for (const mesh of meshes) {
+        prevVisible.set(mesh, mesh.visible)
+        prevClutterAlpha.set(
+          mesh,
+          (mesh.userData.clutterRevealAlpha as number | undefined) ?? 1,
+        )
+        prevClutterInteractable.set(
+          mesh,
+          mesh.userData.clutterWorldInteractable === true,
+        )
+        applyClutterRevealOpacity(mesh, 1)
+        mesh.userData.clutterWorldInteractable = true
+      }
+    }
+
+    try {
+      return await work()
+    } finally {
+      for (const [mesh, alpha] of prevClutterAlpha) {
+        applyClutterRevealOpacity(mesh, alpha)
+      }
+      for (const [mesh, interactable] of prevClutterInteractable) {
+        mesh.userData.clutterWorldInteractable = interactable
+      }
+      for (const [mesh, visible] of prevVisible) {
+        mesh.visible = visible
+      }
+    }
+  }
+
   /**
    * Pre-allocate clutter visuals to reduce hitches when many spawns appear at once.
    */

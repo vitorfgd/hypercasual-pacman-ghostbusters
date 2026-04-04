@@ -1,5 +1,14 @@
 import type { Game } from '../../core/Game.ts'
 
+/** Two rAFs: first schedules layout/style, second runs after the next paint (loading overlay visible). */
+function yieldForLoadingPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve())
+    })
+  })
+}
+
 export type MountGameOptions = {
   /** Called when the player chooses Retry on the run-failed screen (dispose + remount from host). */
   onRunFailedRetry?: () => void | Promise<void>
@@ -84,10 +93,14 @@ export async function mountGame(
   }
 
   const { Game } = await gameModPromise
-  return new Game(
+  const game = new Game(
     host,
     ghostLoaded.ok ? ghostLoaded.template : null,
     playerLoaded.ok ? playerLoaded.template : null,
     options?.onRunFailedRetry,
   )
+  await yieldForLoadingPaint()
+  await game.warmGpuForRoomTransitions()
+  await game.primePresentPipelinesBeforeGameplay(6)
+  return game
 }

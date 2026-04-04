@@ -119,6 +119,21 @@ export class RoomLockCoverSystem {
     }
   }
 
+  async withAllCoversHiddenAsync<T>(work: () => Promise<T>): Promise<T> {
+    const prevVisible = new Map<Mesh, boolean>()
+    for (const mesh of this.meshes.values()) {
+      prevVisible.set(mesh, mesh.visible)
+      mesh.visible = false
+    }
+    try {
+      return await work()
+    } finally {
+      for (const [mesh, visible] of prevVisible) {
+        mesh.visible = visible
+      }
+    }
+  }
+
   dispose(): void {
     this.root.removeFromParent()
     for (const mesh of this.meshes.values()) {

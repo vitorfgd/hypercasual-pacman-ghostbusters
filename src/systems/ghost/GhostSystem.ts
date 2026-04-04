@@ -282,6 +282,21 @@ export class GhostSystem {
     }
   }
 
+  async withAllGhostsVisibleAsync<T>(work: () => Promise<T>): Promise<T> {
+    const prevVisible = new Map<Ghost, boolean>()
+    for (const ghost of this.ghosts) {
+      prevVisible.set(ghost, ghost.root.visible)
+      ghost.root.visible = true
+    }
+    try {
+      return await work()
+    } finally {
+      for (const [ghost, visible] of prevVisible) {
+        ghost.root.visible = visible
+      }
+    }
+  }
+
   private flushPendingMapSpawns(): void {
     let n = 0
     while (

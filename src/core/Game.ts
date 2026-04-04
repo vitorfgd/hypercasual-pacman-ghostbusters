@@ -96,6 +96,7 @@ import {
 } from '../systems/world/mansionRoomData.ts'
 import { WorldCollision } from '../systems/world/WorldCollision.ts'
 import {
+  CAMERA_OFFSET_BASE,
   GHOST_HIT_SLOW_MO_SCALE,
   GHOST_HIT_SLOW_MO_SEC,
   POWER_MODE_DURATION_MAX_SEC,
@@ -115,6 +116,10 @@ import {
   spawnRoomEntryBanner,
 } from '../juice/floatingHud.ts'
 import {
+  playRoomClearFanfare,
+  playWispCollectPop,
+} from '../juice/gameplaySfx.ts'
+import {
   loadSavedProgressPresentState,
   recordPresentProgress,
   rewardDefById,
@@ -132,6 +137,7 @@ import {
   updateGhostHitBursts,
   type GhostHitBurstParticle,
 } from '../juice/ghostHitPelletBurst.ts'
+import { maybeLogRenderSpikeDiagnostics } from '../systems/debug/renderSpikeDebug.ts'
 import { PerfMonitor } from '../systems/debug/PerfMonitor.ts'
 import {
   DoorUnlockSystem,
@@ -191,7 +197,10 @@ type RoomLagAuditWindow = Window & {
 }
 
 type RoomLagAuditFrame = {
+  /** Main-thread CPU from frame start until just before `renderer.render` (excludes GPU). */
   totalMs: number
+  /** Time inside `renderer.render` (GPU + driver sync); the audit previously omitted this. */
+  renderMs: number
   trapFieldMs: number
   playerMs: number
   doorUnlockMs: number
@@ -649,7 +658,8 @@ export class Game {
         }
       },
       onDoorSlamShut: (doorIndex) => {
-        this.triggerDoorImpactJuice(doorIndex)
+        /** Next frame — avoids stacking burst/DOM work on the same frame as door slam + render. */
+        requestAnimationFrame(() => this.triggerDoorImpactJuice(doorIndex))
       },
     })
 
@@ -751,6 +761,7 @@ export class Game {
     this.roomCleanliness = new RoomCleanlinessSystem({
       wispTotalsByRoom: gridWispTotalsPerRoom,
       onRoomCleared: (roomId, doorIndex) => {
+        void playRoomClearFanfare()
         const idx = roomIndexFromId(roomId)
         if (idx === null || idx < 1) return
         this.beginRewardedRoomClear(roomId, doorIndex, idx)
@@ -771,7 +782,6 @@ export class Game {
     this.syncPlayerCharacterVisual(0)
     primeFloatingHudEffects(this.gameViewport)
     this.ghostSystem.prewarmAllFutureGhosts()
-    this.prewarmRoomTransitionCompile()
 
     this.player.getPosition(this.playerPos)
 
@@ -1111,6 +1121,7 @@ export class Game {
           }
         }
         if (item.type === 'wisp') {
+          void playWispCollectPop()
           this.triggerWispPickupJuice(
             pickupX,
             pickupZ,
@@ -1332,10 +1343,25 @@ export class Game {
         }
       }
 
-      if (auditEnabled) {
-        const nav = this.player.getNavDebugSnapshot()
+      const lagAuditNav = auditEnabled ? this.player.getNavDebugSnapshot() : null
+      const lagAuditCpuMs = auditEnabled
+        ? performance.now() - frameAuditStartMs
+        : 0
+
+      const renderStartMs = performance.now()
+      this.renderer.render(scene, this.camera)
+      const renderMs = performance.now() - renderStartMs
+
+      maybeLogRenderSpikeDiagnostics(this.renderer, scene, {
+        renderMs,
+        area: this.roomSystem.getAreaAt(this.playerPos.x, this.playerPos.z),
+        room: this.roomSystem.getRoomAt(this.playerPos.x, this.playerPos.z),
+      })
+
+      if (auditEnabled && lagAuditNav) {
         this.logRoomLagFrame({
-          totalMs: performance.now() - frameAuditStartMs,
+          totalMs: lagAuditCpuMs,
+          renderMs,
           trapFieldMs,
           playerMs,
           doorUnlockMs,
@@ -1346,11 +1372,9 @@ export class Game {
           areaAfter: this.roomSystem.getAreaAt(this.playerPos.x, this.playerPos.z),
           roomBefore: roomBeforeFrame,
           roomAfter: this.roomSystem.getRoomAt(this.playerPos.x, this.playerPos.z),
-          nav,
+          nav: lagAuditNav,
         })
       }
-
-      this.renderer.render(scene, this.camera)
       this.perf.endFrame(this.renderer.info.render.calls, pickupsThisFrame)
     }
 
@@ -1784,36 +1808,41 @@ export class Game {
     const endless = roomIndex > NORMAL_ROOM_COUNT
     this.roomEntrySlowMoRemain = endless ? 0.09 : 0.12
     this.roomEntryTrailRemain = endless ? 0.5 : 0.72
-    spawnRoomEntryBanner(
-      this.gameViewport,
-      `Room ${roomIndex}`,
-      endless
-        ? 'The mansion shifts again'
-        : roomIndex === NORMAL_ROOM_COUNT
-          ? 'One more room. Stay alive.'
-          : roomIndex === 2
-            ? 'Stay out of their cone'
-            : 'Sweep fast, stay moving',
-      {
+    const titleText = `Room ${roomIndex}`
+    const subtitleText = endless
+      ? 'The mansion shifts again'
+      : roomIndex === NORMAL_ROOM_COUNT
+        ? 'One more room. Stay alive.'
+        : roomIndex === 2
+          ? 'Stay out of their cone'
+          : 'Sweep fast, stay moving'
+    const emphasis: 'normal' | 'endless' | 'boss' = endless
+      ? 'endless'
+      : roomIndex === NORMAL_ROOM_COUNT
+        ? 'boss'
+        : 'normal'
+    /** Defer DOM + extra particles to the next frame so the door-crossing sim frame stays lighter. */
+    requestAnimationFrame(() => {
+      spawnRoomEntryBanner(this.gameViewport, titleText, subtitleText, {
         fast: true,
-        emphasis: endless ? 'endless' : roomIndex === NORMAL_ROOM_COUNT ? 'boss' : 'normal',
-      },
-    )
-    this.triggerEctoGlow(240)
-    this.pulseViewportClass('game-viewport--pulse-room-entry', 280)
-    if (doorIndex !== undefined) {
-      const zDoor = getDoorBlockerZ(doorIndex)
-      this.burstSpawnScratch.set(0, 0.04, zDoor - 0.35)
-      this.burstParticles.push(
-        ...spawnDirectionalFloorPulse(this.burstGroup, this.burstSpawnScratch, 0, -1, {
-          color: endless ? 0x77d8ff : 0x74ffd5,
-          opacity: 0.22,
-          spacing: 1.05,
-          count: 3,
-          lifeSec: 0.28,
-        }),
-      )
-    }
+        emphasis,
+      })
+      this.triggerEctoGlow(240)
+      this.pulseViewportClass('game-viewport--pulse-room-entry', 280)
+      if (doorIndex !== undefined) {
+        const zDoor = getDoorBlockerZ(doorIndex)
+        this.burstSpawnScratch.set(0, 0.04, zDoor - 0.35)
+        this.burstParticles.push(
+          ...spawnDirectionalFloorPulse(this.burstGroup, this.burstSpawnScratch, 0, -1, {
+            color: endless ? 0x77d8ff : 0x74ffd5,
+            opacity: 0.22,
+            spacing: 1.05,
+            count: 3,
+            lifeSec: 0.28,
+          }),
+        )
+      }
+    })
   }
 
   private triggerGhostAggroJuice(
@@ -2119,7 +2148,8 @@ export class Game {
       (frame.areaAfter === 'ROOM_1' || frame.areaAfter === 'ROOM_2')
     const correctionSpike =
       nav.collisionCorrectionTriggered || nav.collisionCorrectionDist >= 0.08
-    const frameSpike = frame.totalMs >= thresholdMs
+    const frameSpike =
+      frame.totalMs >= thresholdMs || frame.renderMs >= thresholdMs
     const hardTransitionReset = nav.hadResetThisStep && areaChanged
     const shouldLog =
       transitionIntoTrackedRoom ||
@@ -2132,7 +2162,8 @@ export class Game {
     if (!shouldLog) return
 
     console.info('[room lag audit] frame', {
-      totalMs: Number(frame.totalMs.toFixed(2)),
+      cpuBeforeRenderMs: Number(frame.totalMs.toFixed(2)),
+      renderMs: Number(frame.renderMs.toFixed(2)),
       trapFieldMs: Number(frame.trapFieldMs.toFixed(2)),
       playerMs: Number(frame.playerMs.toFixed(2)),
       doorUnlockMs: Number(frame.doorUnlockMs.toFixed(2)),
@@ -2175,13 +2206,19 @@ export class Game {
     })
   }
 
-  private prewarmRoomTransitionCompile(): void {
+  /**
+   * Off-screen + full-frame GPU warm-up. Call from bootstrap while the loading screen is visible.
+   * Uses `WebGLRenderer.compileAsync` so shader programs finish before gameplay (tiny RT passes
+   * alone miss real framebuffer + shadow-map paths).
+   */
+  async warmGpuForRoomTransitions(): Promise<void> {
     const compileCamera = this.camera.clone()
     const compilePos = new Vector3()
     const compileLookAt = new Vector3()
     const prewarmTarget = new WebGLRenderTarget(32, 32)
     const previousTarget = this.renderer.getRenderTarget()
     const previousShadowAutoUpdate = this.renderer.shadowMap.autoUpdate
+
     const compileView = (
       x: number,
       y: number,
@@ -2200,6 +2237,18 @@ export class Game {
       this.renderer.render(this.scene, compileCamera)
     }
 
+    const applyGameplayTopDown = (cam: PerspectiveCamera, px: number, pz: number): void => {
+      const eyeY = 0.02
+      cam.position.set(
+        px + CAMERA_OFFSET_BASE.x,
+        eyeY + CAMERA_OFFSET_BASE.y,
+        pz + CAMERA_OFFSET_BASE.z,
+      )
+      cam.lookAt(px, eyeY, pz)
+      cam.updateProjectionMatrix()
+      cam.updateMatrixWorld(true)
+    }
+
     const roomIds: RoomId[] = [
       'SAFE_CENTER',
       ...Array.from(
@@ -2210,9 +2259,9 @@ export class Game {
 
     try {
       this.renderer.shadowMap.autoUpdate = true
-      this.roomLockCovers.withAllCoversHidden(() => {
-        this.itemWorld.withAllRoomContentVisible(() => {
-          this.ghostSystem.withAllGhostsVisible(() => {
+      await this.roomLockCovers.withAllCoversHiddenAsync(async () => {
+        await this.itemWorld.withAllRoomContentVisibleAsync(async () => {
+          await this.ghostSystem.withAllGhostsVisibleAsync(async () => {
             this.scene.updateMatrixWorld(true)
             this.camera.updateMatrixWorld(true)
             this.renderer.setRenderTarget(prewarmTarget)
@@ -2238,6 +2287,50 @@ export class Game {
               compileView(0, 8.1, zDoor + 6.1, 0, 1, zDoor - 2.1)
               compileView(0, 8.1, zDoor - 6.1, 0, 1, zDoor + 2.1)
             }
+
+            const b1 = this.roomSystem.getBounds('ROOM_1')
+            const r1cx = (b1.minX + b1.maxX) * 0.5
+            const r1cz = (b1.minZ + b1.maxZ) * 0.5
+            const gameplayTopDown = (px: number, pz: number): void => {
+              compileView(
+                px + CAMERA_OFFSET_BASE.x,
+                0.02 + CAMERA_OFFSET_BASE.y,
+                pz + CAMERA_OFFSET_BASE.z,
+                px,
+                0.02,
+                pz,
+              )
+            }
+            gameplayTopDown(0, -5.2)
+            gameplayTopDown(0, -8.95)
+            gameplayTopDown(0, b1.maxZ - 1.1)
+            gameplayTopDown(r1cx, r1cz)
+
+            /** Full-size draws + async compile — warms tone mapping, shadows, and shader completion. */
+            this.renderer.setRenderTarget(null)
+            applyGameplayTopDown(compileCamera, r1cx, r1cz)
+            try {
+              await this.renderer.compileAsync(this.scene, compileCamera)
+            } catch (e) {
+              console.warn('[gpu warm] compileAsync failed (continuing with renders)', e)
+            }
+
+            const poses: [number, number][] = [
+              [0, -5.2],
+              [0, -8.95],
+              [0, b1.maxZ - 1.1],
+              [r1cx, r1cz],
+            ]
+            for (const [px, pz] of poses) {
+              applyGameplayTopDown(compileCamera, px, pz)
+              this.renderer.render(this.scene, compileCamera)
+              this.renderer.render(this.scene, compileCamera)
+            }
+
+            this.cameraRig.update(0)
+            this.camera.updateMatrixWorld(true)
+            this.renderer.render(this.scene, this.camera)
+            this.renderer.render(this.scene, this.camera)
           })
         })
       })
@@ -2245,6 +2338,41 @@ export class Game {
       this.renderer.setRenderTarget(previousTarget)
       this.renderer.shadowMap.autoUpdate = previousShadowAutoUpdate
       prewarmTarget.dispose()
+    }
+
+    /**
+     * The hidden-cover warm path never draws room blackout shells (large transparent meshes).
+     * That blend path + full framebuffer present can stall the first time without this pass.
+     */
+    this.renderer.setRenderTarget(null)
+    this.roomLockCovers.update()
+    this.cameraRig.update(0)
+    this.syncPlayerCharacterVisual(0)
+    this.scene.updateMatrixWorld(true)
+    this.camera.updateMatrixWorld(true)
+    try {
+      await this.renderer.compileAsync(this.scene, this.camera)
+    } catch (e) {
+      console.warn('[gpu warm] compileAsync (blackout covers on) failed', e)
+    }
+    this.renderer.render(this.scene, this.camera)
+    this.renderer.render(this.scene, this.camera)
+  }
+
+  /**
+   * Spread full-resolution `render` calls across animation frames while the loading overlay is up,
+   * so driver/shader work is less likely to land on the first Corridor→Room1 frame.
+   */
+  async primePresentPipelinesBeforeGameplay(frameCount: number): Promise<void> {
+    const dt = 1 / 60
+    const n = Math.max(1, Math.floor(frameCount))
+    for (let i = 0; i < n; i++) {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      this.roomLockCovers.update()
+      this.cameraRig.update(dt)
+      this.syncPlayerCharacterVisual(dt)
+      this.scene.updateMatrixWorld(true)
+      this.renderer.render(this.scene, this.camera)
     }
   }
 

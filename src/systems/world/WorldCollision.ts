@@ -3,6 +3,26 @@ import { resolveCircleVsAabbs } from './collisionXZ.ts'
 import { MANSION_WALL_COLLIDERS } from './mansionWalls.ts'
 import { MANSION_WORLD_HALF } from './mansionGeometry.ts'
 
+function aabbListsEqual(
+  a: readonly AabbXZ[],
+  b: readonly AabbXZ[],
+): boolean {
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i++) {
+    const x = a[i]!
+    const y = b[i]!
+    if (
+      Math.abs(x.minX - y.minX) > 1e-9 ||
+      Math.abs(x.maxX - y.maxX) > 1e-9 ||
+      Math.abs(x.minZ - y.minZ) > 1e-9 ||
+      Math.abs(x.maxZ - y.maxZ) > 1e-9
+    ) {
+      return false
+    }
+  }
+  return true
+}
+
 function pointInsideAabbXZ(px: number, pz: number, b: AabbXZ): boolean {
   return px >= b.minX && px <= b.maxX && pz >= b.minZ && pz <= b.maxZ
 }
@@ -51,12 +71,14 @@ export class WorldCollision {
 
   /** Door blockers while locked — replaced each sync. */
   setExtraColliders(boxes: AabbXZ[]): void {
+    if (aabbListsEqual(this.extra, boxes)) return
     this.extra = boxes
     this.rebuildColliderCaches()
   }
 
   /** Runtime room structures (for example internal maze walls). */
   setStructureColliders(boxes: AabbXZ[]): void {
+    if (aabbListsEqual(this.structure, boxes)) return
     this.structure = boxes
     this.rebuildColliderCaches()
   }

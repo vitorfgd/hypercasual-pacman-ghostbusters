@@ -1,4 +1,5 @@
 import './style.css'
+import { startBackgroundMusic, stopBackgroundMusic } from './juice/backgroundMusic.ts'
 import { mountGame } from './systems/bootstrap/mountGame.ts'
 
 const host = document.querySelector<HTMLElement>('#game-viewport')
@@ -20,6 +21,7 @@ async function mountGameWithRetry(): Promise<void> {
 }
 
 try {
+  startBackgroundMusic()
   await mountGameWithRetry()
 } finally {
   loading?.classList.remove('game-loading--on')
@@ -27,5 +29,8 @@ try {
 }
 
 if (import.meta.hot) {
-  import.meta.hot.dispose(() => game?.dispose())
+  import.meta.hot.dispose(() => {
+    game?.dispose()
+    stopBackgroundMusic()
+  })
 }

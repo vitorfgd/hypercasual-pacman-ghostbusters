@@ -81,7 +81,7 @@ export function cloneGridTrapMesh(): Group | null {
     if (!(o instanceof Mesh)) return
     o.geometry = o.geometry.clone()
     o.material = cloneTrapMaterial(o.material)
-    o.castShadow = true
+    o.castShadow = false
     o.receiveShadow = true
     o.raycast = () => {}
   })

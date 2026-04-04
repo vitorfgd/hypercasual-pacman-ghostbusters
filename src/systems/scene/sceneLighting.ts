@@ -4,6 +4,7 @@ import {
   DirectionalLight,
   Fog,
   Mesh,
+  PlaneGeometry,
   Scene,
 } from 'three'
 
@@ -44,7 +45,7 @@ export function setupReadableSceneLighting(scene: Scene): void {
   moon.position.set(16, 26, 12)
   moon.castShadow = true
   moon.shadow.mapSize.set(1024, 1024)
-  moon.shadow.radius = 3
+  moon.shadow.radius = 2
   moon.shadow.bias = -0.00028
   moon.shadow.normalBias = 0.025
   const cam = moon.shadow.camera
@@ -69,14 +70,20 @@ export function setupReadableSceneLighting(scene: Scene): void {
   enableShadowCastReceiveOnMeshes(scene)
 }
 
+function isHorizontalFloorPlane(mesh: Mesh): boolean {
+  if (!(mesh.geometry instanceof PlaneGeometry)) return false
+  return Math.abs(mesh.rotation.x + Math.PI / 2) < 0.02
+}
+
 /**
- * Ensures world meshes participate in soft shadows (skips obvious UI/FX helpers via layers later if needed).
+ * Receive on all; cast only where it matters — horizontal floors add almost no visible shadow
+ * but multiply shadow-pass draw cost (many room + corridor planes).
  */
 function enableShadowCastReceiveOnMeshes(scene: Scene): void {
   scene.traverse((o) => {
     if (!(o instanceof Mesh)) return
     if (o.userData?.skipShadow === true) return
-    o.castShadow = true
     o.receiveShadow = true
+    o.castShadow = !isHorizontalFloorPlane(o)
   })
 }
