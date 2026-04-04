@@ -32,6 +32,11 @@ export class TrapFieldSystem {
 
   constructor(scene: Scene, placements: readonly TrapPlacement[]) {
     this.scene = scene
+    this.setPlacements(placements)
+  }
+
+  setPlacements(placements: readonly TrapPlacement[]): void {
+    this.clearTraps()
     for (const p of placements) {
       const root = this.buildVisual(p.x, p.z)
       this.scene.add(root)
@@ -43,6 +48,25 @@ export class TrapFieldSystem {
         root,
       })
     }
+  }
+
+  private clearTraps(): void {
+    for (const t of this.traps) {
+      if (t.root.userData.gridTrapGltf === true) {
+        disposeGridTrapClone(t.root)
+      } else {
+        t.root.removeFromParent()
+        t.root.traverse((o) => {
+          if (o instanceof Mesh) {
+            o.geometry.dispose()
+            const m = o.material
+            if (Array.isArray(m)) m.forEach((x) => x.dispose())
+            else m.dispose()
+          }
+        })
+      }
+    }
+    this.traps.length = 0
   }
 
   private buildVisual(x: number, z: number): Group {
@@ -87,21 +111,6 @@ export class TrapFieldSystem {
   }
 
   dispose(): void {
-    for (const t of this.traps) {
-      if (t.root.userData.gridTrapGltf === true) {
-        disposeGridTrapClone(t.root)
-      } else {
-        t.root.removeFromParent()
-        t.root.traverse((o) => {
-          if (o instanceof Mesh) {
-            o.geometry.dispose()
-            const m = o.material
-            if (Array.isArray(m)) m.forEach((x) => x.dispose())
-            else m.dispose()
-          }
-        })
-      }
-    }
-    this.traps.length = 0
+    this.clearTraps()
   }
 }

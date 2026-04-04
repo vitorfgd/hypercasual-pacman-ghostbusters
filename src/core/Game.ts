@@ -106,7 +106,6 @@ import {
 } from '../juice/juiceConfig.ts'
 import { spawnLifeLostImpact } from '../juice/lifeHudJuice.ts'
 import { showRunFailedOverlay } from '../juice/runFailedOverlay.ts'
-import { showRunSuccessOverlay } from '../juice/runSuccessOverlay.ts'
 import { PlayerMotionTrail } from '../juice/playerMotionTrail.ts'
 import {
   spawnFloatingHudText,
@@ -133,17 +132,25 @@ import {
   stackWeightSpeedMultiplierRelief,
 } from '../systems/stack/stackWeightConfig.ts'
 import { spawnGridWispsForPlans } from '../systems/grid/instantiateGridRoomContent.ts'
-import { spawnPowerPelletsForRun } from '../systems/grid/powerPelletSpawn.ts'
+import {
+  pickRiskyPowerPelletCell,
+  spawnPowerPelletsForRun,
+} from '../systems/grid/powerPelletSpawn.ts'
 import { pickGridGhostSpawnXZ } from '../systems/grid/gridGhostSpawn.ts'
 import {
   flattenMazeWallPlacements,
   flattenTrapPlacements,
   planAllRoomGrids,
+  planRuntimeRoomGrid,
+  type MazeWallPlacement,
   type RoomGridPlan,
 } from '../systems/grid/planRoomGrids.ts'
 import { ROOM_GRID_COLS, ROOM_GRID_ROWS } from '../systems/grid/gridConfig.ts'
 import { cellCenterWorld } from '../systems/grid/roomGridGeometry.ts'
-import { TrapFieldSystem } from '../systems/traps/TrapFieldSystem.ts'
+import {
+  TrapFieldSystem,
+  type TrapPlacement,
+} from '../systems/traps/TrapFieldSystem.ts'
 import { GridMazeWallSystem } from '../systems/world/GridMazeWallSystem.ts'
 import { BossRoomController } from '../systems/boss/BossRoomController.ts'
 import {
@@ -234,7 +241,6 @@ export class Game {
   private lives = PLAYER_MAX_LIVES
   private gameOver = false
   private runFailedCleanup: (() => void) | null = null
-  private runSuccessCleanup: (() => void) | null = null
   private readonly bossRoom: BossRoomController
   private runStatRoomsCleared = 0
   private runStatWispsCollected = 0
@@ -255,7 +261,16 @@ export class Game {
   private readonly mazeWalls: GridMazeWallSystem
   private readonly roomGridPlans: ReadonlyMap<NormalRoomId, RoomGridPlan>
   private readonly gridWispTotalsPerRoom: ReadonlyMap<RoomId, number>
+  private readonly baseTrapPlacements: readonly TrapPlacement[]
+  private readonly baseMazeWallPlacements: readonly MazeWallPlacement[]
   private readonly wispsCollectedPerRoom = new Map<RoomId, number>()
+  private endlessModeActive = false
+  private endlessCurrentRoomNumber = NORMAL_ROOM_COUNT
+  private endlessRoomWispTotal = 0
+  private endlessRoomWispsCollected = 0
+  private endlessRoomCleared = false
+  private endlessCurrentWispIds: string[] = []
+  private endlessCurrentPowerPelletId: string | null = null
   private readonly playerTrail: PlayerMotionTrail
   private ghostHitSlowMoRemain = 0
   private hudStackHum: HTMLElement | null = null
@@ -578,14 +593,16 @@ export class Game {
       planAllRoomGrids(this.roomSystem, this.runRandom)
     this.roomGridPlans = roomGridPlans
     this.gridWispTotalsPerRoom = gridWispTotalsPerRoom
+    this.baseMazeWallPlacements = flattenMazeWallPlacements(roomGridPlans)
+    this.baseTrapPlacements = flattenTrapPlacements(roomGridPlans)
     this.mazeWalls = new GridMazeWallSystem(
       this.scene,
-      flattenMazeWallPlacements(roomGridPlans),
+      this.baseMazeWallPlacements,
     )
     this.worldCollision.setStructureColliders(this.mazeWalls.getColliders())
     this.trapField = new TrapFieldSystem(
       this.scene,
-      flattenTrapPlacements(roomGridPlans),
+      this.baseTrapPlacements,
     )
     spawnGridWispsForPlans(
       roomGridPlans,
@@ -667,55 +684,7 @@ export class Game {
       onRoomCleared: (roomId, doorIndex) => {
         const idx = roomIndexFromId(roomId)
         if (idx === null || idx < 1) return
-
-        if (doorIndex !== null) {
-          this.doorUnlock.unlockDoor(doorIndex)
-        }
-
-        const offers = pickRunUpgradeOffers(
-          this.runRandom,
-          this.runUpgrades,
-          this.lives,
-          this.runStatRoomsCleared,
-        )
-        const applyChosen = (offer: (typeof offers)[number]): void => {
-          const res = applyRunUpgrade(offer.id, {
-            state: this.runUpgrades,
-            stack: this.stack,
-            player: this.player,
-            lives: this.lives,
-            random: this.runRandom,
-          })
-          if (!res) return
-          this.runStatUpgradesPicked.push({ id: offer.id, title: offer.title })
-          this.lives = res.lives
-          this.syncLivesHud()
-          this.syncRunUpgradeModifiers()
-          this.completeRoomClearAfterChoice(roomId, doorIndex, idx, res)
-        }
-
-        const revealUpgrades = (): void => {
-          if (this.roomUpgradePicker && offers.length > 0) {
-            this.roomUpgradePaused = true
-            this.roomUpgradePicker.show(offers, (offer) => {
-              if (!this.roomUpgradePaused) return
-              this.roomUpgradePicker?.hide()
-              this.roomUpgradePaused = false
-              applyChosen(offer)
-            })
-          } else if (offers[0]) {
-            applyChosen(offers[0])
-          }
-        }
-
-        spawnFloatingHudText(
-          this.gameViewport,
-          'Room cleared!',
-          'float-hud--pickup',
-          { topPct: 30, leftPct: 50, durationSec: 1.1 },
-        )
-        this.roomUpgradePendingReveal = revealUpgrades
-        this.beginRoomClearIntroCinematic(idx)
+        this.beginRewardedRoomClear(roomId, doorIndex, idx)
       },
     })
 
@@ -911,72 +880,79 @@ export class Game {
           this.activatePowerMode()
         }
         if (item.type === 'wisp' && item.spawnRoomId) {
-          this.roomCleanliness.registerGridWispCollected(item.spawnRoomId)
           this.runStatWispsCollected += 1
-          const prevCollected =
-            this.wispsCollectedPerRoom.get(item.spawnRoomId) ?? 0
-          const collectedAfter = prevCollected + 1
-          this.wispsCollectedPerRoom.set(item.spawnRoomId, collectedAfter)
-          const totalWispsInRoom =
-            this.gridWispTotalsPerRoom.get(item.spawnRoomId) ?? 0
-          if (!this.bossRoom.isFightActive()) {
-            const ghostFromThisRoom =
-              roomPre !== null && item.spawnRoomId === roomPre
-            if (
-              ghostFromThisRoom &&
-              totalWispsInRoom > 0 &&
-              this.ghostSystem.getActiveGhostCount() < MAX_ACTIVE_GHOSTS &&
-              this.runRandom() <
-                wispCollectGhostSpawnProbability(
-                  collectedAfter,
-                  totalWispsInRoom,
-                  this.runUpgrades.hauntedChanceBonus,
-                )
-            ) {
-              const plan = this.roomGridPlans.get(
-                item.spawnRoomId as NormalRoomId,
-              )
-              let spawn: { x: number; z: number; roomIndex: number } | null =
-                null
-              if (plan) {
-                const xz = pickGridGhostSpawnXZ(
-                  plan,
-                  this.playerPos.x,
-                  this.playerPos.z,
-                  WISP_GHOST_SPAWN_MIN_PLAYER_DIST,
-                  this.runRandom,
-                )
-                if (xz) {
-                  const roomIndex = this.roomChainIndexFromId(item.spawnRoomId)
-                  const visualMul = ghostRoomVisualMul(roomIndex)
-                  const placed = this.worldCollision.resolveCircleXZ(
-                    xz.x,
-                    xz.z,
-                    GHOST_COLLISION_RADIUS * visualMul,
+          if (
+            this.endlessModeActive &&
+            item.spawnRoomId === FINAL_NORMAL_ROOM_ID
+          ) {
+            this.registerEndlessWispCollected()
+          } else {
+            this.roomCleanliness.registerGridWispCollected(item.spawnRoomId)
+            const prevCollected =
+              this.wispsCollectedPerRoom.get(item.spawnRoomId) ?? 0
+            const collectedAfter = prevCollected + 1
+            this.wispsCollectedPerRoom.set(item.spawnRoomId, collectedAfter)
+            const totalWispsInRoom =
+              this.gridWispTotalsPerRoom.get(item.spawnRoomId) ?? 0
+            if (!this.bossRoom.isFightActive()) {
+              const ghostFromThisRoom =
+                roomPre !== null && item.spawnRoomId === roomPre
+              if (
+                ghostFromThisRoom &&
+                totalWispsInRoom > 0 &&
+                this.ghostSystem.getActiveGhostCount() < MAX_ACTIVE_GHOSTS &&
+                this.runRandom() <
+                  wispCollectGhostSpawnProbability(
+                    collectedAfter,
+                    totalWispsInRoom,
+                    this.runUpgrades.hauntedChanceBonus,
                   )
-                  spawn = {
-                    x: placed.x,
-                    z: placed.z,
-                    roomIndex,
+              ) {
+                const plan = this.roomGridPlans.get(
+                  item.spawnRoomId as NormalRoomId,
+                )
+                let spawn: { x: number; z: number; roomIndex: number } | null =
+                  null
+                if (plan) {
+                  const xz = pickGridGhostSpawnXZ(
+                    plan,
+                    this.playerPos.x,
+                    this.playerPos.z,
+                    WISP_GHOST_SPAWN_MIN_PLAYER_DIST,
+                    this.runRandom,
+                  )
+                  if (xz) {
+                    const roomIndex = this.roomChainIndexFromId(item.spawnRoomId)
+                    const visualMul = ghostRoomVisualMul(roomIndex)
+                    const placed = this.worldCollision.resolveCircleXZ(
+                      xz.x,
+                      xz.z,
+                      GHOST_COLLISION_RADIUS * visualMul,
+                    )
+                    spawn = {
+                      x: placed.x,
+                      z: placed.z,
+                      roomIndex,
+                    }
                   }
                 }
+                if (!spawn) {
+                  spawn = this.resolveGhostSpawnFromHauntedClutter(
+                    pickupX,
+                    pickupZ,
+                    item.spawnRoomId,
+                  )
+                }
+                this.ghostSystem.spawnGhost({
+                  x: spawn.x,
+                  z: spawn.z,
+                  roomIndex: spawn.roomIndex,
+                  color: pickGhostColorForRoomIndex(
+                    spawn.roomIndex,
+                    this.runRandom,
+                  ),
+                })
               }
-              if (!spawn) {
-                spawn = this.resolveGhostSpawnFromHauntedClutter(
-                  pickupX,
-                  pickupZ,
-                  item.spawnRoomId,
-                )
-              }
-              this.ghostSystem.spawnGhost({
-                x: spawn.x,
-                z: spawn.z,
-                roomIndex: spawn.roomIndex,
-                color: pickGhostColorForRoomIndex(
-                  spawn.roomIndex,
-                  this.runRandom,
-                ),
-              })
             }
           }
         }
@@ -1170,8 +1146,7 @@ export class Game {
         this.bossVictoryOutroRemain -= dt
         if (this.bossVictoryOutroRemain <= 0) {
           this.bossVictoryOutroRemain = null
-          this.gameOver = true
-          this.openBossRunSuccessOverlay()
+          this.beginEndlessModeAfterBossVictory()
         }
       }
 
@@ -1264,7 +1239,10 @@ export class Game {
 
   private updateDeepestRoomReached(roomId: RoomId | null): void {
     if (!roomId || roomId === 'SAFE_CENTER' || !roomId.startsWith('ROOM_')) return
-    const roomNumber = Number(roomId.slice(5))
+    const roomNumber =
+      this.endlessModeActive && roomId === FINAL_NORMAL_ROOM_ID
+        ? this.endlessCurrentRoomNumber
+        : Number(roomId.slice(5))
     if (Number.isFinite(roomNumber)) {
       this.runStatDeepestRoomReached = Math.max(
         this.runStatDeepestRoomReached,
@@ -1334,12 +1312,18 @@ export class Game {
               this.personalBest.bestBossReachTimeSec,
               this.runStatBossReachedAtSec,
             )
+    const bestTimeSec =
+      bestBossReachTimeSec === null
+        ? this.personalBest.bestTimeSec
+        : this.personalBest.bestTimeSec > 0
+          ? Math.min(this.personalBest.bestTimeSec, bestBossReachTimeSec)
+          : bestBossReachTimeSec
     const next: PersonalBestSnapshot = {
       bestRoomReached: Math.max(
         this.personalBest.bestRoomReached,
         this.runStatDeepestRoomReached,
       ),
-      bestTimeSec: Math.max(this.personalBest.bestTimeSec, this.elapsedSec),
+      bestTimeSec,
       bestBossReachTimeSec,
     }
     if (
@@ -1461,7 +1445,10 @@ export class Game {
     }
     rows.sort((a, b) => {
       if (b.room !== a.room) return b.room - a.room
-      return b.timeSec - a.timeSec
+      if (a.timeSec <= 0 && b.timeSec <= 0) return 0
+      if (a.timeSec <= 0) return 1
+      if (b.timeSec <= 0) return -1
+      return a.timeSec - b.timeSec
     })
     return rows.slice(0, 8).map((row, i) => ({
       rank: i + 1,
@@ -1475,7 +1462,11 @@ export class Game {
     spawnRoomEntryBanner(
       this.gameViewport,
       `Room ${roomIndex}`,
-      roomIndex === 2 ? 'Stay out of their cone' : 'Sweep fast, stay moving',
+      roomIndex > NORMAL_ROOM_COUNT
+        ? 'The mansion shifts again'
+        : roomIndex === 2
+          ? 'Stay out of their cone'
+          : 'Sweep fast, stay moving',
     )
     this.triggerEctoGlow(300)
     playJuiceSound('ghost_pulse', { pitch: 0.94 + roomIndex * 0.015 })
@@ -1509,6 +1500,172 @@ export class Game {
     this.itemWorld.updateGridWispRoomVisibility(this.roomSystem)
   }
 
+  private clearEndlessRoomContent(): void {
+    for (const id of this.endlessCurrentWispIds) {
+      this.itemWorld.remove(id)
+    }
+    this.endlessCurrentWispIds.length = 0
+    if (this.endlessCurrentPowerPelletId) {
+      this.itemWorld.remove(this.endlessCurrentPowerPelletId)
+      this.endlessCurrentPowerPelletId = null
+    }
+    this.itemWorld.remove(`power_pellet_${FINAL_NORMAL_ROOM_ID}`)
+    this.trapField.setPlacements(this.baseTrapPlacements)
+    this.mazeWalls.setPlacements(this.baseMazeWallPlacements)
+    this.worldCollision.setStructureColliders(this.mazeWalls.getColliders())
+    this.endlessRoomWispTotal = 0
+    this.endlessRoomWispsCollected = 0
+    this.endlessRoomCleared = false
+  }
+
+  private spawnEndlessRoom(roomNumber: number): void {
+    const bounds = this.roomSystem.getBounds(FINAL_NORMAL_ROOM_ID)
+    const runtimePlan = planRuntimeRoomGrid(
+      bounds,
+      `endless_${roomNumber}`,
+      this.runRandom,
+    )
+    this.clearEndlessRoomContent()
+    if (!runtimePlan) return
+
+    const plan: RoomGridPlan = {
+      roomId: FINAL_NORMAL_ROOM_ID,
+      ...runtimePlan,
+    }
+    this.endlessCurrentRoomNumber = roomNumber
+    this.endlessRoomWispTotal = plan.wisps.length
+    this.endlessRoomWispsCollected = 0
+    this.endlessRoomCleared = false
+
+    for (const wisp of plan.wisps) {
+      this.endlessCurrentWispIds.push(wisp.id)
+      this.itemWorld.spawn(
+        createWispItem(
+          0.48 + this.runRandom() * 0.1,
+          4 + Math.floor(this.runRandom() * 8),
+          wisp.id,
+          FINAL_NORMAL_ROOM_ID,
+        ),
+        wisp.x,
+        wisp.z,
+        { visible: true },
+      )
+    }
+
+    const pelletCell = pickRiskyPowerPelletCell(plan, this.runRandom)
+    if (pelletCell) {
+      const pelletId = `power_pellet_endless_${roomNumber}_${pelletCell.row}_${pelletCell.col}`
+      this.endlessCurrentPowerPelletId = pelletId
+      this.itemWorld.spawn(
+        createPowerPelletItem(pelletId, FINAL_NORMAL_ROOM_ID),
+        pelletCell.x,
+        pelletCell.z,
+        { visible: true },
+      )
+    }
+
+    this.trapField.setPlacements([
+      ...this.baseTrapPlacements,
+      ...plan.traps.map((trap) => ({ x: trap.x, z: trap.z })),
+    ])
+    this.mazeWalls.setPlacements([
+      ...this.baseMazeWallPlacements,
+      ...plan.walls.map((wall) => ({
+        x: wall.x,
+        z: wall.z,
+        width: wall.width,
+        depth: wall.depth,
+      })),
+    ])
+    this.worldCollision.setStructureColliders(this.mazeWalls.getColliders())
+    this.spawnEndlessGhostWave(plan, roomNumber)
+    this.triggerRoomEntryJuice(roomNumber)
+  }
+
+  private spawnEndlessGhostWave(plan: RoomGridPlan, roomNumber: number): void {
+    this.player.getPosition(this.playerPos)
+    const blocked = new Set<string>()
+    for (const w of plan.wisps) blocked.add(`${w.row},${w.col}`)
+    for (const t of plan.traps) blocked.add(`${t.row},${t.col}`)
+    for (const wall of plan.walls) blocked.add(`${wall.row},${wall.col}`)
+
+    const candidates: { x: number; z: number; d: number }[] = []
+    for (let r = 0; r < ROOM_GRID_ROWS; r++) {
+      for (let c = 0; c < ROOM_GRID_COLS; c++) {
+        if (blocked.has(`${r},${c}`)) continue
+        const { x, z } = cellCenterWorld(
+          plan.bounds,
+          r,
+          c,
+          ROOM_GRID_ROWS,
+          ROOM_GRID_COLS,
+        )
+        candidates.push({
+          x,
+          z,
+          d: Math.hypot(x - this.playerPos.x, z - this.playerPos.z),
+        })
+      }
+    }
+    candidates.sort((a, b) => b.d - a.d)
+    const maxCount = Math.min(
+      5,
+      2 + Math.floor((roomNumber - NORMAL_ROOM_COUNT - 1) / 2),
+    )
+    const count = Math.max(2, maxCount + (this.runRandom() < 0.34 ? 1 : 0))
+    const roomIndex = Math.min(roomNumber, NORMAL_ROOM_COUNT)
+    let spawned = 0
+    for (const candidate of candidates) {
+      if (
+        spawned >= count ||
+        this.ghostSystem.getActiveGhostCount() >= MAX_ACTIVE_GHOSTS
+      ) {
+        break
+      }
+      if (candidate.d < WISP_GHOST_SPAWN_MIN_PLAYER_DIST && spawned > 0) continue
+      const visualMul = ghostRoomVisualMul(roomIndex)
+      const placed = this.worldCollision.resolveCircleXZ(
+        candidate.x,
+        candidate.z,
+        GHOST_COLLISION_RADIUS * visualMul,
+      )
+      this.ghostSystem.spawnGhost({
+        x: placed.x,
+        z: placed.z,
+        roomIndex,
+        color: pickGhostColorForRoomIndex(roomIndex, this.runRandom),
+      })
+      spawned += 1
+    }
+  }
+
+  private getEndlessRoomPercent(): number {
+    if (this.endlessRoomWispTotal <= 0) return 0
+    return Math.max(
+      0,
+      Math.min(100, (100 * this.endlessRoomWispsCollected) / this.endlessRoomWispTotal),
+    )
+  }
+
+  private registerEndlessWispCollected(): void {
+    if (!this.endlessModeActive || this.endlessRoomCleared) return
+    this.endlessRoomWispsCollected = Math.min(
+      this.endlessRoomWispTotal,
+      this.endlessRoomWispsCollected + 1,
+    )
+    if (
+      this.endlessRoomWispTotal > 0 &&
+      this.endlessRoomWispsCollected >= this.endlessRoomWispTotal
+    ) {
+      this.endlessRoomCleared = true
+      this.beginRewardedRoomClear(
+        FINAL_NORMAL_ROOM_ID,
+        null,
+        NORMAL_ROOM_COUNT,
+      )
+    }
+  }
+
   private syncCameraModeHud(): void {
     const el = this.hudCameraHintEl
     if (!el) return
@@ -1530,6 +1687,13 @@ export class Game {
     this.roomShieldAvailable = false
     this.shieldRefreshRoomId = null
     this.wispsCollectedPerRoom.clear()
+    this.endlessModeActive = false
+    this.endlessCurrentRoomNumber = NORMAL_ROOM_COUNT
+    this.endlessRoomWispTotal = 0
+    this.endlessRoomWispsCollected = 0
+    this.endlessRoomCleared = false
+    this.endlessCurrentWispIds.length = 0
+    this.endlessCurrentPowerPelletId = null
     this.runStatUpgradesPicked.length = 0
     this.roomUpgradePendingReveal = null
     this.powerModeRemain = 0
@@ -1558,17 +1722,76 @@ export class Game {
     )
   }
 
+  private beginRewardedRoomClear(
+    roomId: RoomId,
+    doorIndex: number | null,
+    roomIndex: number,
+  ): void {
+    if (doorIndex !== null) {
+      this.doorUnlock.unlockDoor(doorIndex)
+    }
+
+    const offers = pickRunUpgradeOffers(
+      this.runRandom,
+      this.runUpgrades,
+      this.lives,
+      this.runStatRoomsCleared,
+    )
+    const applyChosen = (offer: (typeof offers)[number]): void => {
+      const res = applyRunUpgrade(offer.id, {
+        state: this.runUpgrades,
+        stack: this.stack,
+        player: this.player,
+        lives: this.lives,
+        random: this.runRandom,
+      })
+      if (!res) return
+      this.runStatUpgradesPicked.push({ id: offer.id, title: offer.title })
+      this.lives = res.lives
+      this.syncLivesHud()
+      this.syncRunUpgradeModifiers()
+      this.completeRoomClearAfterChoice(roomId, doorIndex, roomIndex, res)
+    }
+
+    const revealUpgrades = (): void => {
+      if (this.roomUpgradePicker && offers.length > 0) {
+        this.roomUpgradePaused = true
+        this.roomUpgradePicker.show(offers, (offer) => {
+          if (!this.roomUpgradePaused) return
+          this.roomUpgradePicker?.hide()
+          this.roomUpgradePaused = false
+          applyChosen(offer)
+        })
+      } else if (offers[0]) {
+        applyChosen(offers[0])
+      }
+    }
+
+    spawnFloatingHudText(
+      this.gameViewport,
+      'Room cleared!',
+      'float-hud--pickup',
+      { topPct: 30, leftPct: 50, durationSec: 1.1 },
+    )
+    this.roomUpgradePendingReveal = revealUpgrades
+    this.beginRoomClearIntroCinematic(roomIndex)
+  }
+
   private completeRoomClearAfterChoice(
     roomId: RoomId,
     doorIndex: number | null,
     roomIndex: number,
     res: ApplyRunUpgradeResult,
   ): void {
+    const endlessFinalRoom =
+      this.endlessModeActive && roomId === FINAL_NORMAL_ROOM_ID
     this.runStatRoomsCleared += 1
     spawnRoomClearedBanner(this.gameViewport, res.bannerSubtitle)
-    this.roomClearFloorDisposers.push(
-      spawnRoomClearedFloorLabel(this.scene, roomId, res.bannerSubtitle),
-    )
+    if (!endlessFinalRoom) {
+      this.roomClearFloorDisposers.push(
+        spawnRoomClearedFloorLabel(this.scene, roomId, res.bannerSubtitle),
+      )
+    }
     if (res.floatText) {
       spawnFloatingHudText(
         this.gameViewport,
@@ -1582,6 +1805,9 @@ export class Game {
       this.beginRoomClearDoorCinematic(doorIndex)
     } else {
       this.ghostSystem.purgeGhostsForRoom(roomIndex)
+      if (endlessFinalRoom) {
+        this.spawnEndlessRoom(this.endlessCurrentRoomNumber + 1)
+      }
     }
   }
 
@@ -1602,32 +1828,17 @@ export class Game {
     this.bossVictoryOutroRemain = BOSS_VICTORY_OUTRO_SEC
   }
 
-  private openBossRunSuccessOverlay(): void {
+  private beginEndlessModeAfterBossVictory(): void {
     this.commitRunPersonalBest()
-    this.runSuccessCleanup = showRunSuccessOverlay(
+    if (this.endlessModeActive) return
+    this.endlessModeActive = true
+    spawnFloatingHudText(
       this.gameViewport,
-      {
-        roomsCleared: this.runStatRoomsCleared,
-        wispsCollected: this.runStatWispsCollected,
-        timeSec: this.elapsedSec,
-        upgrades: this.runStatUpgradesPicked.map((u) => ({
-          title: u.title,
-        })),
-      },
-      {
-        onContinue: () => {
-          this.runSuccessCleanup?.()
-          this.runSuccessCleanup = null
-          if (this.onRunFailedRetry) {
-            void Promise.resolve(this.onRunFailedRetry()).catch(() => {
-              location.reload()
-            })
-          } else {
-            location.reload()
-          }
-        },
-      },
+      'Endless unlocked',
+      'float-hud--level-up',
+      { topPct: 24, leftPct: 50, durationSec: 1.35 },
     )
+    this.spawnEndlessRoom(NORMAL_ROOM_COUNT + 1)
   }
 
   /**
@@ -1932,6 +2143,12 @@ export class Game {
       rounded = Math.round(pct)
       pctEl.textContent = `${rounded}%`
       fill.style.transform = `scaleX(${Math.max(0, Math.min(1, pct / 100))})`
+    } else if (roomId === FINAL_NORMAL_ROOM_ID && this.endlessModeActive) {
+      titleEl.textContent = `Room ${this.endlessCurrentRoomNumber}`
+      const pct = this.getEndlessRoomPercent()
+      rounded = Math.round(pct)
+      pctEl.textContent = `${rounded}%`
+      fill.style.transform = `scaleX(${Math.max(0, Math.min(1, pct / 100))})`
     } else {
       titleEl.textContent = roomCleanHudLabel(roomId)
       const pct = this.roomCleanliness.getDisplayPercent(roomId)
@@ -1943,7 +2160,11 @@ export class Game {
       'aria-valuenow',
       String(rounded),
     )
-    if (this.roomCleanliness.isRoomCleared(roomId)) {
+    if (
+      (roomId === FINAL_NORMAL_ROOM_ID && this.endlessModeActive
+        ? this.endlessRoomCleared
+        : this.roomCleanliness.isRoomCleared(roomId))
+    ) {
       wrap.classList.add('hud-room-clean--cleared')
     } else {
       wrap.classList.remove('hud-room-clean--cleared')
@@ -1993,6 +2214,9 @@ export class Game {
     roomId: ReturnType<RoomSystem['getRoomAt']>,
   ): number {
     if (!roomId || roomId === 'SAFE_CENTER') return 1
+    if (this.endlessModeActive && roomId === FINAL_NORMAL_ROOM_ID) {
+      return this.endlessCurrentRoomNumber
+    }
     const m = /^ROOM_(\d+)$/.exec(roomId)
     return m ? Number(m[1]) : 1
   }
@@ -2010,6 +2234,9 @@ export class Game {
     }
     if (roomId === FINAL_NORMAL_ROOM_ID && this.bossRoom.isFightActive()) {
       return Math.max(0, Math.min(1, this.bossRoom.getBossHudPercent() / 100))
+    }
+    if (roomId === FINAL_NORMAL_ROOM_ID && this.endlessModeActive) {
+      return Math.max(0, Math.min(1, this.getEndlessRoomPercent() / 100))
     }
     if (this.roomCleanliness.isRoomCleared(roomId)) return 0
     return Math.max(
@@ -2137,8 +2364,6 @@ export class Game {
     this.closeLeaderboard()
     this.runFailedCleanup?.()
     this.runFailedCleanup = null
-    this.runSuccessCleanup?.()
-    this.runSuccessCleanup = null
     cancelAnimationFrame(this.raf)
     if (this.depositShakeTimer) {
       clearTimeout(this.depositShakeTimer)

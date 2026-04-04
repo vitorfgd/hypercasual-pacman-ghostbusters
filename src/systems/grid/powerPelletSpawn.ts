@@ -30,7 +30,7 @@ export function spawnPowerPelletsForRun(
   }
 }
 
-function pickRiskyPowerPelletCell(
+export function pickRiskyPowerPelletCell(
   plan: RoomGridPlan,
   random: () => number,
 ): { x: number; z: number; row: number; col: number } | null {

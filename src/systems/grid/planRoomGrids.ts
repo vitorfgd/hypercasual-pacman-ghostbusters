@@ -96,12 +96,12 @@ function allWispsReachable(
 }
 
 function planOneRoom(
-  roomId: NormalRoomId,
+  roomKey: string,
   bounds: RoomBounds,
   random: () => number,
   rows: number,
   cols: number,
-): RoomGridPlan | null {
+): Omit<RoomGridPlan, 'roomId'> | null {
   const totalCells = rows * cols
   const startRow = rows - 1
   const startCol = Math.floor(cols / 2)
@@ -211,7 +211,7 @@ function planOneRoom(
         if (grid[r]![c] !== 'wisp') continue
         const { x, z } = cellCenterWorld(bounds, r, c, rows, cols)
         wisps.push({
-          id: `grid_wisp_${roomId}_${r}_${c}_${wi++}`,
+          id: `grid_wisp_${roomKey}_${r}_${c}_${wi++}`,
           x,
           z,
           row: r,
@@ -244,10 +244,18 @@ function planOneRoom(
       }
     }
 
-    return { roomId, bounds, wisps, traps, walls }
+    return { bounds, wisps, traps, walls }
   }
 
   return null
+}
+
+export function planRuntimeRoomGrid(
+  bounds: RoomBounds,
+  idPrefix: string,
+  random: () => number,
+): Omit<RoomGridPlan, 'roomId'> | null {
+  return planOneRoom(idPrefix, bounds, random, ROOM_GRID_ROWS, ROOM_GRID_COLS)
 }
 
 export type MazeWallPlacement = {
@@ -276,12 +284,19 @@ export function planAllRoomGrids(
       continue
     }
     const bounds = roomSystem.getBounds(roomId)
-    const plan = planOneRoom(roomId, bounds, random, ROOM_GRID_ROWS, ROOM_GRID_COLS)
-    if (!plan) {
+    const runtimePlan = planOneRoom(
+      roomId,
+      bounds,
+      random,
+      ROOM_GRID_ROWS,
+      ROOM_GRID_COLS,
+    )
+    if (!runtimePlan) {
       console.warn(`[grid] Failed to plan ${roomId} — empty plan`)
       wispTotals.set(roomId, 0)
       continue
     }
+    const plan: RoomGridPlan = { roomId, ...runtimePlan }
     plans.set(roomId, plan)
     wispTotals.set(roomId, plan.wisps.length)
   }

@@ -18,8 +18,15 @@ type MazeWallInst = {
 
 export class GridMazeWallSystem {
   private readonly walls: MazeWallInst[] = []
+  private readonly scene: Scene
 
   constructor(scene: Scene, placements: readonly MazeWallPlacement[]) {
+    this.scene = scene
+    this.setPlacements(placements)
+  }
+
+  setPlacements(placements: readonly MazeWallPlacement[]): void {
+    this.clearWalls()
     for (const p of placements) {
       const root = new Group()
       root.position.set(p.x, WALL_Y, p.z)
@@ -49,7 +56,7 @@ export class GridMazeWallSystem {
       cap.receiveShadow = true
       root.add(cap)
 
-      scene.add(root)
+      this.scene.add(root)
       this.walls.push({
         root,
         collider: {
@@ -62,11 +69,7 @@ export class GridMazeWallSystem {
     }
   }
 
-  getColliders(): AabbXZ[] {
-    return this.walls.map((w) => w.collider)
-  }
-
-  dispose(): void {
+  private clearWalls(): void {
     for (const wall of this.walls) {
       wall.root.removeFromParent()
       wall.root.traverse((o) => {
@@ -79,5 +82,13 @@ export class GridMazeWallSystem {
       })
     }
     this.walls.length = 0
+  }
+
+  getColliders(): AabbXZ[] {
+    return this.walls.map((w) => w.collider)
+  }
+
+  dispose(): void {
+    this.clearWalls()
   }
 }
