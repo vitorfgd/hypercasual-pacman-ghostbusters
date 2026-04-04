@@ -60,6 +60,7 @@ import {
   GHOST_WANDER_SPEED,
   GHOST_VISION_COOLDOWN_SEC,
   GHOST_VISION_CONE_COLOR,
+  GHOST_VISION_CONE_COLOR_CHASE,
   GHOST_VISION_CONE_OPACITY,
   GHOST_VISION_CONE_OPACITY_CHASE,
   GHOST_VISION_CONE_VISIBLE,
@@ -1021,9 +1022,12 @@ class Ghost {
       return
     }
 
-    material.opacity = chasing
-      ? GHOST_VISION_CONE_OPACITY_CHASE
-      : GHOST_VISION_CONE_OPACITY
+      material.opacity = chasing
+        ? GHOST_VISION_CONE_OPACITY_CHASE
+        : GHOST_VISION_CONE_OPACITY
+      material.color.setHex(
+        chasing ? GHOST_VISION_CONE_COLOR_CHASE : GHOST_VISION_CONE_COLOR,
+      )
 
     const facing = this.getVisionFacing()
     const cellSize = cellSizeWorld(roomBounds)
@@ -1502,17 +1506,16 @@ class Ghost {
       | undefined
     anim?.(dt, timeSec, this.velocity.x, this.velocity.z, chaseAnim)
 
-    this.updateVisionCells(
-      roomBounds,
-      px,
-      pz,
-      visionConeEntranceDoorOpen &&
-        !this.eaten &&
-        this.roomClearPurgeRemain <= 0 &&
-        this.gateClearFadeRemain <= 0 &&
-        this.state !== 'chase',
-      chaseAiActive && (relicCarried || this.huntBurstRemain > 0),
-    )
+      this.updateVisionCells(
+        roomBounds,
+        px,
+        pz,
+        visionConeEntranceDoorOpen &&
+          !this.eaten &&
+          this.roomClearPurgeRemain <= 0 &&
+          this.gateClearFadeRemain <= 0,
+        chaseAiActive && (relicCarried || this.huntBurstRemain > 0),
+      )
 
     if (this.visionDebugLine) {
       const R = GHOST_VISION_RANGE

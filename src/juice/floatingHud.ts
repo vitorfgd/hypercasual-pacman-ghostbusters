@@ -7,6 +7,43 @@ export type FloatingHudTextOpts = {
   risePx?: number
 }
 
+/**
+ * Warm the browser's first-use DOM/CSS path for HUD toasts before live gameplay starts.
+ */
+export function primeFloatingHudEffects(viewport: HTMLElement): void {
+  const float = document.createElement('div')
+  float.className = 'float-hud float-hud--pickup'
+  float.textContent = '+1'
+  float.style.left = '-9999px'
+  float.style.top = '-9999px'
+
+  const roomEntry = document.createElement('div')
+  roomEntry.className = 'room-entry-banner room-entry-banner--fast'
+  roomEntry.innerHTML =
+    '<div class="room-entry-banner__title">Room</div><div class="room-entry-banner__sub">Ready</div>'
+  roomEntry.style.left = '-9999px'
+  roomEntry.style.top = '-9999px'
+
+  const roomClear = document.createElement('div')
+  roomClear.className = 'room-cleared-banner'
+  roomClear.innerHTML =
+    '<div class="room-cleared-banner__title">Clear</div><div class="room-cleared-banner__sub">Ready</div>'
+  roomClear.style.left = '-9999px'
+  roomClear.style.top = '-9999px'
+
+  viewport.append(float, roomEntry, roomClear)
+  requestAnimationFrame(() => {
+    float.classList.add('float-hud--show')
+    roomEntry.classList.add('room-entry-banner--show')
+    roomClear.classList.add('room-cleared-banner--show')
+    requestAnimationFrame(() => {
+      float.remove()
+      roomEntry.remove()
+      roomClear.remove()
+    })
+  })
+}
+
 /** Short-lived floating text in the viewport (e.g. +1, pickup toasts). */
 export function spawnFloatingHudText(
   viewport: HTMLElement,

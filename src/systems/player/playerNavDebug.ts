@@ -22,13 +22,20 @@ export type PlayerNavDebugSnapshot = {
   moving: boolean
   inputDr: number | null
   inputDc: number | null
+  attemptedDr: number | null
+  attemptedDc: number | null
   nextDr: number | null
   nextDc: number | null
+  segmentRejectReason: 'none' | 'geometry' | 'collider'
   /** Uppercase = can move that way; lowercase = neighbor resolve failed */
   openCardinals: string
   /** Finger down with input but could not start a segment from idle at cell */
   idleBlocked: boolean
   hadResetThisStep: boolean
+  collisionCorrectionDist: number
+  collisionCorrectionTriggered: boolean
+  navBoundsKind: 'corridor' | 'room'
+  rawBoundsKind: 'corridor' | 'room'
   speedCap: number
   vx: number
   vz: number
@@ -59,11 +66,18 @@ export function createEmptyNavDebug(): PlayerNavDebugSnapshot {
     moving: false,
     inputDr: null,
     inputDc: null,
+    attemptedDr: null,
+    attemptedDc: null,
     nextDr: null,
     nextDc: null,
+    segmentRejectReason: 'none',
     openCardinals: '',
     idleBlocked: false,
     hadResetThisStep: false,
+    collisionCorrectionDist: 0,
+    collisionCorrectionTriggered: false,
+    navBoundsKind: 'corridor',
+    rawBoundsKind: 'corridor',
     speedCap: 0,
     vx: 0,
     vz: 0,
@@ -94,10 +108,13 @@ export function formatNavDebugHud(d: PlayerNavDebugSnapshot): string {
     belowDz
       ? `⚠ INPUT BELOW GRID DEADZONE (${dz}) — push stick farther`
       : null,
-    `in dr ${d.inputDr ?? '—'} dc ${d.inputDc ?? '—'} | next ${d.nextDr ?? '—'} ${d.nextDc ?? '—'}`,
+    `in dr ${d.inputDr ?? '—'} dc ${d.inputDc ?? '—'} | attempt ${d.attemptedDr ?? '—'} ${d.attemptedDc ?? '—'} | next ${d.nextDr ?? '—'} ${d.nextDc ?? '—'}`,
     `open NESW: ${d.openCardinals} (caps=open lowercase=blocked)`,
-    d.idleBlocked ? '⚠ IDLE BLOCKED (finger down, no segment)' : 'idle ok',
+    d.idleBlocked
+      ? `⚠ IDLE BLOCKED (${d.segmentRejectReason})`
+      : 'idle ok',
     d.hadResetThisStep ? '↻ grid reset this frame' : '',
+    `corr ${d.collisionCorrectionDist.toFixed(3)} ${d.collisionCorrectionTriggered ? '⚠' : ''} | nav ${d.navBoundsKind} raw ${d.rawBoundsKind}`,
     `cap ${d.speedCap.toFixed(1)} vx ${d.vx.toFixed(2)} vz ${d.vz.toFixed(2)}`,
   ]
     .filter(Boolean)

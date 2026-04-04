@@ -8,7 +8,7 @@ export type TrapPlacement = {
   depth: number
 }
 
-const TRAP_MODEL_Y = 0.14
+const TRAP_MODEL_Y = 0.2
 const TRAP_MODEL_FOOTPRINT_SCALE = 1.12
 
 export type TrapCallbacks = {

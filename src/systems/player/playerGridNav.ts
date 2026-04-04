@@ -30,6 +30,18 @@ const PLAYER_GRID_HARD_RESYNC_DISTANCE = 1.75
 
 /** Ignore stick noise below this magnitude (0–1). */
 export const PLAYER_GRID_INPUT_DEADZONE = 0.22
+const PLAYER_GRID_GATE_HALF_COLS = 1
+
+type NeighborResolveResult =
+  | {
+      ok: true
+      c0: { x: number; z: number }
+      c1: { x: number; z: number }
+    }
+  | {
+      ok: false
+      reason: 'geometry' | 'collider'
+    }
 
 function resolveNeighborDestination(
   activeBounds: RoomBounds,
@@ -45,9 +57,20 @@ function resolveNeighborDestination(
     z1: number,
     targetBounds: RoomBounds,
   ) => boolean,
-): { c0: { x: number; z: number }; c1: { x: number; z: number } } | null {
+): NeighborResolveResult {
   const c0 = cellCenterWorld(activeBounds, atRow, atCol, ROWS, COLS)
   const startKey = boundsKey(activeBounds)
+  const centerCol = Math.floor(COLS / 2)
+  const verticalBoundaryTransition =
+    dr !== 0 && dc === 0 && ((dr > 0 && atRow >= ROWS - 1) || (dr < 0 && atRow <= 0))
+  const roomWidth = activeBounds.maxX - activeBounds.minX
+  if (
+    verticalBoundaryTransition &&
+    roomWidth >= 7 &&
+    Math.abs(atCol - centerCol) > PLAYER_GRID_GATE_HALF_COLS
+  ) {
+    return { ok: false, reason: 'geometry' }
+  }
 
   const nr = atRow + dr
   const nc = atCol + dc
@@ -55,13 +78,16 @@ function resolveNeighborDestination(
   // Standard same-region move.
   if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
     const c1 = cellCenterWorld(activeBounds, nr, nc, ROWS, COLS)
-    if (
-      Math.hypot(c1.x - c0.x, c1.z - c0.z) >= 1e-4 &&
-      (!canTraverseSegment ||
-        canTraverseSegment(c0.x, c0.z, c1.x, c1.z, activeBounds))
-    ) {
-      return { c0, c1 }
+    if (Math.hypot(c1.x - c0.x, c1.z - c0.z) < 1e-4) {
+      return { ok: false, reason: 'geometry' }
     }
+    if (
+      canTraverseSegment &&
+      !canTraverseSegment(c0.x, c0.z, c1.x, c1.z, activeBounds)
+    ) {
+      return { ok: false, reason: 'collider' }
+    }
+    return { ok: true, c0, c1 }
   }
 
   const spanX = activeBounds.maxX - activeBounds.minX - 2 * GRID_ROOM_INSET
@@ -70,6 +96,7 @@ function resolveNeighborDestination(
   const stepZ = spanZ / ROWS
 
   // Smaller increments make door / threshold crossing more stable.
+  let sawColliderReject = false
   for (let k = 1; k <= 96; k++) {
     const mul = k * 0.5
     const probeX = c0.x + dc * stepX * mul
@@ -90,24 +117,27 @@ function resolveNeighborDestination(
 
     if (Math.hypot(c1.x - c0.x, c1.z - c0.z) < 1e-4) continue
     if (canTraverseSegment && !canTraverseSegment(c0.x, c0.z, c1.x, c1.z, b1)) {
+      sawColliderReject = true
       continue
     }
-    return { c0, c1 }
+    return { ok: true, c0, c1 }
   }
 
   // Safety fallback: never return null for a valid in-bounds same-region move.
   if (nr >= 0 && nr < ROWS && nc >= 0 && nc < COLS) {
     const c1 = cellCenterWorld(activeBounds, nr, nc, ROWS, COLS)
-    if (
-      Math.hypot(c1.x - c0.x, c1.z - c0.z) >= 1e-4 &&
-      (!canTraverseSegment ||
-        canTraverseSegment(c0.x, c0.z, c1.x, c1.z, activeBounds))
-    ) {
-      return { c0, c1 }
+    if (Math.hypot(c1.x - c0.x, c1.z - c0.z) >= 1e-4) {
+      if (
+        canTraverseSegment &&
+        !canTraverseSegment(c0.x, c0.z, c1.x, c1.z, activeBounds)
+      ) {
+        return { ok: false, reason: 'collider' }
+      }
+      return { ok: true, c0, c1 }
     }
   }
 
-  return null
+  return { ok: false, reason: sawColliderReject ? 'collider' : 'geometry' }
 }
 
 const CARD_DEBUG: readonly { dr: number; dc: number; l: string }[] = [
@@ -141,7 +171,7 @@ function openCardinalsLine(
       getRawGridBoundsAt,
       canTraverseSegment,
     )
-    s += ok ? l : l.toLowerCase()
+    s += ok.ok ? l : l.toLowerCase()
   }
   return s
 }
@@ -166,6 +196,9 @@ function fillStepDebug(
     hadResetThisStep: boolean
     vx: number
     vz: number
+    attemptedDr: number | null
+    attemptedDc: number | null
+    segmentRejectReason: 'none' | 'geometry' | 'collider'
   },
 ): void {
   const {
@@ -180,6 +213,9 @@ function fillStepDebug(
     hadResetThisStep,
     vx,
     vz,
+    attemptedDr,
+    attemptedDc,
+    segmentRejectReason,
   } = opts
   const len0 = Math.hypot(state.segX1 - state.segX0, state.segZ1 - state.segZ0)
   const moving = len0 > 1e-5 && state.segT < 1 - ARRIVE_T_EPS
@@ -187,8 +223,11 @@ function fillStepDebug(
   d.idleBlocked = idleBlocked
   d.inputDr = inputDr
   d.inputDc = inputDc
+  d.attemptedDr = attemptedDr
+  d.attemptedDc = attemptedDc
   d.nextDr = state.nextDr
   d.nextDc = state.nextDc
+  d.segmentRejectReason = segmentRejectReason
   d.segLen = len0
   d.segT = state.segT
   d.moving = moving
@@ -348,11 +387,16 @@ export function stepPlayerGridNav(
   }
 
   let activeBounds = bounds
+  let segmentRejectReason: 'none' | 'geometry' | 'collider' = 'none'
+  let attemptedDr: number | null = null
+  let attemptedDc: number | null = null
 
   const cellAt = (b: RoomBounds, r: number, c: number) =>
     cellCenterWorld(b, r, c, ROWS, COLS)
 
   const tryStartSegment = (dr: number, dc: number): boolean => {
+    attemptedDr = dr
+    attemptedDc = dc
     const resolved = resolveNeighborDestination(
       activeBounds,
       state.atRow,
@@ -362,7 +406,11 @@ export function stepPlayerGridNav(
       getRawGridBoundsAt,
       canTraverseSegment,
     )
-    if (!resolved) return false
+    if (!resolved.ok) {
+      segmentRejectReason = resolved.reason
+      return false
+    }
+    segmentRejectReason = 'none'
     const { c0, c1 } = resolved
     state.segX0 = c0.x
     state.segZ0 = c0.z
@@ -449,13 +497,16 @@ export function stepPlayerGridNav(
             inputDc,
             speed,
             getRawGridBoundsAt,
-            canTraverseSegment,
-            idleBlocked:
-              fingerDown && inputDr !== null && inputDc !== null,
-            hadResetThisStep,
-            vx,
-            vz,
-          })
+          canTraverseSegment,
+          idleBlocked:
+            fingerDown && inputDr !== null && inputDc !== null,
+          hadResetThisStep,
+          vx,
+          vz,
+          attemptedDr,
+          attemptedDc,
+          segmentRejectReason,
+        })
         }
         return { x: c.x, z: c.z, vx, vz, faceX: 0, faceZ: 1 }
       }
@@ -494,6 +545,9 @@ export function stepPlayerGridNav(
           hadResetThisStep,
           vx,
           vz,
+          attemptedDr,
+          attemptedDc,
+          segmentRejectReason,
         })
       }
       return { x: nx, z: nz, vx, vz, faceX: lastFaceX, faceZ: lastFaceZ }
@@ -552,6 +606,9 @@ export function stepPlayerGridNav(
           hadResetThisStep,
           vx,
           vz,
+          attemptedDr,
+          attemptedDc,
+          segmentRejectReason,
         })
       }
       return { x: c.x, z: c.z, vx, vz, faceX: lastFaceX, faceZ: lastFaceZ }
@@ -574,6 +631,9 @@ export function stepPlayerGridNav(
       hadResetThisStep,
       vx,
       vz,
+      attemptedDr,
+      attemptedDc,
+      segmentRejectReason,
     })
   }
   return { x: c.x, z: c.z, vx, vz, faceX: lastFaceX, faceZ: lastFaceZ }

@@ -71,6 +71,7 @@ export const GHOST_VISION_CONE_OPACITY = 0.2
 export const GHOST_VISION_CONE_OPACITY_CHASE = 0.38
 /** Ectoplasm tint (hex). */
 export const GHOST_VISION_CONE_COLOR = 0x55eecc
+export const GHOST_VISION_CONE_COLOR_CHASE = 0xff4d5f
 /** Arc smoothness. */
 export const GHOST_VISION_CONE_SEGMENTS = 40
 

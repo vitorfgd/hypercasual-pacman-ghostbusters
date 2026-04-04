@@ -69,19 +69,19 @@ export function buildMansionWallColliders(): AabbXZ[] {
   })
 
   // Safe south wall — single door to first threshold
-  boxes.push(...hGap(-S - t, S + t, -S - t, -S, -D, D))
+  boxes.push(...hGap(-S, S, -S - t, -S, -D, D))
   boxes.push(...corridorSideBlocks(-S - C, -S))
   // ROOM_1 north face (into first room from threshold)
   const r1North = roomNorthZ(1)
-  boxes.push(...hGap(-S - t, S + t, r1North - t, r1North, -D, D))
+  boxes.push(...hGap(-S, S, r1North - t, r1North, -D, D))
 
   // Between rooms: south face of ROOM_k, threshold, north face of ROOM_{k+1}
   for (let k = 1; k < NORMAL_ROOM_COUNT; k++) {
     const southZk = roomSouthZ(k)
     const northNext = roomNorthZ(k + 1)
-    boxes.push(...hGap(-S - t, S + t, southZk - t, southZk, -D, D))
+    boxes.push(...hGap(-S, S, southZk - t, southZk, -D, D))
     boxes.push(...corridorSideBlocks(northNext, southZk))
-    boxes.push(...hGap(-S - t, S + t, northNext, northNext + t, -D, D))
+    boxes.push(...hGap(-S, S, northNext, northNext + t, -D, D))
   }
 
   return boxes

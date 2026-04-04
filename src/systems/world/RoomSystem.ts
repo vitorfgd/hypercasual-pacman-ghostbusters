@@ -9,7 +9,11 @@ import {
   type RoomId,
 } from './mansionRoomData.ts'
 import { resolveGridBoundsAt } from '../grid/gridBoundsResolve.ts'
-import { ROOM_GRID_COLS, ROOM_GRID_ROWS } from '../grid/gridConfig.ts'
+import {
+  GRID_ROOM_INSET,
+  ROOM_GRID_COLS,
+  ROOM_GRID_ROWS,
+} from '../grid/gridConfig.ts'
 import { boundsKey, cellCenterWorld } from '../grid/roomGridGeometry.ts'
 
 function findBoundsByKey(key: string): RoomBounds | null {
@@ -20,6 +24,15 @@ function findBoundsByKey(key: string): RoomBounds | null {
     if (boundsKey(b) === key) return b
   }
   return null
+}
+
+function pointInsideGridInterior(b: RoomBounds, x: number, z: number): boolean {
+  return (
+    x >= b.minX + GRID_ROOM_INSET &&
+    x <= b.maxX - GRID_ROOM_INSET &&
+    z >= b.minZ + GRID_ROOM_INSET &&
+    z <= b.maxZ - GRID_ROOM_INSET
+  )
 }
 
 /** Previous-frame grid cell; used so nav bounds match room grid when physics nudges into a door strip. */
@@ -114,6 +127,7 @@ export class RoomSystem {
     nav: GridNavContext | null,
   ): RoomBounds {
     const primary = this.getGridBoundsAt(x, z)
+    const strictArea = this.getAreaAt(x, z)
     const sticky =
       nav !== null && nav.boundsKey !== ''
         ? findBoundsByKey(nav.boundsKey)
@@ -142,6 +156,23 @@ export class RoomSystem {
     const HARD_SWITCH_R = 4.25
 
     if (sticky !== null && nav !== null && stickyCC !== null) {
+      // Keep the current room authoritative until the player is actually inside the
+      // corridor strip. Without this, the nearest-bounds fallback can flip to corridor
+      // early when pushing into the door-side wall, which causes the last visible jitter.
+      if (full(sticky) && narrow(primary) && strictArea !== 'CORRIDOR') {
+        return sticky
+      }
+
+      // Once the player is truly on a room grid cell, stop treating the doorway strip as
+      // authoritative. This avoids corridor→room ambiguity lingering into the first in-room step.
+      if (
+        narrow(sticky) &&
+        full(primary) &&
+        pointInsideGridInterior(primary, x, z)
+      ) {
+        return primary
+      }
+
       // Prefer the current logical region while still reasonably near its cell center.
       if (distToSticky <= STICKY_R) {
         return sticky

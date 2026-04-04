@@ -145,6 +145,7 @@ export class ItemWorld {
     () => [],
   )
   private readonly gridPickupMeshesByRoom = new Map<RoomId, Set<Object3D>>()
+  private readonly gridPickupVisibleByRoom = new Map<RoomId, boolean>()
   private readonly clutterMeshesByRoom = new Map<RoomId, Set<Object3D>>()
   private readonly clutterRevealAlphaByRoom = new Map<RoomId, number>()
 
@@ -344,6 +345,9 @@ export class ItemWorld {
   updateGridWispRoomVisibility(roomSystem: RoomSystem): void {
     for (const [roomId, meshes] of this.gridPickupMeshesByRoom) {
       const visible = roomSystem.isRoomAccessibleForGameplay(roomId)
+      const prevVisible = this.gridPickupVisibleByRoom.get(roomId)
+      if (prevVisible === visible) continue
+      this.gridPickupVisibleByRoom.set(roomId, visible)
       for (const mesh of meshes) {
         mesh.visible = visible
       }
@@ -730,6 +734,7 @@ export class ItemWorld {
         gridMeshes.delete(mesh)
         if (gridMeshes.size === 0) {
           this.gridPickupMeshesByRoom.delete(roomId)
+          this.gridPickupVisibleByRoom.delete(roomId)
         }
       }
     }

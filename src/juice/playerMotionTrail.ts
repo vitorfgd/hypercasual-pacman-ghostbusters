@@ -18,10 +18,70 @@ export type PlayerMotionTrailMode =
   | 'power'
   | 'recover'
 
+export type TrailStyleId =
+  | 'default'
+  | 'spectral'
+  | 'rose'
+  | 'royal'
+
 type TrailPuff = {
   mesh: Mesh
   life: number
   duration: number
+}
+
+type TrailPalette = {
+  heavy: number
+  sprint: number
+  power: number
+  recover: number
+  puffHeavy: number
+  puffSprint: number
+  puffPower: number
+  puffRecover: number
+}
+
+const TRAIL_PALETTES: Record<TrailStyleId, TrailPalette> = {
+  default: {
+    heavy: 0xffaa66,
+    sprint: 0xa8ffe6,
+    power: 0x75f1ff,
+    recover: 0xff8ca8,
+    puffHeavy: 0xffb36c,
+    puffSprint: 0xafffe8,
+    puffPower: 0x7ce9ff,
+    puffRecover: 0xff8aa1,
+  },
+  spectral: {
+    heavy: 0x91ffe2,
+    sprint: 0xc8fff0,
+    power: 0x77e8ff,
+    recover: 0x9ef0d4,
+    puffHeavy: 0x8ff7d7,
+    puffSprint: 0xd5fff3,
+    puffPower: 0x91f0ff,
+    puffRecover: 0xaaf2dd,
+  },
+  rose: {
+    heavy: 0xff7ea6,
+    sprint: 0xff9cc0,
+    power: 0xff5f92,
+    recover: 0xffb0cf,
+    puffHeavy: 0xff86aa,
+    puffSprint: 0xffb5cf,
+    puffPower: 0xff6d9a,
+    puffRecover: 0xffcadf,
+  },
+  royal: {
+    heavy: 0xf7c65e,
+    sprint: 0xcfb0ff,
+    power: 0x8ec4ff,
+    recover: 0xffd88f,
+    puffHeavy: 0xffd173,
+    puffSprint: 0xdfc9ff,
+    puffPower: 0x9fd2ff,
+    puffRecover: 0xffe0a8,
+  },
 }
 
 /**
@@ -34,6 +94,7 @@ export class PlayerMotionTrail {
   private readonly puffs: TrailPuff[] = []
   private lastPuffX = NaN
   private lastPuffZ = NaN
+  private style: TrailStyleId = 'default'
 
   constructor(scene: Scene) {
     this.root.name = 'playerMotionTrail'
@@ -96,10 +157,7 @@ export class PlayerMotionTrail {
         this.pts[i]!.lerp(this.pts[i - 1]!, k)
       }
 
-      let color = 0xffaa66
-      if (mode === 'power') color = 0x75f1ff
-      else if (mode === 'recover') color = 0xff8ca8
-      else if (mode === 'sprint') color = 0xa8ffe6
+      const color = trailColorForMode(this.style, mode)
 
       for (let i = 0; i < this.meshes.length; i++) {
         const m = this.meshes[i]!
@@ -160,10 +218,15 @@ export class PlayerMotionTrail {
     puff.mesh.scale.setScalar(0.72 + intensity * 0.55)
     const mat = puff.mesh.material as MeshBasicMaterial
     mat.opacity = 0.16
-    if (mode === 'power') mat.color.setHex(0x7ce9ff)
-    else if (mode === 'recover') mat.color.setHex(0xff8aa1)
-    else if (mode === 'sprint') mat.color.setHex(0xafffe8)
-    else mat.color.setHex(0xffb36c)
+    const palette = TRAIL_PALETTES[this.style]
+    if (mode === 'power') mat.color.setHex(palette.puffPower)
+    else if (mode === 'recover') mat.color.setHex(palette.puffRecover)
+    else if (mode === 'sprint') mat.color.setHex(palette.puffSprint)
+    else mat.color.setHex(palette.puffHeavy)
+  }
+
+  setStyle(style: TrailStyleId): void {
+    this.style = style
   }
 
   dispose(): void {
@@ -178,4 +241,15 @@ export class PlayerMotionTrail {
     }
     this.meshes.length = 0
   }
+}
+
+function trailColorForMode(
+  style: TrailStyleId,
+  mode: PlayerMotionTrailMode,
+): number {
+  const palette = TRAIL_PALETTES[style]
+  if (mode === 'power') return palette.power
+  if (mode === 'recover') return palette.recover
+  if (mode === 'sprint') return palette.sprint
+  return palette.heavy
 }

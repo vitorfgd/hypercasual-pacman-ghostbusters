@@ -15,6 +15,7 @@ import type { PlayerCharacterVisual } from '../systems/player/PlayerCharacterVis
 import {
   formatNavDebugHud,
   SHOW_PLAYER_NAV_DEBUG_HUD,
+  type PlayerNavDebugSnapshot,
 } from '../systems/player/playerNavDebug.ts'
 import { PLAYER_BASE_MAX_SPEED } from '../systems/gameplaySpeed.ts'
 import { PlayerController } from '../systems/player/PlayerController.ts'
@@ -99,10 +100,7 @@ import {
   GHOST_HIT_SLOW_MO_SEC,
   POWER_MODE_DURATION_MAX_SEC,
   POWER_MODE_DURATION_MIN_SEC,
-  loadSavedCameraMode,
   PLAYER_MAX_LIVES,
-  saveCameraMode,
-  type CameraMode,
 } from '../juice/juiceConfig.ts'
 import { spawnLifeLostImpact } from '../juice/lifeHudJuice.ts'
 import { showRunFailedOverlay } from '../juice/runFailedOverlay.ts'
@@ -111,10 +109,20 @@ import {
   type PlayerMotionTrailMode,
 } from '../juice/playerMotionTrail.ts'
 import {
+  primeFloatingHudEffects,
   spawnFloatingHudText,
   spawnRoomClearedBanner,
   spawnRoomEntryBanner,
 } from '../juice/floatingHud.ts'
+import {
+  loadSavedProgressPresentState,
+  recordPresentProgress,
+  rewardDefById,
+  saveProgressPresentState,
+  type PresentRewardId,
+  type ProgressPresentOutcome,
+  type ProgressPresentState,
+} from './progressPresents.ts'
 import {
   disposeAllGhostHitBursts,
   spawnDirectionalFloorPulse,
@@ -177,6 +185,28 @@ function easeInOutCubic(t: number): number {
   return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2
 }
 
+type RoomLagAuditWindow = Window & {
+  __roomLagAudit?: boolean
+  __roomLagAuditMinFrameMs?: number
+}
+
+type RoomLagAuditFrame = {
+  totalMs: number
+  trapFieldMs: number
+  playerMs: number
+  doorUnlockMs: number
+  itemWorldMs: number
+  collectionMs: number
+  ghostSystemMs: number
+  areaBefore: AreaId | null
+  areaAfter: AreaId | null
+  roomBefore: RoomId | null
+  roomAfter: RoomId | null
+  nav: Readonly<PlayerNavDebugSnapshot>
+}
+
+type PendingTrailPresentPhase = 'closed' | 'ready' | 'opened'
+
 export class Game {
   /** Mulberry32 stream for gameplay RNG (new seed each session). */
   private readonly runRandom: () => number
@@ -227,7 +257,6 @@ export class Game {
   private hudSpawn: HTMLElement | null = null
   private readonly gameViewport: HTMLElement
   private readonly velScratch = new Vector3()
-  /** Ground-plane camera forward for OTS movement (XZ only). */
   private readonly camForwardScratch = new Vector3()
   private readonly playerPos = new Vector3()
   private lastGhostInvuln = false
@@ -251,6 +280,8 @@ export class Game {
   private runStatBossReachedAtSec: number | null = null
   private readonly runStatUpgradesPicked: { id: string; title: string }[] = []
   private personalBest: PersonalBestSnapshot = loadSavedPersonalBest()
+  private readonly progressPresentState: ProgressPresentState =
+    loadSavedProgressPresentState()
   private roomShieldAvailable = false
   private shieldRefreshRoomId: RoomId | null = null
   private leaderboardOverlayEl: HTMLElement | null = null
@@ -275,6 +306,23 @@ export class Game {
   private endlessCurrentWispIds: string[] = []
   private endlessCurrentPowerPelletId: string | null = null
   private readonly playerTrail: PlayerMotionTrail
+  private readonly presentTrackEl: HTMLElement
+  private readonly presentTrackFillEl: HTMLElement
+  private readonly presentTrackLabelEl: HTMLElement
+  private readonly presentTrackSubEl: HTMLElement
+  private presentTrackTimer: ReturnType<typeof setTimeout> | null = null
+  private readonly presentOverlayEl: HTMLElement
+  private readonly presentOverlayEyebrowEl: HTMLElement
+  private readonly presentOverlayTitleEl: HTMLElement
+  private readonly presentOverlaySubEl: HTMLElement
+  private readonly presentOverlayRewardEl: HTMLElement
+  private readonly presentOverlayActionBtn: HTMLButtonElement
+  private presentOverlayPhase: PendingTrailPresentPhase = 'closed'
+  private presentOverlayContinue: (() => void) | null = null
+  private presentOverlayPendingRewardId: PresentRewardId | null = null
+  private presentOverlayPaused = false
+  private readonly tutorialOverlayEl: HTMLElement
+  private tutorialPaused = true
   private ghostHitSlowMoRemain = 0
   private roomEntrySlowMoRemain = 0
   private trapHitSlowMoRemain = 0
@@ -293,8 +341,6 @@ export class Game {
   private roomEntryTrailRemain = 0
   private powerBurstTrailRemain = 0
   private recoverTrailRemain = 0
-  private movementLaunchRemain = 0
-  private lastPlayerSpeed = 0
   /** Hide north welcome banner after first exit from the safe hub room. */
   private hubWelcomeHidden = false
   private wasInSafeRoom = true
@@ -303,6 +349,13 @@ export class Game {
   private readonly gameStartCountdownEl: HTMLElement
   private readonly navDebugHudEl: HTMLElement | null
   private lastNavIdleWarnSec = -999
+  private roomLagAuditStaticLogged = false
+  private lastLagAuditArea: AreaId | null = null
+  private lastLagAuditNavBoundsKey = ''
+  private readonly pendingDoorPassageEvents: {
+    roomIndex: number
+    doorIndex: number
+  }[] = []
 
   /** Room clear: zoom out + slow-mo while ghosts fade; then upgrade picker. */
   private roomClearIntroCinematicRunning = false
@@ -334,19 +387,20 @@ export class Game {
   /** Seconds until success overlay after boss defeat (ghosts fading). */
   private bossVictoryOutroRemain: number | null = null
 
-  private readonly onCameraModeKey = (e: KeyboardEvent): void => {
-    if (e.code !== 'KeyC') return
-    if (e.repeat) return
-    const t = e.target
-    if (t instanceof HTMLElement && (t.isContentEditable || t.closest('input, textarea, select'))) {
+  private readonly handlePresentOverlayAction = (): void => {
+    if (this.presentOverlayPhase === 'ready') {
+      this.openPendingPresentReward()
       return
     }
-    e.preventDefault()
-    const next: CameraMode =
-      this.cameraRig.getMode() === 'top_down' ? 'over_shoulder' : 'top_down'
-    this.cameraRig.setMode(next)
-    saveCameraMode(next)
-    this.syncCameraModeHud()
+    if (this.presentOverlayPhase === 'opened') {
+      this.finishPresentOverlayFlow()
+    }
+  }
+
+  private readonly handleTutorialContinue = (): void => {
+    this.tutorialPaused = false
+    this.tutorialOverlayEl.classList.remove('door-tutorial-overlay--show')
+    this.tutorialOverlayEl.setAttribute('aria-hidden', 'true')
   }
 
   constructor(
@@ -430,6 +484,7 @@ export class Game {
     this.hudSafePbSummaryEl = hudSafePbSummaryEl
     this.hudSafePbActionsEl = hudSafePbActionsEl
     this.hudCameraHintEl = host.querySelector<HTMLElement>('#hud-camera-hint')
+    this.hudCameraHintEl?.remove()
     this.hudLivesWrap = host.querySelector<HTMLElement>('#hud-lives')
     this.hudStackHum = host.querySelector('#hud-stack-hum')
     this.gameStartCountdownEl = document.createElement('div')
@@ -437,6 +492,94 @@ export class Game {
     this.gameStartCountdownEl.setAttribute('aria-live', 'polite')
     this.gameStartCountdownEl.setAttribute('aria-atomic', 'true')
     this.gameViewport.appendChild(this.gameStartCountdownEl)
+    this.presentTrackEl = document.createElement('div')
+    this.presentTrackEl.className = 'present-track'
+    this.presentTrackEl.setAttribute('aria-live', 'polite')
+    this.presentTrackEl.setAttribute('aria-hidden', 'true')
+    const presentTrackPanel = document.createElement('div')
+    presentTrackPanel.className = 'present-track__panel'
+    const presentTrackMeta = document.createElement('div')
+    presentTrackMeta.className = 'present-track__meta'
+    this.presentTrackLabelEl = document.createElement('div')
+    this.presentTrackLabelEl.className = 'present-track__label'
+    this.presentTrackSubEl = document.createElement('div')
+    this.presentTrackSubEl.className = 'present-track__sub'
+    presentTrackMeta.append(this.presentTrackLabelEl, this.presentTrackSubEl)
+    const presentTrackBar = document.createElement('div')
+    presentTrackBar.className = 'present-track__bar'
+    this.presentTrackFillEl = document.createElement('div')
+    this.presentTrackFillEl.className = 'present-track__fill'
+    presentTrackBar.appendChild(this.presentTrackFillEl)
+    presentTrackPanel.append(presentTrackMeta, presentTrackBar)
+    this.presentTrackEl.appendChild(presentTrackPanel)
+    this.gameViewport.appendChild(this.presentTrackEl)
+    this.presentOverlayEl = document.createElement('div')
+    this.presentOverlayEl.className = 'present-overlay hidden'
+    this.presentOverlayEl.setAttribute('aria-hidden', 'true')
+    const presentOverlayBackdrop = document.createElement('div')
+    presentOverlayBackdrop.className = 'present-overlay__backdrop'
+    presentOverlayBackdrop.setAttribute('aria-hidden', 'true')
+    const presentOverlayPanel = document.createElement('div')
+    presentOverlayPanel.className = 'present-overlay__panel'
+    this.presentOverlayEyebrowEl = document.createElement('p')
+    this.presentOverlayEyebrowEl.className = 'present-overlay__eyebrow'
+    this.presentOverlayTitleEl = document.createElement('h2')
+    this.presentOverlayTitleEl.className = 'present-overlay__title'
+    this.presentOverlaySubEl = document.createElement('p')
+    this.presentOverlaySubEl.className = 'present-overlay__sub'
+    this.presentOverlayRewardEl = document.createElement('div')
+    this.presentOverlayRewardEl.className = 'present-overlay__reward'
+    this.presentOverlayActionBtn = document.createElement('button')
+    this.presentOverlayActionBtn.type = 'button'
+    this.presentOverlayActionBtn.className = 'present-overlay__action'
+    this.presentOverlayActionBtn.addEventListener(
+      'click',
+      this.handlePresentOverlayAction,
+    )
+    presentOverlayPanel.append(
+      this.presentOverlayEyebrowEl,
+      this.presentOverlayTitleEl,
+      this.presentOverlaySubEl,
+      this.presentOverlayRewardEl,
+      this.presentOverlayActionBtn,
+    )
+    this.presentOverlayEl.append(presentOverlayBackdrop, presentOverlayPanel)
+    this.gameViewport.appendChild(this.presentOverlayEl)
+    this.tutorialOverlayEl = document.createElement('div')
+    this.tutorialOverlayEl.className = 'door-tutorial-overlay door-tutorial-overlay--show'
+    this.tutorialOverlayEl.setAttribute('aria-hidden', 'false')
+    const tutorialBackdrop = document.createElement('div')
+    tutorialBackdrop.className = 'door-tutorial-overlay__backdrop'
+    tutorialBackdrop.setAttribute('aria-hidden', 'true')
+    const tutorialPanel = document.createElement('div')
+    tutorialPanel.className = 'door-tutorial-overlay__panel'
+    const tutorialEyebrow = document.createElement('p')
+    tutorialEyebrow.className = 'door-tutorial-overlay__eyebrow'
+    tutorialEyebrow.textContent = 'How to play'
+    const tutorialTitle = document.createElement('h2')
+    tutorialTitle.className = 'door-tutorial-overlay__title'
+    tutorialTitle.textContent = 'Sweep rooms. Stay unseen.'
+    const tutorialCopy = document.createElement('div')
+    tutorialCopy.className = 'door-tutorial-overlay__copy'
+    tutorialCopy.innerHTML =
+      '<p>Collect every wisp in a room to clear it and unlock the next gate.</p><p>Ghosts patrol on the same grid you do. Break line of sight with walls and avoid their vision cones.</p><p>Power pickups let you flip the chase for a short time, and present rewards unlock new trails as you push deeper.</p>'
+    const tutorialStatus = document.createElement('p')
+    tutorialStatus.className = 'door-tutorial-overlay__status'
+    tutorialStatus.textContent = 'Tap OK to begin'
+    const tutorialContinue = document.createElement('button')
+    tutorialContinue.type = 'button'
+    tutorialContinue.className = 'door-tutorial-overlay__continue'
+    tutorialContinue.textContent = 'OK'
+    tutorialContinue.addEventListener('click', this.handleTutorialContinue)
+    tutorialPanel.append(
+      tutorialEyebrow,
+      tutorialTitle,
+      tutorialCopy,
+      tutorialStatus,
+      tutorialContinue,
+    )
+    this.tutorialOverlayEl.append(tutorialBackdrop, tutorialPanel)
+    this.gameViewport.appendChild(this.tutorialOverlayEl)
     this.navDebugHudEl = host.querySelector('#nav-debug-hud')
     if (!SHOW_PLAYER_NAV_DEBUG_HUD && this.navDebugHudEl) {
       this.navDebugHudEl.style.display = 'none'
@@ -477,7 +620,6 @@ export class Game {
     if (this.hudCarryEl) this.hudCarryEl.textContent = '0'
     this.stackVisual.sync(this.stack.getSnapshot(), 0)
 
-    const savedCam = loadSavedCameraMode()
     this.cameraRig = new CameraRig(
       this.camera,
       playerRoot,
@@ -485,11 +627,10 @@ export class Game {
       {
         worldCollision: this.worldCollision,
         getFacingYaw: () => this.player.getFacingYaw(),
-        initialMode: savedCam ?? 'top_down',
       },
     )
-    window.addEventListener('keydown', this.onCameraModeKey)
-    this.syncCameraModeHud()
+    void this.syncCameraModeHud
+    void this.applyOtsCameraRelativeMove
     this.syncLivesHud()
 
     this.itemWorld = new ItemWorld(pickupGroup, scene)
@@ -499,18 +640,13 @@ export class Game {
       scene: this.scene,
       worldCollision: this.worldCollision,
       onDoorPassageCleared: (doorIndex) => {
-        /** Defer one frame so door colliders + camera settle; ghost spawns use per-frame budget. */
-        requestAnimationFrame(() => {
-          this.syncRoomPickupAccessibilityFromDoors()
-          const nextRoom = doorIndex + 1
-          if (nextRoom >= 1 && nextRoom <= NORMAL_ROOM_COUNT) {
-            this.triggerRoomEntryJuice(nextRoom, doorIndex)
-            const spawned = this.ghostSystem.spawnGhostsForRoom(nextRoom)
-            if (spawned > 0) {
-              this.triggerEnemySpawnJuice(spawned)
-            }
-          }
-        })
+        const nextRoom = doorIndex + 1
+        if (nextRoom >= 1 && nextRoom <= NORMAL_ROOM_COUNT) {
+          this.pendingDoorPassageEvents.push({
+            roomIndex: nextRoom,
+            doorIndex,
+          })
+        }
       },
       onDoorSlamShut: (doorIndex) => {
         this.triggerDoorImpactJuice(doorIndex)
@@ -567,6 +703,7 @@ export class Game {
       },
     )
     this.playerTrail = new PlayerMotionTrail(this.scene)
+    this.applyEquippedTrailStyle()
 
     this.specialRelicSpawns = new SpecialRelicSpawnSystem({
       itemWorld: this.itemWorld,
@@ -632,6 +769,7 @@ export class Game {
     )
 
     this.syncPlayerCharacterVisual(0)
+    primeFloatingHudEffects(this.gameViewport)
     this.ghostSystem.prewarmAllFutureGhosts()
     this.prewarmRoomTransitionCompile()
 
@@ -642,19 +780,25 @@ export class Game {
     const tick = (now: number) => {
       if (this.gameOver) return
       this.raf = requestAnimationFrame(tick)
-      if (this.roomUpgradePaused) {
+        if (this.roomUpgradePaused || this.presentOverlayPaused) {
+          this.lastTime = now
+          this.perf.beginFrame(now)
+          this.renderer.render(this.scene, this.camera)
+          this.perf.endFrame(this.renderer.info.render.calls, 0)
+          return
+      }
+        const dt = Math.min(0.05, (now - this.lastTime) / 1000)
         this.lastTime = now
         this.perf.beginFrame(now)
-        this.renderer.render(this.scene, this.camera)
-        this.perf.endFrame(this.renderer.info.render.calls, 0)
-        return
-      }
-      const dt = Math.min(0.05, (now - this.lastTime) / 1000)
-      this.lastTime = now
-      this.perf.beginFrame(now)
-      if (this.gameStartCountdownRemain > 0) {
-        this.updateGameStartCountdown(dt)
-        this.ghostSystem.prewarmFutureGhosts(4)
+        if (this.tutorialPaused) {
+          this.syncPlayerCharacterVisual(dt)
+          this.renderer.render(this.scene, this.camera)
+          this.perf.endFrame(this.renderer.info.render.calls, 0)
+          return
+        }
+        if (this.gameStartCountdownRemain > 0) {
+          this.updateGameStartCountdown(dt)
+          this.ghostSystem.prewarmFutureGhosts(4)
         this.syncPlayerCharacterVisual(dt)
         this.renderer.render(this.scene, this.camera)
         this.perf.endFrame(this.renderer.info.render.calls, 0)
@@ -664,21 +808,26 @@ export class Game {
 
       let pickupsThisFrame = 0
 
-      let move = mergeMoveInput(
-        this.joystick.getVector(),
-        this.keyboardMove.getVector(),
-      )
-      if (this.isInteractionCinematicBlocking()) {
-        move = { x: 0, y: 0, fingerDown: false, active: false }
-      } else {
-        move = this.applyOtsCameraRelativeMove(move)
-      }
+        let move = mergeMoveInput(
+          this.joystick.getVector(),
+          this.keyboardMove.getVector(),
+        )
+        if (this.isInteractionCinematicBlocking()) {
+          move = { x: 0, y: 0, fingerDown: false, active: false }
+        }
 
       this.player.getPosition(this.playerPos)
+      const auditEnabled = this.isRoomLagAuditEnabled()
+      if (auditEnabled) this.logRoomLagStaticSnapshotOnce()
+      const frameAuditStartMs = auditEnabled ? performance.now() : 0
       const roomEarly = this.roomSystem.getRoomAt(
         this.playerPos.x,
         this.playerPos.z,
       )
+      const areaBeforeFrame = auditEnabled
+        ? this.roomSystem.getAreaAt(this.playerPos.x, this.playerPos.z)
+        : null
+      const roomBeforeFrame = auditEnabled ? roomEarly : null
       this.updateDeepestRoomReached(roomEarly)
       this.updateBossReachStat(roomEarly)
       this.refreshRoomShield(roomEarly)
@@ -692,6 +841,7 @@ export class Game {
         this.hubWelcomeHidden = true
       }
       this.wasInSafeRoom = inSafeRoomEarly
+      this.flushPendingDoorPassageEvents()
 
       const roomPre = this.roomSystem.getRoomAt(this.playerPos.x, this.playerPos.z)
       if (
@@ -709,6 +859,13 @@ export class Game {
         this.stack.getSnapshot(),
         this.getRoomCleaningProgressForBag(),
       )
+      let trapFieldMs = 0
+      let playerMs = 0
+      let doorUnlockMs = 0
+      let itemWorldMs = 0
+      let collectionMs = 0
+      let ghostSystemMs = 0
+      let sectionStartMs = auditEnabled ? performance.now() : 0
       const trapSlow = this.trapField.update(
         this.elapsedSec,
         this.playerPos.x,
@@ -720,6 +877,9 @@ export class Game {
           },
         },
       )
+      if (auditEnabled) {
+        trapFieldMs = performance.now() - sectionStartMs
+      }
       const weight = computeCarryEncumbranceWeight(this.stack.count)
       const relief = this.runUpgrades.encumbranceReliefStacks
       this.player.setMovementSlowMultiplier(
@@ -737,7 +897,6 @@ export class Game {
       this.roomEntryTrailRemain = Math.max(0, this.roomEntryTrailRemain - dt)
       this.powerBurstTrailRemain = Math.max(0, this.powerBurstTrailRemain - dt)
       this.recoverTrailRemain = Math.max(0, this.recoverTrailRemain - dt)
-      this.movementLaunchRemain = Math.max(0, this.movementLaunchRemain - dt)
 
       let simScale = 1
       if (this.ghostHitSlowMoRemain > 0) {
@@ -764,6 +923,7 @@ export class Game {
         simDt *= ROOM_CLEAR_CINE_SLOW_SIM_SCALE
       }
 
+      if (auditEnabled) sectionStartMs = performance.now()
       this.player.update(
         simDt,
         move,
@@ -771,6 +931,9 @@ export class Game {
           this.roomSystem.getNavGridBounds(x, z, this.player.getGridNavContext()),
         (x, z) => this.roomSystem.getGridBoundsAt(x, z),
       )
+      if (auditEnabled) {
+        playerMs = performance.now() - sectionStartMs
+      }
       if (SHOW_PLAYER_NAV_DEBUG_HUD && this.navDebugHudEl) {
         const snap = this.player.getNavDebugSnapshot()
         this.navDebugHudEl.textContent = formatNavDebugHud(snap)
@@ -787,10 +950,6 @@ export class Game {
       this.player.getPosition(this.playerPos)
       this.player.getVelocity(this.velScratch)
       const speedNow = this.player.getHorizontalSpeed()
-      if (speedNow > 0.55 && this.lastPlayerSpeed <= 0.18) {
-        this.movementLaunchRemain = Math.max(this.movementLaunchRemain, 0.2)
-        this.pulseViewportClass('game-viewport--pulse-launch', 180)
-      }
       const yaw = this.player.getFacingYaw()
       const doorPlayer: DoorPlayerSample = {
         x: this.playerPos.x,
@@ -800,19 +959,28 @@ export class Game {
         facingX: -Math.sin(yaw),
         facingZ: -Math.cos(yaw),
       }
+      if (auditEnabled) sectionStartMs = performance.now()
       this.doorUnlock.update(dt, this.elapsedSec, doorPlayer)
+      if (auditEnabled) {
+        doorUnlockMs = performance.now() - sectionStartMs
+      }
       this.itemWorld.updateClutterGateReveal(this.doorUnlock)
+      this.itemWorld.updateGridWispRoomVisibility(this.roomSystem)
       this.roomLockCovers.update()
 
+      if (auditEnabled) sectionStartMs = performance.now()
       this.itemWorld.updateVisuals(this.elapsedSec, dt)
+      if (auditEnabled) {
+        itemWorldMs = performance.now() - sectionStartMs
+      }
 
       let trailMode: PlayerMotionTrailMode = 'heavy'
       let trailIntensity = weight >= 0.72 ? (weight - 0.72) / (1 - 0.72) : 0
-      if (this.movementLaunchRemain > 0 || this.roomEntryTrailRemain > 0) {
+      if (this.roomEntryTrailRemain > 0) {
         trailMode = 'sprint'
         trailIntensity = Math.max(
           trailIntensity,
-          0.3 + this.movementLaunchRemain * 1.1 + this.roomEntryTrailRemain * 0.45,
+          0.3 + this.roomEntryTrailRemain * 0.45,
         )
       }
       if (this.recoverTrailRemain > 0) {
@@ -834,7 +1002,6 @@ export class Game {
         dt,
         { mode: trailMode, speed: speedNow },
       )
-      this.lastPlayerSpeed = speedNow
 
       const hadPowerHud = this.powerModeRemain > 0
       this.powerModeRemain = Math.max(0, this.powerModeRemain - simDt)
@@ -842,6 +1009,7 @@ export class Game {
         this.gameViewport.classList.remove('game-viewport--power-mode')
       }
 
+      if (auditEnabled) sectionStartMs = performance.now()
       const collected = this.collection.update(
         this.player,
         this.stack,
@@ -850,9 +1018,12 @@ export class Game {
         {
           pickupBlocked:
             this.ghostHitPickupLockRemain > 0 ||
-            this.isInteractionCinematicBlocking(),
+          this.isInteractionCinematicBlocking(),
         },
       )
+      if (auditEnabled) {
+        collectionMs = performance.now() - sectionStartMs
+      }
       for (const { item, pickupX, pickupZ } of collected) {
         let remainingWispsInRoom: number | null = null
         if (item.type === 'power_pellet') {
@@ -961,6 +1132,7 @@ export class Game {
       }
       this.cameraRig.setPowerModeActive(this.powerModeRemain > 0)
 
+      if (auditEnabled) sectionStartMs = performance.now()
       this.ghostSystem.update(
         simDt,
         dt,
@@ -969,6 +1141,9 @@ export class Game {
         this.isInteractionCinematicBlocking(),
         this.powerModeRemain > 0,
       )
+      if (auditEnabled) {
+        ghostSystemMs = performance.now() - sectionStartMs
+      }
       const coneAggroTriggers = this.ghostSystem.consumeVisionAggroEvents()
       if (coneAggroTriggers > 0) {
         this.triggerGhostAggroJuice(
@@ -1157,6 +1332,24 @@ export class Game {
         }
       }
 
+      if (auditEnabled) {
+        const nav = this.player.getNavDebugSnapshot()
+        this.logRoomLagFrame({
+          totalMs: performance.now() - frameAuditStartMs,
+          trapFieldMs,
+          playerMs,
+          doorUnlockMs,
+          itemWorldMs,
+          collectionMs,
+          ghostSystemMs,
+          areaBefore: areaBeforeFrame,
+          areaAfter: this.roomSystem.getAreaAt(this.playerPos.x, this.playerPos.z),
+          roomBefore: roomBeforeFrame,
+          roomAfter: this.roomSystem.getRoomAt(this.playerPos.x, this.playerPos.z),
+          nav,
+        })
+      }
+
       this.renderer.render(scene, this.camera)
       this.perf.endFrame(this.renderer.info.render.calls, pickupsThisFrame)
     }
@@ -1222,7 +1415,6 @@ export class Game {
         (POWER_MODE_DURATION_MAX_SEC - POWER_MODE_DURATION_MIN_SEC)
     this.powerPickupSlowMoRemain = 0.12
     this.powerBurstTrailRemain = 0.95
-    this.movementLaunchRemain = Math.max(this.movementLaunchRemain, 0.18)
     this.gameViewport.classList.add('game-viewport--power-mode')
     this.pulseViewportClass('game-viewport--power-burst', 420)
     if (pickupX !== undefined && pickupZ !== undefined) {
@@ -1720,9 +1912,254 @@ export class Game {
     }, durationMs)
   }
 
-  private syncRoomPickupAccessibilityFromDoors(): void {
-    this.itemWorld.updateClutterGateReveal(this.doorUnlock)
-    this.itemWorld.updateGridWispRoomVisibility(this.roomSystem)
+  private applyEquippedTrailStyle(): void {
+    this.playerTrail.setStyle(this.progressPresentState.equippedTrailStyle)
+  }
+
+  private saveProgressPresents(): void {
+    saveProgressPresentState(this.progressPresentState)
+  }
+
+  private updatePresentTrack(
+    outcome: ProgressPresentOutcome,
+    opts?: { rewardReadyLabel?: boolean },
+  ): void {
+    if (this.presentTrackTimer) {
+      clearTimeout(this.presentTrackTimer)
+      this.presentTrackTimer = null
+    }
+    const rewardReady =
+      opts?.rewardReadyLabel || outcome.grantedRewardIds.length > 0
+    const fillPct = Math.max(0, Math.min(100, outcome.fillRatio * 100))
+    this.presentTrackFillEl.style.transform = `scaleX(${fillPct / 100})`
+    if (outcome.allRewardsClaimed) {
+      this.presentTrackLabelEl.textContent = 'All present trails claimed'
+      this.presentTrackSubEl.textContent = 'Every trail box is already open.'
+    } else if (rewardReady) {
+      this.presentTrackLabelEl.textContent = 'Present ready'
+      this.presentTrackSubEl.textContent = 'A new trail crate is waiting. Open it after the clear.'
+    } else {
+      const rooms = Math.max(1, outcome.roomsUntilNextPresent)
+      this.presentTrackLabelEl.textContent = `Present in ${rooms} room${rooms === 1 ? '' : 's'}`
+      this.presentTrackSubEl.textContent =
+        outcome.source === 'boss'
+          ? 'Boss clear filled the whole reward bar.'
+          : `${outcome.progress}/${outcome.threshold} room clears on the bar`
+    }
+    this.presentTrackEl.classList.remove('hidden')
+    this.presentTrackEl.classList.add('present-track--show')
+    this.presentTrackEl.setAttribute('aria-hidden', 'false')
+    if (rewardReady) {
+      this.presentTrackEl.classList.add('present-track--ready')
+    } else {
+      this.presentTrackEl.classList.remove('present-track--ready')
+    }
+    this.presentTrackTimer = setTimeout(() => {
+      this.presentTrackEl.classList.remove(
+        'present-track--show',
+        'present-track--ready',
+      )
+      this.presentTrackEl.classList.add('hidden')
+      this.presentTrackEl.setAttribute('aria-hidden', 'true')
+      this.presentTrackTimer = null
+    }, rewardReady ? 4400 : 2800)
+  }
+
+  private stageRoomClearPresentProgress(
+    source: 'normal' | 'boss',
+    roomNumber?: number,
+  ): ProgressPresentOutcome {
+    const outcome = recordPresentProgress(
+      this.progressPresentState,
+      source,
+      roomNumber,
+    )
+    this.saveProgressPresents()
+    this.updatePresentTrack(outcome)
+    return outcome
+  }
+
+  private maybeStartPresentOverlay(continueFn: () => void): boolean {
+    const nextRewardId = this.progressPresentState.pendingRewardIds[0]
+    if (!nextRewardId) return false
+    const reward = rewardDefById(nextRewardId)
+    if (!reward) {
+      this.progressPresentState.pendingRewardIds.shift()
+      this.saveProgressPresents()
+      return this.maybeStartPresentOverlay(continueFn)
+    }
+
+    this.presentOverlayPaused = true
+    this.presentOverlayContinue = continueFn
+    this.presentOverlayPendingRewardId = reward.id
+    this.presentOverlayPhase = 'ready'
+    this.presentOverlayEyebrowEl.textContent = 'Progress reward'
+    this.presentOverlayTitleEl.textContent = 'You got a present'
+    this.presentOverlaySubEl.textContent =
+      'Open it to reveal your next trail. It will equip right away.'
+    this.presentOverlayRewardEl.innerHTML =
+      '<div class="present-overlay__reward-box"></div><div class="present-overlay__reward-label">Trail crate ready</div>'
+    this.presentOverlayActionBtn.textContent = 'Open present'
+    this.presentOverlayEl.classList.remove('hidden')
+    this.presentOverlayEl.setAttribute('aria-hidden', 'false')
+    requestAnimationFrame(() => {
+      this.presentOverlayEl.classList.add('present-overlay--show')
+    })
+    return true
+  }
+
+  private openPendingPresentReward(): void {
+    const rewardId = this.presentOverlayPendingRewardId
+    if (!rewardId) return
+    const reward = rewardDefById(rewardId)
+    if (!reward) {
+      this.finishPresentOverlayFlow()
+      return
+    }
+
+    this.progressPresentState.pendingRewardIds = this.progressPresentState.pendingRewardIds.filter(
+      (id) => id !== rewardId,
+    )
+    if (!this.progressPresentState.unlockedRewardIds.includes(rewardId)) {
+      this.progressPresentState.unlockedRewardIds.push(rewardId)
+    }
+    this.progressPresentState.equippedTrailStyle = reward.trailStyle
+    this.saveProgressPresents()
+    this.applyEquippedTrailStyle()
+
+    this.presentOverlayPhase = 'opened'
+    this.presentOverlayEyebrowEl.textContent = 'Trail unlocked'
+    this.presentOverlayTitleEl.textContent = reward.title
+    this.presentOverlaySubEl.textContent = reward.description
+    this.presentOverlayRewardEl.innerHTML =
+      `<div class="present-overlay__reward-box present-overlay__reward-box--open"></div><div class="present-overlay__reward-label">${reward.title} equipped</div>`
+    this.presentOverlayActionBtn.textContent = 'Continue'
+    this.triggerEctoGlow(260)
+    this.pulseViewportClass('game-viewport--pulse-room-clear', 260)
+    spawnFloatingHudText(
+      this.gameViewport,
+      `${reward.title} UNLOCKED`,
+      'float-hud--level-up',
+      { topPct: 24, leftPct: 50, durationSec: 1.4, risePx: 20 },
+    )
+  }
+
+  private finishPresentOverlayFlow(): void {
+    this.presentOverlayPhase = 'closed'
+    this.presentOverlayPendingRewardId = null
+    this.presentOverlayEl.classList.remove('present-overlay--show')
+    this.presentOverlayEl.classList.add('hidden')
+    this.presentOverlayEl.setAttribute('aria-hidden', 'true')
+    this.presentOverlayPaused = false
+    const continueFn = this.presentOverlayContinue
+    this.presentOverlayContinue = null
+    if (this.progressPresentState.pendingRewardIds.length > 0 && continueFn) {
+      this.maybeStartPresentOverlay(continueFn)
+      return
+    }
+    continueFn?.()
+  }
+
+  private isRoomLagAuditEnabled(): boolean {
+    const w = window as RoomLagAuditWindow
+    return w.__roomLagAudit === true
+  }
+
+  private getRoomLagAuditThresholdMs(): number {
+    const w = window as RoomLagAuditWindow
+    return Math.max(8, w.__roomLagAuditMinFrameMs ?? 12)
+  }
+
+  private logRoomLagStaticSnapshotOnce(): void {
+    if (this.roomLagAuditStaticLogged) return
+    this.roomLagAuditStaticLogged = true
+    const ghostPlans = partitionGhostSpawnsByRoom()
+    const describeRoom = (roomIndex: number) => {
+      const roomId = `ROOM_${roomIndex}` as NormalRoomId
+      const plan = this.roomGridPlans.get(roomId)
+      return {
+        roomId,
+        wisps: plan?.wisps.length ?? 0,
+        traps: plan?.traps.length ?? 0,
+        walls: plan?.walls.length ?? 0,
+        southEdgeWalls:
+          plan?.walls.filter((wall) => wall.row >= ROOM_GRID_ROWS - 2).length ?? 0,
+        southEdgeTraps:
+          plan?.traps.filter((trap) => trap.row >= ROOM_GRID_ROWS - 2).length ?? 0,
+        plannedGhosts: ghostPlans[roomIndex - 1]?.length ?? 0,
+      }
+    }
+    console.info('[room lag audit] static room comparison', {
+      room1: describeRoom(1),
+      room2: describeRoom(2),
+    })
+  }
+
+  private flushPendingDoorPassageEvents(): void {
+    if (this.pendingDoorPassageEvents.length <= 0) return
+    while (this.pendingDoorPassageEvents.length > 0) {
+      const event = this.pendingDoorPassageEvents.shift()
+      if (!event) break
+      this.triggerRoomEntryJuice(event.roomIndex, event.doorIndex)
+      const spawned = this.ghostSystem.spawnGhostsForRoom(event.roomIndex)
+      if (spawned > 0) {
+        this.triggerEnemySpawnJuice(spawned)
+      }
+    }
+  }
+
+  private logRoomLagFrame(frame: RoomLagAuditFrame): void {
+    const thresholdMs = this.getRoomLagAuditThresholdMs()
+    const nav = frame.nav
+    const lastAuditArea = this.lastLagAuditArea
+    const areaChanged = frame.areaBefore !== frame.areaAfter
+    const navKeyChanged = this.lastLagAuditNavBoundsKey !== nav.navBoundsKey
+    const transitionIntoTrackedRoom =
+      frame.areaBefore === 'CORRIDOR' &&
+      (frame.areaAfter === 'ROOM_1' || frame.areaAfter === 'ROOM_2')
+    const correctionSpike =
+      nav.collisionCorrectionTriggered || nav.collisionCorrectionDist >= 0.08
+    const frameSpike = frame.totalMs >= thresholdMs
+    const hardTransitionReset = nav.hadResetThisStep && areaChanged
+    const shouldLog =
+      transitionIntoTrackedRoom ||
+      frameSpike ||
+      correctionSpike ||
+      hardTransitionReset
+
+    this.lastLagAuditArea = frame.areaAfter
+    this.lastLagAuditNavBoundsKey = nav.navBoundsKey
+    if (!shouldLog) return
+
+    console.info('[room lag audit] frame', {
+      totalMs: Number(frame.totalMs.toFixed(2)),
+      trapFieldMs: Number(frame.trapFieldMs.toFixed(2)),
+      playerMs: Number(frame.playerMs.toFixed(2)),
+      doorUnlockMs: Number(frame.doorUnlockMs.toFixed(2)),
+      itemWorldMs: Number(frame.itemWorldMs.toFixed(2)),
+      collectionMs: Number(frame.collectionMs.toFixed(2)),
+      ghostSystemMs: Number(frame.ghostSystemMs.toFixed(2)),
+      areaBefore: frame.areaBefore,
+      areaAfter: frame.areaAfter,
+      lastAuditArea,
+      roomBefore: frame.roomBefore,
+      roomAfter: frame.roomAfter,
+      areaChanged,
+      navKeyChanged,
+      transitionIntoTrackedRoom,
+      correctionSpike,
+      attempted: [nav.attemptedDr, nav.attemptedDc],
+      input: [nav.inputDr, nav.inputDc],
+      reject: nav.segmentRejectReason,
+      correctionDist: Number(nav.collisionCorrectionDist.toFixed(3)),
+      navBoundsKind: nav.navBoundsKind,
+      rawBoundsKind: nav.rawBoundsKind,
+      navBoundsKey: nav.navBoundsKey,
+      rawBoundsKey: nav.rawKeyAtPlayer,
+      hadResetThisStep: nav.hadResetThisStep,
+      idleBlocked: nav.idleBlocked,
+      openCardinals: nav.openCardinals,
+    })
   }
 
   private syncPlayerCharacterVisual(dt: number): void {
@@ -2035,6 +2472,21 @@ export class Game {
     this.powerModeRemain = 0
     this.gameViewport.classList.remove('game-viewport--power-mode')
     this.cameraRig.setPowerModeActive(false)
+    this.presentOverlayContinue = null
+    this.presentOverlayPendingRewardId = null
+    this.presentOverlayPaused = false
+    this.presentOverlayPhase = 'closed'
+    this.presentOverlayEl.classList.remove('present-overlay--show')
+    this.presentOverlayEl.classList.add('hidden')
+    this.presentOverlayEl.setAttribute('aria-hidden', 'true')
+    if (this.presentTrackTimer) {
+      clearTimeout(this.presentTrackTimer)
+      this.presentTrackTimer = null
+    }
+    this.presentTrackEl.classList.remove('present-track--show', 'present-track--ready')
+    this.presentTrackEl.classList.add('hidden')
+    this.presentTrackEl.setAttribute('aria-hidden', 'true')
+    this.applyEquippedTrailStyle()
     this.syncRunUpgradeModifiers()
   }
 
@@ -2073,6 +2525,7 @@ export class Game {
       this.lives,
       this.runStatRoomsCleared,
     )
+    this.stageRoomClearPresentProgress('normal', roomIndex)
     const applyChosen = (offer: (typeof offers)[number]): void => {
       this.pulseViewportClass('game-viewport--pulse-room-clear', 260)
       const res = applyRunUpgrade(offer.id, {
@@ -2091,17 +2544,21 @@ export class Game {
     }
 
     const revealUpgrades = (): void => {
-      if (this.roomUpgradePicker && offers.length > 0) {
-        this.roomUpgradePaused = true
-        this.roomUpgradePicker.show(offers, (offer) => {
-          if (!this.roomUpgradePaused) return
-          this.roomUpgradePicker?.hide()
-          this.roomUpgradePaused = false
-          applyChosen(offer)
-        })
-      } else if (offers[0]) {
-        applyChosen(offers[0])
+      const showUpgrades = (): void => {
+        if (this.roomUpgradePicker && offers.length > 0) {
+          this.roomUpgradePaused = true
+          this.roomUpgradePicker.show(offers, (offer) => {
+            if (!this.roomUpgradePaused) return
+            this.roomUpgradePicker?.hide()
+            this.roomUpgradePaused = false
+            applyChosen(offer)
+          })
+        } else if (offers[0]) {
+          applyChosen(offers[0])
+        }
       }
+      if (this.maybeStartPresentOverlay(showUpgrades)) return
+      showUpgrades()
     }
 
     spawnFloatingHudText(
@@ -2151,6 +2608,7 @@ export class Game {
 
   private completeBossRunVictory(): void {
     if (this.gameOver || this.bossVictoryOutroRemain !== null) return
+    this.stageRoomClearPresentProgress('boss')
     this.runStatRoomsCleared += 1
     spawnRoomClearedBanner(this.gameViewport, 'Mansion cleared')
     this.ghostSystem.beginGateClearFadeForRoom(
@@ -2167,16 +2625,20 @@ export class Game {
   }
 
   private beginEndlessModeAfterBossVictory(): void {
-    this.commitRunPersonalBest()
-    if (this.endlessModeActive) return
-    this.endlessModeActive = true
-    spawnFloatingHudText(
-      this.gameViewport,
-      'Endless unlocked',
-      'float-hud--level-up',
-      { topPct: 24, leftPct: 50, durationSec: 1.35 },
-    )
-    this.spawnEndlessRoom(NORMAL_ROOM_COUNT + 1)
+    const continueIntoEndless = (): void => {
+      this.commitRunPersonalBest()
+      if (this.endlessModeActive) return
+      this.endlessModeActive = true
+      spawnFloatingHudText(
+        this.gameViewport,
+        'Endless unlocked',
+        'float-hud--level-up',
+        { topPct: 24, leftPct: 50, durationSec: 1.35 },
+      )
+      this.spawnEndlessRoom(NORMAL_ROOM_COUNT + 1)
+    }
+    if (this.maybeStartPresentOverlay(continueIntoEndless)) return
+    continueIntoEndless()
   }
 
   /**
@@ -2218,7 +2680,8 @@ export class Game {
       this.roomClearIntroCinematicRunning ||
       this.roomClearDoorCinematicRunning ||
       this.bossIntroCinematicRunning ||
-      this.bossVictoryOutroRemain !== null
+      this.bossVictoryOutroRemain !== null ||
+      this.presentOverlayPaused
     )
   }
 
@@ -2735,13 +3198,17 @@ export class Game {
       clearTimeout(this.ectoGlowTimer)
       this.ectoGlowTimer = null
     }
-    if (this.roomHudUrgencyTimer) {
-      clearTimeout(this.roomHudUrgencyTimer)
-      this.roomHudUrgencyTimer = null
-    }
-    for (const timer of this.viewportClassTimers.values()) {
-      clearTimeout(timer)
-    }
+      if (this.roomHudUrgencyTimer) {
+        clearTimeout(this.roomHudUrgencyTimer)
+        this.roomHudUrgencyTimer = null
+      }
+      if (this.presentTrackTimer) {
+        clearTimeout(this.presentTrackTimer)
+        this.presentTrackTimer = null
+      }
+      for (const timer of this.viewportClassTimers.values()) {
+        clearTimeout(timer)
+      }
     this.viewportClassTimers.clear()
     if (this.hitFlashTimer) {
       clearTimeout(this.hitFlashTimer)
@@ -2768,20 +3235,28 @@ export class Game {
     this.hubTitleFloorLabel.dispose()
     this.trapField.dispose()
     this.mazeWalls.dispose()
-    this.playerTrail.dispose()
-    this.ghostSystem.dispose()
-    disposeSharedGhostVisionConeGeometry()
+      this.playerTrail.dispose()
+      this.ghostSystem.dispose()
+      disposeSharedGhostVisionConeGeometry()
     disposeGhostGltfTemplate(this.ghostGltfTemplate)
     this.stackVisual.dispose()
     this.playerCharacter.dispose()
     disposePlayerGltfTemplate(this.playerGltfTemplate)
     disposeGhostSharedGeometry()
-    window.removeEventListener('keydown', this.onCameraModeKey)
-    this.keyboardMove.dispose()
-    this.joystick.dispose()
-    this.gameStartCountdownEl.remove()
-    this.unsubscribeResize()
-    this.renderer.dispose()
+      this.keyboardMove.dispose()
+      this.joystick.dispose()
+      this.tutorialOverlayEl
+        .querySelector<HTMLButtonElement>('.door-tutorial-overlay__continue')
+        ?.removeEventListener('click', this.handleTutorialContinue)
+      this.presentOverlayActionBtn.removeEventListener(
+        'click',
+        this.handlePresentOverlayAction,
+      )
+      this.presentTrackEl.remove()
+      this.presentOverlayEl.remove()
+      this.gameStartCountdownEl.remove()
+      this.unsubscribeResize()
+      this.renderer.dispose()
     this.renderer.domElement.remove()
   }
 }

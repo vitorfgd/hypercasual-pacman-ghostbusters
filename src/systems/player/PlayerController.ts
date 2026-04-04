@@ -25,7 +25,6 @@ import {
 import {
   createEmptyNavDebug,
   type PlayerNavDebugSnapshot,
-  SHOW_PLAYER_NAV_DEBUG_HUD,
 } from './playerNavDebug.ts'
 
 /** Base max speed (before upgrades & ghost pulse); see `gameplaySpeed.ts` */
@@ -37,8 +36,8 @@ export { PLAYER_BASE_MAX_SPEED as DEFAULT_PLAYER_MOVE_SPEED } from '../gameplayS
  */
 const PLAYER_WORLD_COLLISION_RADIUS = 0.46
 
-function isWideRoomBounds(bounds: RoomBounds): boolean {
-  return bounds.maxX - bounds.minX >= 7
+function boundsKind(bounds: RoomBounds): 'corridor' | 'room' {
+  return bounds.maxX - bounds.minX >= 7 ? 'room' : 'corridor'
 }
 
 export class PlayerController {
@@ -278,16 +277,16 @@ export class PlayerController {
       delta?.dc ?? null,
       input.fingerDown,
       getRawGridBoundsAt,
-      (x0, z0, x1, z1, targetBounds) =>
+      (x0, z0, x1, z1, _targetBounds) =>
         this.worldCollision.canTraverseCircleXZ(
           x0,
           z0,
           x1,
           z1,
           PLAYER_WORLD_COLLISION_RADIUS,
-          isWideRoomBounds(targetBounds),
+          false,
         ),
-      SHOW_PLAYER_NAV_DEBUG_HUD ? this.navDebug : null,
+      this.navDebug,
     )
 
     this.lastGridVx = res.vx
@@ -297,7 +296,7 @@ export class PlayerController {
       res.x + this.knockX * dt,
       res.z + this.knockZ * dt,
       PLAYER_WORLD_COLLISION_RADIUS,
-      isWideRoomBounds(rawAtPlayer),
+      false,
     )
 
     this.playerRoot.position.x = resolved.x
@@ -316,25 +315,27 @@ export class PlayerController {
       )
     }
 
-    if (SHOW_PLAYER_NAV_DEBUG_HUD) {
-      const nd = this.navDebug
-      nd.px = px
-      nd.pz = pz
-      nd.afterPhysicsX = resolved.x
-      nd.afterPhysicsZ = resolved.z
-      nd.navBoundsKey = boundsKey(boundsAfter)
-      nd.rawKeyAtPlayer = boundsKey(rawAtPlayer)
-      nd.keysMatch = nd.navBoundsKey === nd.rawKeyAtPlayer
-      nd.cellFromNav = worldToCellIndex(boundsAfter, resolved.x, resolved.z)
-      nd.cellFromRaw = worldToCellIndex(rawAtPlayer, px, pz)
-      nd.fingerDown = input.fingerDown
-      nd.stickX = input.x
-      nd.stickY = input.y
-      nd.stickMag = Math.hypot(input.x, input.y)
-      nd.gridInputDeadzone = PLAYER_GRID_INPUT_DEADZONE
-      nd.vx = this.lastGridVx + this.knockX
-      nd.vz = this.lastGridVz + this.knockZ
-    }
+    const nd = this.navDebug
+    nd.px = px
+    nd.pz = pz
+    nd.afterPhysicsX = resolved.x
+    nd.afterPhysicsZ = resolved.z
+    nd.navBoundsKey = boundsKey(boundsAfter)
+    nd.rawKeyAtPlayer = boundsKey(rawAtPlayer)
+    nd.keysMatch = nd.navBoundsKey === nd.rawKeyAtPlayer
+    nd.cellFromNav = worldToCellIndex(boundsAfter, resolved.x, resolved.z)
+    nd.cellFromRaw = worldToCellIndex(rawAtPlayer, px, pz)
+    nd.fingerDown = input.fingerDown
+    nd.stickX = input.x
+    nd.stickY = input.y
+    nd.stickMag = Math.hypot(input.x, input.y)
+    nd.gridInputDeadzone = PLAYER_GRID_INPUT_DEADZONE
+    nd.vx = this.lastGridVx + this.knockX
+    nd.vz = this.lastGridVz + this.knockZ
+    nd.collisionCorrectionDist = correction
+    nd.collisionCorrectionTriggered = correction > 0.08
+    nd.navBoundsKind = boundsKind(boundsAfter)
+    nd.rawBoundsKind = boundsKind(rawAtPlayer)
 
     const hs = Math.hypot(res.vx, res.vz)
     if (input.fingerDown && (Math.hypot(input.x, input.y) > 0.08 || hs > 0.15)) {

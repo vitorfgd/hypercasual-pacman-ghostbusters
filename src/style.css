@@ -33,7 +33,9 @@ body {
   display: none;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(ellipse at 50% 38%, #1e2840 0%, #0c0c10 52%);
+  background:
+    radial-gradient(circle at 50% 26%, rgba(108, 182, 255, 0.16), transparent 20%),
+    radial-gradient(ellipse at 50% 38%, #1e2840 0%, #0c0c10 52%);
   font: 600 clamp(16px, 3.8vw, 20px) system-ui, sans-serif;
   color: #c8d4e8;
   letter-spacing: 0.05em;
@@ -45,9 +47,18 @@ body {
 }
 
 .game-loading__panel {
-  max-width: min(90vw, 34rem);
-  padding: 1.2rem 1.4rem;
-  border-radius: 18px;
+  width: min(84vw, 100dvh * 9 / 16);
+  height: min(84dvh, 100vw * 16 / 9);
+  max-width: 25rem;
+  max-height: 44rem;
+  padding: 1.6rem 1.4rem;
+  border-radius: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 0.7rem;
   background: linear-gradient(
     180deg,
     rgba(16, 22, 34, 0.9) 0%,
@@ -68,18 +79,19 @@ body {
 }
 
 .game-loading__title {
-  margin: 0 0 0.7rem;
-  font: 900 clamp(22px, 5.6vw, 30px) system-ui, sans-serif;
+  margin: 0;
+  font: 900 clamp(26px, 7vw, 38px) system-ui, sans-serif;
   line-height: 1.05;
   color: #eef5ff;
   text-shadow: 0 2px 16px rgba(80, 120, 255, 0.24);
 }
 
 .game-loading__text {
-  margin: 0.45rem 0 0;
-  text-align: left;
+  margin: 0;
+  text-align: center;
   text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
   line-height: 1.5;
+  color: rgba(214, 225, 244, 0.84);
 }
 
 /*
@@ -170,10 +182,6 @@ body {
 
 #game-viewport.game-viewport--shake-hard {
   animation: gvxShakeHard 0.28s ease-out;
-}
-
-#game-viewport.game-viewport--pulse-launch {
-  animation: gvxLaunch 0.2s ease-out;
 }
 
 #game-viewport.game-viewport--pulse-turn {
@@ -298,16 +306,6 @@ body {
   }
   70% {
     transform: translate(0.8px, -0.5px);
-  }
-}
-
-@keyframes gvxLaunch {
-  0%,
-  100% {
-    transform: translateY(0) scale(1);
-  }
-  35% {
-    transform: translateY(-2px) scale(1.012);
   }
 }
 
@@ -1607,6 +1605,257 @@ body {
 
 .run-success-overlay__btn--primary:active {
   transform: translateY(2px);
+}
+
+.present-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 155;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: auto;
+}
+
+.present-overlay.hidden {
+  display: none;
+}
+
+.present-overlay__backdrop {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 86% 68% at 50% 40%, rgba(18, 26, 38, 0.5) 0%, rgba(8, 12, 22, 0.82) 55%, rgba(0, 0, 0, 0.9) 100%);
+  backdrop-filter: blur(5px);
+}
+
+.present-overlay__panel {
+  position: relative;
+  z-index: 1;
+  width: min(92%, 24rem);
+  padding: 1.15rem 1.1rem 1rem;
+  border-radius: 18px;
+  text-align: center;
+  background:
+    linear-gradient(180deg, rgba(18, 26, 40, 0.98) 0%, rgba(8, 12, 22, 0.98) 100%);
+  border: 1px solid rgba(255, 222, 160, 0.26);
+  box-shadow:
+    0 18px 38px rgba(0, 0, 0, 0.42),
+    inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  transform: translateY(16px) scale(0.96);
+  opacity: 0;
+  transition:
+    opacity 0.18s ease,
+    transform 0.22s cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+.present-overlay--show .present-overlay__panel {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.present-overlay__eyebrow {
+  margin: 0 0 0.4rem;
+  font: 800 0.74rem/1 system-ui, sans-serif;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255, 215, 150, 0.72);
+}
+
+.present-overlay__title {
+  margin: 0 0 0.45rem;
+  font: 900 clamp(1.3rem, 5vw, 1.8rem) / 1.06 system-ui, sans-serif;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #fff4cf;
+  text-shadow: 0 3px 16px rgba(0, 0, 0, 0.4);
+}
+
+.present-overlay__sub {
+  margin: 0 auto 0.95rem;
+  max-width: 30ch;
+  color: rgba(225, 232, 245, 0.82);
+  font: 600 0.92rem/1.48 system-ui, sans-serif;
+}
+
+.present-overlay__reward {
+  display: grid;
+  justify-items: center;
+  gap: 0.55rem;
+  margin-bottom: 1rem;
+}
+
+.present-overlay__reward-box {
+  width: 4.8rem;
+  height: 4.8rem;
+  border-radius: 18px;
+  background:
+    linear-gradient(145deg, rgba(255, 234, 170, 0.96) 0%, rgba(224, 176, 82, 0.96) 100%);
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.42),
+    0 10px 18px rgba(140, 90, 10, 0.28);
+  position: relative;
+}
+
+.present-overlay__reward-box::before,
+.present-overlay__reward-box::after {
+  content: '';
+  position: absolute;
+  background: rgba(130, 32, 54, 0.92);
+}
+
+.present-overlay__reward-box::before {
+  top: 0;
+  bottom: 0;
+  left: calc(50% - 5px);
+  width: 10px;
+  border-radius: 999px;
+}
+
+.present-overlay__reward-box::after {
+  left: 0;
+  right: 0;
+  top: calc(50% - 5px);
+  height: 10px;
+  border-radius: 999px;
+}
+
+.present-overlay__reward-box--open {
+  background:
+    radial-gradient(circle at 50% 46%, rgba(255, 255, 255, 0.74), rgba(255, 214, 124, 0.16) 58%, transparent 70%),
+    linear-gradient(145deg, rgba(255, 234, 170, 0.96) 0%, rgba(224, 176, 82, 0.96) 100%);
+}
+
+.present-overlay__reward-box--open::before {
+  transform: rotate(28deg) translateY(-4px);
+}
+
+.present-overlay__reward-box--open::after {
+  transform: rotate(-24deg) translateY(4px);
+}
+
+.present-overlay__reward-label {
+  font: 800 0.84rem/1.3 system-ui, sans-serif;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #ffe39c;
+}
+
+.present-overlay__action {
+  width: 100%;
+  cursor: pointer;
+  padding: 0.82rem 1rem;
+  border: none;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #ffe9b7 0%, #d3a64f 100%);
+  color: #160f05;
+  font: 900 0.9rem system-ui, sans-serif;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  box-shadow:
+    0 4px 0 #684816,
+    0 10px 22px rgba(80, 42, 0, 0.28);
+}
+
+.present-overlay__action:hover {
+  filter: brightness(1.05);
+  transform: translateY(-1px);
+}
+
+.present-overlay__action:active {
+  transform: translateY(2px);
+}
+
+.present-track {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 18;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(16px);
+  transition:
+    opacity 0.18s ease,
+    transform 0.22s ease;
+}
+
+.present-track.hidden {
+  display: none;
+}
+
+.present-track--show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.present-track__panel {
+  display: grid;
+  gap: 0.45rem;
+  width: min(100%, 44rem);
+  margin: 0 auto;
+  padding: 0.8rem 0.95rem 0.9rem;
+  border-radius: 18px;
+  background:
+    linear-gradient(180deg, rgba(12, 18, 28, 0.92) 0%, rgba(8, 12, 20, 0.98) 100%);
+  border: 1px solid rgba(255, 222, 150, 0.18);
+  box-shadow:
+    0 14px 28px rgba(0, 0, 0, 0.28),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+
+.present-track__meta {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.present-track__label {
+  font: 900 clamp(0.82rem, 3vw, 0.96rem) system-ui, sans-serif;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #fff0c0;
+}
+
+.present-track__sub {
+  font: 600 clamp(0.7rem, 2.6vw, 0.8rem) system-ui, sans-serif;
+  color: rgba(220, 228, 240, 0.72);
+  text-align: right;
+}
+
+.present-track__bar {
+  height: 16px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 224, 158, 0.16);
+}
+
+.present-track__fill {
+  width: 100%;
+  height: 100%;
+  transform-origin: left center;
+  transform: scaleX(0);
+  border-radius: inherit;
+  background:
+    linear-gradient(90deg, rgba(130, 240, 212, 0.95) 0%, rgba(255, 222, 132, 0.98) 58%, rgba(255, 158, 88, 0.98) 100%);
+  box-shadow:
+    0 0 18px rgba(255, 204, 102, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.34);
+  transition: transform 0.38s cubic-bezier(0.2, 0.9, 0.2, 1);
+}
+
+.present-track--ready .present-track__panel {
+  border-color: rgba(255, 225, 160, 0.34);
+  box-shadow:
+    0 16px 30px rgba(0, 0, 0, 0.32),
+    0 0 0 1px rgba(255, 215, 136, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+.present-track--ready .present-track__label {
+  color: #fff8de;
 }
 
 /* Room clear — pick 1 of 3 upgrades */
